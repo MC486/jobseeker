@@ -1539,6 +1539,7 @@ name = "jobseeker-normalize"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "deunicode",
  "jobseeker-core",
  "once_cell",
  "regex",
@@ -1546,6 +1547,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.20",
  "tracing",
+ "url",
 ]
 
 [[package]]
