@@ -71,9 +71,8 @@ impl RobotsCache {
 
     fn cached(&self, host: &str) -> Option<Rules> {
         let map = self.entries.lock().expect("robots lock");
-        map.get(host).and_then(|c| {
-            (c.fetched_at.elapsed() < CACHE_TTL).then_some(c.rules.clone())
-        })
+        map.get(host)
+            .and_then(|c| (c.fetched_at.elapsed() < CACHE_TTL).then_some(c.rules.clone()))
     }
 
     fn store(&self, host: String, rules: Rules) {
@@ -109,7 +108,9 @@ impl Rules {
             if line.is_empty() {
                 continue;
             }
-            let Some((key, value)) = line.split_once(':') else { continue };
+            let Some((key, value)) = line.split_once(':') else {
+                continue;
+            };
             let (key, value) = (key.trim().to_ascii_lowercase(), value.trim());
             match key.as_str() {
                 "user-agent" => {
@@ -197,7 +198,10 @@ Disallow: /jobs/\n\
 Allow: /jobs/api\n\
 ";
         assert!(!allowed(robots, "/jobs/view/1"));
-        assert!(allowed(robots, "/jobs/api/1"), "the more specific Allow must win");
+        assert!(
+            allowed(robots, "/jobs/api/1"),
+            "the more specific Allow must win"
+        );
     }
 
     #[test]
@@ -209,7 +213,10 @@ Disallow: /\n\
 User-agent: jobseeker\n\
 Disallow: /private/\n\
 ";
-        assert!(allowed(robots, "/jobs/1"), "Googlebot's rules must not apply to us");
+        assert!(
+            allowed(robots, "/jobs/1"),
+            "Googlebot's rules must not apply to us"
+        );
         assert!(!allowed(robots, "/private/secret"));
     }
 

@@ -70,7 +70,11 @@ impl std::str::FromStr for Provenance {
             "llm" => Provenance::Llm,
             "rules" => Provenance::Rules,
             "inferred" => Provenance::Inferred,
-            other => return Err(crate::Error::BadRequest(format!("unknown provenance: {other}"))),
+            other => {
+                return Err(crate::Error::BadRequest(format!(
+                    "unknown provenance: {other}"
+                )))
+            }
         })
     }
 }
@@ -183,7 +187,10 @@ mod tests {
     #[test]
     fn manual_values_are_never_overwritten() {
         let mut slot = Some(Sourced::manual("Staff Engineer".to_string()));
-        merge_field(&mut slot, Sourced::new("Senior Engineer".to_string(), Provenance::Api));
+        merge_field(
+            &mut slot,
+            Sourced::new("Senior Engineer".to_string(), Provenance::Api),
+        );
         assert_eq!(slot.unwrap().value, "Staff Engineer");
     }
 
@@ -193,13 +200,20 @@ mod tests {
         merge_field(&mut slot, Sourced::new("api".to_string(), Provenance::Api));
         assert_eq!(slot.as_ref().unwrap().value, "api");
 
-        merge_field(&mut slot, Sourced::new("rules".to_string(), Provenance::Rules));
+        merge_field(
+            &mut slot,
+            Sourced::new("rules".to_string(), Provenance::Rules),
+        );
         assert_eq!(slot.unwrap().value, "api");
     }
 
     #[test]
     fn equal_precedence_breaks_ties_on_confidence() {
-        let mut slot = Some(Sourced::with_confidence("a".to_string(), Provenance::Llm, 0.5));
+        let mut slot = Some(Sourced::with_confidence(
+            "a".to_string(),
+            Provenance::Llm,
+            0.5,
+        ));
         merge_field(
             &mut slot,
             Sourced::with_confidence("b".to_string(), Provenance::Llm, 0.9),

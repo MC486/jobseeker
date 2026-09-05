@@ -30,7 +30,11 @@ pub struct JobDocument {
 
 /// Render `job.md`: YAML-ish frontmatter plus Markdown body. Kept simple (not a YAML
 /// library) so the output is stable and the crate stays small.
-pub fn render_markdown(doc: &JobDocument, body: &str, requirements: &[AtomizedRequirement]) -> String {
+pub fn render_markdown(
+    doc: &JobDocument,
+    body: &str,
+    requirements: &[AtomizedRequirement],
+) -> String {
     let mut out = String::from("---\n");
     out.push_str(&format!("title: {}\n", yaml_escape(&doc.title)));
     out.push_str(&format!("company: {}\n", yaml_escape(&doc.company)));
@@ -61,19 +65,31 @@ pub fn render_markdown(doc: &JobDocument, body: &str, requirements: &[AtomizedRe
     out.push_str("---\n\n");
     out.push_str(&format!("# {} — {}\n\n", doc.title, doc.company));
 
-    let required: Vec<_> = requirements.iter().filter(|r| r.necessity.as_str() == "required" || r.necessity.as_str() == "implied").collect();
-    let preferred: Vec<_> = requirements.iter().filter(|r| r.necessity.as_str() != "required" && r.necessity.as_str() != "implied").collect();
+    let required: Vec<_> = requirements
+        .iter()
+        .filter(|r| r.necessity.as_str() == "required" || r.necessity.as_str() == "implied")
+        .collect();
+    let preferred: Vec<_> = requirements
+        .iter()
+        .filter(|r| r.necessity.as_str() != "required" && r.necessity.as_str() != "implied")
+        .collect();
     if !required.is_empty() {
         out.push_str("## Required\n\n");
         for r in required {
-            out.push_str(&format!("- {}  *({}: {})*\n", r.text, r.kind, r.normalized_text));
+            out.push_str(&format!(
+                "- {}  *({}: {})*\n",
+                r.text, r.kind, r.normalized_text
+            ));
         }
         out.push('\n');
     }
     if !preferred.is_empty() {
         out.push_str("## Preferred\n\n");
         for r in preferred {
-            out.push_str(&format!("- {}  *({}: {})*\n", r.text, r.kind, r.normalized_text));
+            out.push_str(&format!(
+                "- {}  *({}: {})*\n",
+                r.text, r.kind, r.normalized_text
+            ));
         }
         out.push('\n');
     }
@@ -92,7 +108,9 @@ pub fn render_job_json(job: &ExtractedJob) -> Result<Vec<u8>> {
 }
 
 fn yaml_escape(s: &str) -> String {
-    if s.chars().any(|c| matches!(c, ':' | '#' | '{' | '}' | '[' | ']' | ',' | '"' | '\'')) {
+    if s.chars()
+        .any(|c| matches!(c, ':' | '#' | '{' | '}' | '[' | ']' | ',' | '"' | '\''))
+    {
         format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
     } else {
         s.to_string()

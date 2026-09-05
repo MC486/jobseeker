@@ -33,7 +33,7 @@ macro_rules! skill {
             name: $name,
             kind: SkillKind::$kind,
             parent: {
-                #[allow(unused_mut)]
+                #[allow(unused_assignments, unused_mut)]
                 let mut p: Option<&'static str> = None;
                 $( p = Some($parent); )?
                 p
@@ -48,167 +48,776 @@ pub static SEED_SKILLS: Lazy<Vec<SeedSkill>> = Lazy::new(|| {
     vec![
         // ---- languages ---------------------------------------------------------------
         skill!("programming", "Programming", Concept),
-        skill!("rust", "Rust", Language, parent = "programming", aliases = ["rustlang", "rust-lang"]),
+        skill!(
+            "rust",
+            "Rust",
+            Language,
+            parent = "programming",
+            aliases = ["rustlang", "rust-lang"]
+        ),
         skill!("c", "C", Language, parent = "programming"),
-        skill!("cpp", "C++", Language, parent = "programming", aliases = ["c++", "cplusplus", "c/c++"]),
-        skill!("csharp", "C#", Language, parent = "programming", aliases = ["c#", "c sharp", "dotnet c#"]),
-        skill!("go", "Go", Language, parent = "programming", aliases = ["golang"]),
+        skill!(
+            "cpp",
+            "C++",
+            Language,
+            parent = "programming",
+            aliases = ["c++", "cplusplus", "c/c++"]
+        ),
+        skill!(
+            "csharp",
+            "C#",
+            Language,
+            parent = "programming",
+            aliases = ["c#", "c sharp", "dotnet c#"]
+        ),
+        skill!(
+            "go",
+            "Go",
+            Language,
+            parent = "programming",
+            aliases = ["golang"]
+        ),
         skill!("java", "Java", Language, parent = "programming"),
         skill!("kotlin", "Kotlin", Language, parent = "java"),
         skill!("scala", "Scala", Language, parent = "java"),
-        skill!("javascript", "JavaScript", Language, parent = "programming", aliases = ["js", "es6", "ecmascript", "vanilla js"]),
-        skill!("typescript", "TypeScript", Language, parent = "javascript", aliases = ["ts"]),
-        skill!("python", "Python", Language, parent = "programming", aliases = ["python3", "py"]),
+        skill!(
+            "javascript",
+            "JavaScript",
+            Language,
+            parent = "programming",
+            aliases = ["js", "es6", "ecmascript", "vanilla js"]
+        ),
+        skill!(
+            "typescript",
+            "TypeScript",
+            Language,
+            parent = "javascript",
+            aliases = ["ts"]
+        ),
+        skill!(
+            "python",
+            "Python",
+            Language,
+            parent = "programming",
+            aliases = ["python3", "py"]
+        ),
         skill!("ruby", "Ruby", Language, parent = "programming"),
         skill!("php", "PHP", Language, parent = "programming"),
         skill!("swift", "Swift", Language, parent = "programming"),
-        skill!("objective-c", "Objective-C", Language, parent = "programming", aliases = ["objc"]),
+        skill!(
+            "objective-c",
+            "Objective-C",
+            Language,
+            parent = "programming",
+            aliases = ["objc"]
+        ),
         skill!("elixir", "Elixir", Language, parent = "programming"),
         skill!("erlang", "Erlang", Language, parent = "programming"),
         skill!("haskell", "Haskell", Language, parent = "programming"),
         skill!("clojure", "Clojure", Language, parent = "programming"),
         skill!("zig", "Zig", Language, parent = "programming"),
         skill!("sql", "SQL", Language, parent = "programming"),
-        skill!("bash", "Bash", Language, parent = "programming", aliases = ["shell", "shell scripting", "sh", "zsh"]),
+        skill!(
+            "bash",
+            "Bash",
+            Language,
+            parent = "programming",
+            aliases = ["shell", "shell scripting", "sh", "zsh"]
+        ),
         skill!("r", "R", Language, parent = "programming"),
         skill!("matlab", "MATLAB", Language, parent = "programming"),
         skill!("perl", "Perl", Language, parent = "programming"),
         skill!("lua", "Lua", Language, parent = "programming"),
         skill!("dart", "Dart", Language, parent = "programming"),
         skill!("solidity", "Solidity", Language, parent = "programming"),
-        skill!("vhdl", "VHDL", Language, parent = "programming", aliases = ["verilog", "systemverilog"]),
-
+        skill!(
+            "vhdl",
+            "VHDL",
+            Language,
+            parent = "programming",
+            aliases = ["verilog", "systemverilog"]
+        ),
         // ---- web frameworks ----------------------------------------------------------
         skill!("frontend", "Frontend Development", Concept),
-        skill!("react", "React", Framework, parent = "javascript", aliases = ["reactjs", "react.js"]),
-        skill!("nextjs", "Next.js", Framework, parent = "react", aliases = ["next.js", "next js"]),
-        skill!("vue", "Vue", Framework, parent = "javascript", aliases = ["vuejs", "vue.js", "vue 3"]),
-        skill!("angular", "Angular", Framework, parent = "typescript", aliases = ["angularjs", "angular 2+"]),
-        skill!("svelte", "Svelte", Framework, parent = "javascript", aliases = ["sveltekit"]),
-        skill!("nodejs", "Node.js", Platform, parent = "javascript", aliases = ["node", "node.js", "nodejs"]),
-        skill!("express", "Express", Framework, parent = "nodejs", aliases = ["expressjs", "express.js"]),
+        skill!(
+            "react",
+            "React",
+            Framework,
+            parent = "javascript",
+            aliases = ["reactjs", "react.js"]
+        ),
+        skill!(
+            "nextjs",
+            "Next.js",
+            Framework,
+            parent = "react",
+            aliases = ["next.js", "next js"]
+        ),
+        skill!(
+            "vue",
+            "Vue",
+            Framework,
+            parent = "javascript",
+            aliases = ["vuejs", "vue.js", "vue 3"]
+        ),
+        skill!(
+            "angular",
+            "Angular",
+            Framework,
+            parent = "typescript",
+            aliases = ["angularjs", "angular 2+"]
+        ),
+        skill!(
+            "svelte",
+            "Svelte",
+            Framework,
+            parent = "javascript",
+            aliases = ["sveltekit"]
+        ),
+        skill!(
+            "nodejs",
+            "Node.js",
+            Platform,
+            parent = "javascript",
+            aliases = ["node", "node.js", "nodejs"]
+        ),
+        skill!(
+            "express",
+            "Express",
+            Framework,
+            parent = "nodejs",
+            aliases = ["expressjs", "express.js"]
+        ),
         skill!("django", "Django", Framework, parent = "python"),
         skill!("flask", "Flask", Framework, parent = "python"),
         skill!("fastapi", "FastAPI", Framework, parent = "python"),
-        skill!("rails", "Ruby on Rails", Framework, parent = "ruby", aliases = ["ruby on rails", "ror"]),
-        skill!("spring", "Spring", Framework, parent = "java", aliases = ["spring boot", "springboot"]),
-        skill!("dotnet", ".NET", Framework, parent = "csharp", aliases = [".net", "net core", ".net core", "asp.net", "aspnet"]),
+        skill!(
+            "rails",
+            "Ruby on Rails",
+            Framework,
+            parent = "ruby",
+            aliases = ["ruby on rails", "ror"]
+        ),
+        skill!(
+            "spring",
+            "Spring",
+            Framework,
+            parent = "java",
+            aliases = ["spring boot", "springboot"]
+        ),
+        skill!(
+            "dotnet",
+            ".NET",
+            Framework,
+            parent = "csharp",
+            aliases = [".net", "net core", ".net core", "asp.net", "aspnet"]
+        ),
         skill!("laravel", "Laravel", Framework, parent = "php"),
         skill!("axum", "axum", Framework, parent = "rust"),
         skill!("tokio", "Tokio", Library, parent = "rust"),
-        skill!("graphql", "GraphQL", Concept, aliases = ["apollo", "graph ql"]),
-        skill!("rest", "REST APIs", Concept, aliases = ["rest api", "restful", "restful apis", "rest apis"]),
-        skill!("grpc", "gRPC", Concept, aliases = ["protobuf", "protocol buffers"]),
-        skill!("html", "HTML", Language, parent = "frontend", aliases = ["html5"]),
-        skill!("css", "CSS", Language, parent = "frontend", aliases = ["css3", "scss", "sass", "less"]),
-        skill!("tailwind", "Tailwind CSS", Framework, parent = "css", aliases = ["tailwindcss"]),
-
+        skill!(
+            "graphql",
+            "GraphQL",
+            Concept,
+            aliases = ["apollo", "graph ql"]
+        ),
+        skill!(
+            "rest",
+            "REST APIs",
+            Concept,
+            aliases = ["rest api", "restful", "restful apis", "rest apis"]
+        ),
+        skill!(
+            "grpc",
+            "gRPC",
+            Concept,
+            aliases = ["protobuf", "protocol buffers"]
+        ),
+        skill!(
+            "html",
+            "HTML",
+            Language,
+            parent = "frontend",
+            aliases = ["html5"]
+        ),
+        skill!(
+            "css",
+            "CSS",
+            Language,
+            parent = "frontend",
+            aliases = ["css3", "scss", "sass", "less"]
+        ),
+        skill!(
+            "tailwind",
+            "Tailwind CSS",
+            Framework,
+            parent = "css",
+            aliases = ["tailwindcss"]
+        ),
         // ---- data --------------------------------------------------------------------
         skill!("databases", "Databases", Concept),
-        skill!("postgresql", "PostgreSQL", Database, parent = "databases", aliases = ["postgres", "psql", "pgsql"]),
-        skill!("mysql", "MySQL", Database, parent = "databases", aliases = ["mariadb"]),
+        skill!(
+            "postgresql",
+            "PostgreSQL",
+            Database,
+            parent = "databases",
+            aliases = ["postgres", "psql", "pgsql"]
+        ),
+        skill!(
+            "mysql",
+            "MySQL",
+            Database,
+            parent = "databases",
+            aliases = ["mariadb"]
+        ),
         skill!("sqlite", "SQLite", Database, parent = "databases"),
-        skill!("mongodb", "MongoDB", Database, parent = "databases", aliases = ["mongo"]),
-        skill!("redis", "Redis", Database, parent = "databases", aliases = ["valkey", "elasticache"]),
+        skill!(
+            "mongodb",
+            "MongoDB",
+            Database,
+            parent = "databases",
+            aliases = ["mongo"]
+        ),
+        skill!(
+            "redis",
+            "Redis",
+            Database,
+            parent = "databases",
+            aliases = ["valkey", "elasticache"]
+        ),
         skill!("dynamodb", "DynamoDB", Database, parent = "databases"),
-        skill!("cassandra", "Cassandra", Database, parent = "databases", aliases = ["scylladb"]),
-        skill!("elasticsearch", "Elasticsearch", Database, parent = "databases", aliases = ["opensearch", "elastic search", "elk"]),
+        skill!(
+            "cassandra",
+            "Cassandra",
+            Database,
+            parent = "databases",
+            aliases = ["scylladb"]
+        ),
+        skill!(
+            "elasticsearch",
+            "Elasticsearch",
+            Database,
+            parent = "databases",
+            aliases = ["opensearch", "elastic search", "elk"]
+        ),
         skill!("clickhouse", "ClickHouse", Database, parent = "databases"),
         skill!("duckdb", "DuckDB", Database, parent = "databases"),
         skill!("snowflake", "Snowflake", Database, parent = "databases"),
         skill!("bigquery", "BigQuery", Database, parent = "databases"),
         skill!("redshift", "Redshift", Database, parent = "databases"),
-        skill!("kafka", "Kafka", Platform, aliases = ["apache kafka", "kinesis", "msk"]),
+        skill!(
+            "kafka",
+            "Kafka",
+            Platform,
+            aliases = ["apache kafka", "kinesis", "msk"]
+        ),
         skill!("rabbitmq", "RabbitMQ", Platform, aliases = ["amqp"]),
-        skill!("spark", "Apache Spark", Framework, aliases = ["pyspark", "apache spark"]),
-        skill!("airflow", "Airflow", Tool, aliases = ["apache airflow", "dagster", "prefect"]),
+        skill!(
+            "spark",
+            "Apache Spark",
+            Framework,
+            aliases = ["pyspark", "apache spark"]
+        ),
+        skill!(
+            "airflow",
+            "Airflow",
+            Tool,
+            aliases = ["apache airflow", "dagster", "prefect"]
+        ),
         skill!("dbt", "dbt", Tool),
-        skill!("data-engineering", "Data Engineering", Concept, aliases = ["etl", "elt", "data pipelines", "data pipeline"]),
-        skill!("data-warehousing", "Data Warehousing", Concept, parent = "data-engineering", aliases = ["data warehouse", "dimensional modeling"]),
-
+        skill!(
+            "data-engineering",
+            "Data Engineering",
+            Concept,
+            aliases = ["etl", "elt", "data pipelines", "data pipeline"]
+        ),
+        skill!(
+            "data-warehousing",
+            "Data Warehousing",
+            Concept,
+            parent = "data-engineering",
+            aliases = ["data warehouse", "dimensional modeling"]
+        ),
         // ---- cloud & infrastructure --------------------------------------------------
         skill!("cloud", "Cloud Platforms", Concept),
-        skill!("aws", "AWS", Platform, parent = "cloud", aliases = ["amazon web services", "ec2", "s3", "lambda"]),
-        skill!("gcp", "GCP", Platform, parent = "cloud", aliases = ["google cloud", "google cloud platform"]),
-        skill!("azure", "Azure", Platform, parent = "cloud", aliases = ["microsoft azure"]),
-        skill!("kubernetes", "Kubernetes", Tool, aliases = ["k8s", "eks", "gke", "aks", "openshift"]),
-        skill!("docker", "Docker", Tool, aliases = ["containers", "containerization", "podman", "oci"]),
-        skill!("terraform", "Terraform", Tool, aliases = ["opentofu", "hcl"]),
-        skill!("ansible", "Ansible", Tool, aliases = ["chef", "puppet", "saltstack"]),
+        skill!(
+            "aws",
+            "AWS",
+            Platform,
+            parent = "cloud",
+            aliases = ["amazon web services", "ec2", "s3", "lambda"]
+        ),
+        skill!(
+            "gcp",
+            "GCP",
+            Platform,
+            parent = "cloud",
+            aliases = ["google cloud", "google cloud platform"]
+        ),
+        skill!(
+            "azure",
+            "Azure",
+            Platform,
+            parent = "cloud",
+            aliases = ["microsoft azure"]
+        ),
+        skill!(
+            "kubernetes",
+            "Kubernetes",
+            Tool,
+            aliases = ["k8s", "eks", "gke", "aks", "openshift"]
+        ),
+        skill!(
+            "docker",
+            "Docker",
+            Tool,
+            aliases = ["containers", "containerization", "podman", "oci"]
+        ),
+        skill!(
+            "terraform",
+            "Terraform",
+            Tool,
+            aliases = ["opentofu", "hcl"]
+        ),
+        skill!(
+            "ansible",
+            "Ansible",
+            Tool,
+            aliases = ["chef", "puppet", "saltstack"]
+        ),
         skill!("helm", "Helm", Tool, parent = "kubernetes"),
-        skill!("linux", "Linux", Platform, aliases = ["unix", "ubuntu", "debian", "rhel", "centos"]),
-        skill!("devops", "DevOps", Methodology, aliases = ["sre", "site reliability", "platform engineering"]),
-        skill!("cicd", "CI/CD", Methodology, parent = "devops", aliases = ["ci/cd", "ci cd", "continuous integration", "continuous delivery", "continuous deployment"]),
+        skill!(
+            "linux",
+            "Linux",
+            Platform,
+            aliases = ["unix", "ubuntu", "debian", "rhel", "centos"]
+        ),
+        skill!(
+            "devops",
+            "DevOps",
+            Methodology,
+            aliases = ["sre", "site reliability", "platform engineering"]
+        ),
+        skill!(
+            "cicd",
+            "CI/CD",
+            Methodology,
+            parent = "devops",
+            aliases = [
+                "ci/cd",
+                "ci cd",
+                "continuous integration",
+                "continuous delivery",
+                "continuous deployment"
+            ]
+        ),
         skill!("jenkins", "Jenkins", Tool, parent = "cicd"),
-        skill!("github-actions", "GitHub Actions", Tool, parent = "cicd", aliases = ["gitlab ci", "circleci", "travis ci", "buildkite"]),
-        skill!("observability", "Observability", Concept, parent = "devops", aliases = ["monitoring", "alerting", "telemetry"]),
-        skill!("prometheus", "Prometheus", Tool, parent = "observability", aliases = ["grafana", "thanos"]),
-        skill!("datadog", "Datadog", Tool, parent = "observability", aliases = ["new relic", "splunk", "sumo logic"]),
-        skill!("opentelemetry", "OpenTelemetry", Tool, parent = "observability", aliases = ["otel", "open telemetry"]),
-        skill!("nginx", "nginx", Tool, aliases = ["apache httpd", "haproxy", "envoy", "traefik"]),
-
+        skill!(
+            "github-actions",
+            "GitHub Actions",
+            Tool,
+            parent = "cicd",
+            aliases = ["gitlab ci", "circleci", "travis ci", "buildkite"]
+        ),
+        skill!(
+            "observability",
+            "Observability",
+            Concept,
+            parent = "devops",
+            aliases = ["monitoring", "alerting", "telemetry"]
+        ),
+        skill!(
+            "prometheus",
+            "Prometheus",
+            Tool,
+            parent = "observability",
+            aliases = ["grafana", "thanos"]
+        ),
+        skill!(
+            "datadog",
+            "Datadog",
+            Tool,
+            parent = "observability",
+            aliases = ["new relic", "splunk", "sumo logic"]
+        ),
+        skill!(
+            "opentelemetry",
+            "OpenTelemetry",
+            Tool,
+            parent = "observability",
+            aliases = ["otel", "open telemetry"]
+        ),
+        skill!(
+            "nginx",
+            "nginx",
+            Tool,
+            aliases = ["apache httpd", "haproxy", "envoy", "traefik"]
+        ),
         // ---- architecture & practice -------------------------------------------------
-        skill!("distributed-systems", "Distributed Systems", Concept, aliases = ["distributed system", "distributed computing"]),
-        skill!("microservices", "Microservices", Concept, parent = "distributed-systems", aliases = ["micro-services", "service oriented architecture", "soa"]),
-        skill!("system-design", "System Design", Concept, aliases = ["software architecture", "systems design", "architecture design"]),
-        skill!("scalability", "Scalability", Concept, parent = "distributed-systems", aliases = ["high availability", "high throughput", "load balancing"]),
-        skill!("performance", "Performance Engineering", Concept, aliases = ["performance optimization", "performance tuning", "profiling", "low latency"]),
-        skill!("concurrency", "Concurrency", Concept, aliases = ["multithreading", "parallelism", "async programming", "asynchronous programming"]),
-        skill!("testing", "Testing", Methodology, aliases = ["unit testing", "integration testing", "test automation", "tdd", "automated testing"]),
+        skill!(
+            "distributed-systems",
+            "Distributed Systems",
+            Concept,
+            aliases = ["distributed system", "distributed computing"]
+        ),
+        skill!(
+            "microservices",
+            "Microservices",
+            Concept,
+            parent = "distributed-systems",
+            aliases = ["micro-services", "service oriented architecture", "soa"]
+        ),
+        skill!(
+            "system-design",
+            "System Design",
+            Concept,
+            aliases = [
+                "software architecture",
+                "systems design",
+                "architecture design"
+            ]
+        ),
+        skill!(
+            "scalability",
+            "Scalability",
+            Concept,
+            parent = "distributed-systems",
+            aliases = ["high availability", "high throughput", "load balancing"]
+        ),
+        skill!(
+            "performance",
+            "Performance Engineering",
+            Concept,
+            aliases = [
+                "performance optimization",
+                "performance tuning",
+                "profiling",
+                "low latency"
+            ]
+        ),
+        skill!(
+            "concurrency",
+            "Concurrency",
+            Concept,
+            aliases = [
+                "multithreading",
+                "parallelism",
+                "async programming",
+                "asynchronous programming"
+            ]
+        ),
+        skill!(
+            "testing",
+            "Testing",
+            Methodology,
+            aliases = [
+                "unit testing",
+                "integration testing",
+                "test automation",
+                "tdd",
+                "automated testing"
+            ]
+        ),
         skill!("code-review", "Code Review", Methodology),
-        skill!("agile", "Agile", Methodology, aliases = ["scrum", "kanban", "sprint planning"]),
-        skill!("git", "Git", Tool, aliases = ["github", "gitlab", "version control", "bitbucket"]),
-        skill!("jira", "Jira", Tool, aliases = ["confluence", "linear", "asana"]),
-        skill!("security", "Security", Concept, aliases = ["application security", "appsec", "infosec", "cybersecurity"]),
-        skill!("cryptography", "Cryptography", Concept, parent = "security", aliases = ["encryption", "pki", "tls"]),
-        skill!("authentication", "Authentication", Concept, parent = "security", aliases = ["oauth", "oauth2", "oidc", "saml", "sso", "authorization"]),
-        skill!("compliance", "Compliance", Domain, aliases = ["soc 2", "soc2", "hipaa", "pci dss", "gdpr", "fedramp", "iso 27001"]),
-
+        skill!(
+            "agile",
+            "Agile",
+            Methodology,
+            aliases = ["scrum", "kanban", "sprint planning"]
+        ),
+        skill!(
+            "git",
+            "Git",
+            Tool,
+            aliases = ["github", "gitlab", "version control", "bitbucket"]
+        ),
+        skill!(
+            "jira",
+            "Jira",
+            Tool,
+            aliases = ["confluence", "linear", "asana"]
+        ),
+        skill!(
+            "security",
+            "Security",
+            Concept,
+            aliases = ["application security", "appsec", "infosec", "cybersecurity"]
+        ),
+        skill!(
+            "cryptography",
+            "Cryptography",
+            Concept,
+            parent = "security",
+            aliases = ["encryption", "pki", "tls"]
+        ),
+        skill!(
+            "authentication",
+            "Authentication",
+            Concept,
+            parent = "security",
+            aliases = ["oauth", "oauth2", "oidc", "saml", "sso", "authorization"]
+        ),
+        skill!(
+            "compliance",
+            "Compliance",
+            Domain,
+            aliases = [
+                "soc 2",
+                "soc2",
+                "hipaa",
+                "pci dss",
+                "gdpr",
+                "fedramp",
+                "iso 27001"
+            ]
+        ),
         // ---- ml / ai -----------------------------------------------------------------
-        skill!("machine-learning", "Machine Learning", Concept, aliases = ["ml", "deep learning", "neural networks"]),
-        skill!("pytorch", "PyTorch", Framework, parent = "machine-learning", aliases = ["torch"]),
-        skill!("tensorflow", "TensorFlow", Framework, parent = "machine-learning", aliases = ["keras"]),
-        skill!("llm", "Large Language Models", Concept, parent = "machine-learning", aliases = ["llms", "large language model", "generative ai", "genai", "gpt", "rag", "prompt engineering"]),
-        skill!("mlops", "MLOps", Methodology, parent = "machine-learning", aliases = ["ml ops", "model deployment", "feature store"]),
-        skill!("nlp", "NLP", Concept, parent = "machine-learning", aliases = ["natural language processing"]),
-        skill!("computer-vision", "Computer Vision", Concept, parent = "machine-learning", aliases = ["cv", "image processing", "opencv"]),
-        skill!("data-science", "Data Science", Concept, aliases = ["statistics", "statistical analysis", "a/b testing", "experimentation"]),
-        skill!("pandas", "pandas", Library, parent = "python", aliases = ["numpy", "scipy", "scikit-learn", "sklearn"]),
-
+        skill!(
+            "machine-learning",
+            "Machine Learning",
+            Concept,
+            aliases = ["ml", "deep learning", "neural networks"]
+        ),
+        skill!(
+            "pytorch",
+            "PyTorch",
+            Framework,
+            parent = "machine-learning",
+            aliases = ["torch"]
+        ),
+        skill!(
+            "tensorflow",
+            "TensorFlow",
+            Framework,
+            parent = "machine-learning",
+            aliases = ["keras"]
+        ),
+        skill!(
+            "llm",
+            "Large Language Models",
+            Concept,
+            parent = "machine-learning",
+            aliases = [
+                "llms",
+                "large language model",
+                "generative ai",
+                "genai",
+                "gpt",
+                "rag",
+                "prompt engineering"
+            ]
+        ),
+        skill!(
+            "mlops",
+            "MLOps",
+            Methodology,
+            parent = "machine-learning",
+            aliases = ["ml ops", "model deployment", "feature store"]
+        ),
+        skill!(
+            "nlp",
+            "NLP",
+            Concept,
+            parent = "machine-learning",
+            aliases = ["natural language processing"]
+        ),
+        skill!(
+            "computer-vision",
+            "Computer Vision",
+            Concept,
+            parent = "machine-learning",
+            aliases = ["cv", "image processing", "opencv"]
+        ),
+        skill!(
+            "data-science",
+            "Data Science",
+            Concept,
+            aliases = [
+                "statistics",
+                "statistical analysis",
+                "a/b testing",
+                "experimentation"
+            ]
+        ),
+        skill!(
+            "pandas",
+            "pandas",
+            Library,
+            parent = "python",
+            aliases = ["numpy", "scipy", "scikit-learn", "sklearn"]
+        ),
         // ---- mobile & embedded -------------------------------------------------------
         skill!("mobile", "Mobile Development", Concept),
-        skill!("ios", "iOS", Platform, parent = "mobile", aliases = ["swiftui", "uikit"]),
-        skill!("android", "Android", Platform, parent = "mobile", aliases = ["jetpack compose"]),
-        skill!("react-native", "React Native", Framework, parent = "react", aliases = ["reactnative"]),
+        skill!(
+            "ios",
+            "iOS",
+            Platform,
+            parent = "mobile",
+            aliases = ["swiftui", "uikit"]
+        ),
+        skill!(
+            "android",
+            "Android",
+            Platform,
+            parent = "mobile",
+            aliases = ["jetpack compose"]
+        ),
+        skill!(
+            "react-native",
+            "React Native",
+            Framework,
+            parent = "react",
+            aliases = ["reactnative"]
+        ),
         skill!("flutter", "Flutter", Framework, parent = "dart"),
-        skill!("embedded", "Embedded Systems", Concept, aliases = ["firmware", "rtos", "bare metal", "microcontroller"]),
-        skill!("robotics", "Robotics", Domain, aliases = ["ros", "ros2", "motion planning", "slam"]),
-        skill!("realtime", "Real-time Systems", Concept, parent = "embedded", aliases = ["real-time", "real time systems", "hard real-time"]),
-
+        skill!(
+            "embedded",
+            "Embedded Systems",
+            Concept,
+            aliases = ["firmware", "rtos", "bare metal", "microcontroller"]
+        ),
+        skill!(
+            "robotics",
+            "Robotics",
+            Domain,
+            aliases = ["ros", "ros2", "motion planning", "slam"]
+        ),
+        skill!(
+            "realtime",
+            "Real-time Systems",
+            Concept,
+            parent = "embedded",
+            aliases = ["real-time", "real time systems", "hard real-time"]
+        ),
         // ---- leadership & soft -------------------------------------------------------
-        skill!("mentoring", "Mentoring", Soft, aliases = ["mentorship", "coaching", "developing engineers"]),
-        skill!("technical-leadership", "Technical Leadership", Soft, aliases = ["tech lead", "leading projects", "technical direction"]),
-        skill!("people-management", "People Management", Soft, aliases = ["managing engineers", "performance management", "hiring", "team management"]),
-        skill!("communication", "Communication", Soft, aliases = ["written communication", "verbal communication", "presentation skills", "stakeholder management"]),
-        skill!("collaboration", "Collaboration", Soft, aliases = ["teamwork", "cross-functional collaboration", "team player"]),
-        skill!("problem-solving", "Problem Solving", Soft, aliases = ["analytical skills", "critical thinking", "troubleshooting", "debugging"]),
-        skill!("ownership", "Ownership", Soft, aliases = ["self-starter", "autonomy", "works independently", "bias for action"]),
-        skill!("product-sense", "Product Sense", Soft, aliases = ["product thinking", "customer focus", "user empathy"]),
-
+        skill!(
+            "mentoring",
+            "Mentoring",
+            Soft,
+            aliases = ["mentorship", "coaching", "developing engineers"]
+        ),
+        skill!(
+            "technical-leadership",
+            "Technical Leadership",
+            Soft,
+            aliases = ["tech lead", "leading projects", "technical direction"]
+        ),
+        skill!(
+            "people-management",
+            "People Management",
+            Soft,
+            aliases = [
+                "managing engineers",
+                "performance management",
+                "hiring",
+                "team management"
+            ]
+        ),
+        skill!(
+            "communication",
+            "Communication",
+            Soft,
+            aliases = [
+                "written communication",
+                "verbal communication",
+                "presentation skills",
+                "stakeholder management"
+            ]
+        ),
+        skill!(
+            "collaboration",
+            "Collaboration",
+            Soft,
+            aliases = ["teamwork", "cross-functional collaboration", "team player"]
+        ),
+        skill!(
+            "problem-solving",
+            "Problem Solving",
+            Soft,
+            aliases = [
+                "analytical skills",
+                "critical thinking",
+                "troubleshooting",
+                "debugging"
+            ]
+        ),
+        skill!(
+            "ownership",
+            "Ownership",
+            Soft,
+            aliases = [
+                "self-starter",
+                "autonomy",
+                "works independently",
+                "bias for action"
+            ]
+        ),
+        skill!(
+            "product-sense",
+            "Product Sense",
+            Soft,
+            aliases = ["product thinking", "customer focus", "user empathy"]
+        ),
         // ---- domains -----------------------------------------------------------------
-        skill!("fintech", "Fintech", Domain, aliases = ["financial services", "payments", "banking", "trading systems"]),
-        skill!("healthcare", "Healthcare", Domain, aliases = ["health tech", "healthtech", "medical devices", "ehr"]),
-        skill!("ecommerce", "E-commerce", Domain, aliases = ["e-commerce", "retail", "marketplace"]),
-        skill!("gaming", "Gaming", Domain, aliases = ["game development", "unity", "unreal engine"]),
-        skill!("defense", "Defense", Domain, aliases = ["defence", "govtech", "aerospace", "dod"]),
-
+        skill!(
+            "fintech",
+            "Fintech",
+            Domain,
+            aliases = [
+                "financial services",
+                "payments",
+                "banking",
+                "trading systems"
+            ]
+        ),
+        skill!(
+            "healthcare",
+            "Healthcare",
+            Domain,
+            aliases = ["health tech", "healthtech", "medical devices", "ehr"]
+        ),
+        skill!(
+            "ecommerce",
+            "E-commerce",
+            Domain,
+            aliases = ["e-commerce", "retail", "marketplace"]
+        ),
+        skill!(
+            "gaming",
+            "Gaming",
+            Domain,
+            aliases = ["game development", "unity", "unreal engine"]
+        ),
+        skill!(
+            "defense",
+            "Defense",
+            Domain,
+            aliases = ["defence", "govtech", "aerospace", "dod"]
+        ),
         // ---- certifications ----------------------------------------------------------
-        skill!("aws-certification", "AWS Certification", Certification, aliases = ["aws certified solutions architect", "aws certified developer"]),
-        skill!("cka", "Certified Kubernetes Administrator", Certification, aliases = ["cka", "ckad"]),
+        skill!(
+            "aws-certification",
+            "AWS Certification",
+            Certification,
+            aliases = [
+                "aws certified solutions architect",
+                "aws certified developer"
+            ]
+        ),
+        skill!(
+            "cka",
+            "Certified Kubernetes Administrator",
+            Certification,
+            aliases = ["cka", "ckad"]
+        ),
         skill!("cissp", "CISSP", Certification),
         skill!("pmp", "PMP", Certification),
-        skill!("scrum-master", "Certified Scrum Master", Certification, aliases = ["csm", "psm"]),
-
+        skill!(
+            "scrum-master",
+            "Certified Scrum Master",
+            Certification,
+            aliases = ["csm", "psm"]
+        ),
         // ---- human languages ---------------------------------------------------------
         skill!("english", "English", LanguageHuman),
         skill!("spanish", "Spanish", LanguageHuman),
@@ -365,8 +974,18 @@ mod tests {
     #[test]
     fn canonical_names_and_slugs_always_resolve() {
         for skill in SEED_SKILLS.iter() {
-            assert_eq!(resolve(skill.name), Some(skill.slug), "name: {}", skill.name);
-            assert_eq!(resolve(skill.slug), Some(skill.slug), "slug: {}", skill.slug);
+            assert_eq!(
+                resolve(skill.name),
+                Some(skill.slug),
+                "name: {}",
+                skill.name
+            );
+            assert_eq!(
+                resolve(skill.slug),
+                Some(skill.slug),
+                "slug: {}",
+                skill.slug
+            );
         }
     }
 
@@ -418,7 +1037,10 @@ mod tests {
             resolve("3+ years of hands-on Kubernetes in production"),
             Some("kubernetes")
         );
-        assert_eq!(resolve("Strong experience with PostgreSQL"), Some("postgresql"));
+        assert_eq!(
+            resolve("Strong experience with PostgreSQL"),
+            Some("postgresql")
+        );
     }
 
     #[test]
@@ -449,12 +1071,19 @@ mod tests {
         let two_hops = hierarchy_credit("typescript", "programming");
         assert!(one_hop > two_hops, "{one_hop} should exceed {two_hops}");
         assert_eq!(hierarchy_credit("rust", "rust"), 1.0);
-        assert_eq!(hierarchy_credit("rust", "python"), 0.0, "siblings share nothing");
+        assert_eq!(
+            hierarchy_credit("rust", "python"),
+            0.0,
+            "siblings share nothing"
+        );
     }
 
     #[test]
     fn ancestors_run_from_the_skill_to_its_root() {
-        assert_eq!(ancestors("nextjs"), vec!["nextjs", "react", "javascript", "programming"]);
+        assert_eq!(
+            ancestors("nextjs"),
+            vec!["nextjs", "react", "javascript", "programming"]
+        );
         assert_eq!(ancestors("rust"), vec!["rust", "programming"]);
         assert!(ancestors("not-a-skill").is_empty());
     }

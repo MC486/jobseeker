@@ -228,8 +228,10 @@ fn looks_like_maximum(text: &str) -> bool {
 /// without one, USD is the pragmatic default and the raw text is retained either way.
 pub fn detect_currency(text: &str, country_hint: Option<&str>) -> String {
     static CODE: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r"(?i)\b(USD|CAD|AUD|NZD|EUR|GBP|JPY|INR|CHF|SEK|NOK|DKK|PLN|BRL|MXN|SGD|HKD|ZAR)\b")
-            .unwrap()
+        Regex::new(
+            r"(?i)\b(USD|CAD|AUD|NZD|EUR|GBP|JPY|INR|CHF|SEK|NOK|DKK|PLN|BRL|MXN|SGD|HKD|ZAR)\b",
+        )
+        .unwrap()
     });
     if let Some(m) = CODE.find(text) {
         return m.as_str().to_uppercase();
@@ -303,7 +305,10 @@ mod tests {
     #[test]
     fn a_single_figure_becomes_a_point_not_a_fabricated_range() {
         let s = p("$150,000 per year");
-        assert_eq!((s.min_cents, s.max_cents), (Some(150_000_00), Some(150_000_00)));
+        assert_eq!(
+            (s.min_cents, s.max_cents),
+            (Some(150_000_00), Some(150_000_00))
+        );
     }
 
     #[test]
@@ -321,7 +326,9 @@ mod tests {
         assert_eq!(p("£65,000 - £80,000 per annum").currency, "GBP");
         assert_eq!(p("C$120,000/yr").currency, "CAD");
         assert_eq!(
-            parse_salary("$120,000/yr", Some("CA"), None).unwrap().currency,
+            parse_salary("$120,000/yr", Some("CA"), None)
+                .unwrap()
+                .currency,
             "CAD",
             "a bare dollar sign on a Canadian posting is CAD"
         );
@@ -331,7 +338,10 @@ mod tests {
     #[test]
     fn european_separator_convention_is_handled() {
         let s = p("€80.000 - €95.000 pro Jahr");
-        assert_eq!((s.min_cents, s.max_cents), (Some(80_000_00), Some(95_000_00)));
+        assert_eq!(
+            (s.min_cents, s.max_cents),
+            (Some(80_000_00), Some(95_000_00))
+        );
 
         let decimal = p("€28,50 per hour");
         assert_eq!(decimal.min_cents, Some(28_50));
@@ -344,10 +354,17 @@ mod tests {
 
         let by_source =
             parse_salary("$120,000 - $150,000 a year", None, Some(SourceKind::Indeed)).unwrap();
-        assert!(by_source.is_estimate, "Indeed figures are frequently its own estimate");
+        assert!(
+            by_source.is_estimate,
+            "Indeed figures are frequently its own estimate"
+        );
 
-        let ats =
-            parse_salary("$120,000 - $150,000 a year", None, Some(SourceKind::Greenhouse)).unwrap();
+        let ats = parse_salary(
+            "$120,000 - $150,000 a year",
+            None,
+            Some(SourceKind::Greenhouse),
+        )
+        .unwrap();
         assert!(!ats.is_estimate, "an employer's own ATS states real bands");
     }
 
@@ -372,7 +389,10 @@ mod tests {
     #[test]
     fn implausible_figures_are_dropped_but_the_text_survives() {
         let s = p("$5 - $12 per year");
-        assert!(s.is_empty(), "nobody is paid $5/yr; this is a parse failure");
+        assert!(
+            s.is_empty(),
+            "nobody is paid $5/yr; this is a parse failure"
+        );
         assert_eq!(s.raw.as_deref(), Some("$5 - $12 per year"));
     }
 
@@ -392,15 +412,27 @@ mod tests {
     #[test]
     fn ranges_are_ordered_even_when_written_backwards() {
         let s = p("$225,000 to $185,000 per year");
-        assert!(s.min_cents <= s.max_cents, "the range must come out ordered");
+        assert!(
+            s.min_cents <= s.max_cents,
+            "the range must come out ordered"
+        );
         assert_eq!(s.min_cents, Some(185_000_00));
     }
 
     #[test]
     fn separator_disambiguation_is_correct_in_isolation() {
-        assert_eq!(disambiguate_separators("1,234.56").as_deref(), Some("1234.56"));
-        assert_eq!(disambiguate_separators("1.234,56").as_deref(), Some("1234.56"));
-        assert_eq!(disambiguate_separators("185,000").as_deref(), Some("185000"));
+        assert_eq!(
+            disambiguate_separators("1,234.56").as_deref(),
+            Some("1234.56")
+        );
+        assert_eq!(
+            disambiguate_separators("1.234,56").as_deref(),
+            Some("1234.56")
+        );
+        assert_eq!(
+            disambiguate_separators("185,000").as_deref(),
+            Some("185000")
+        );
         assert_eq!(disambiguate_separators("80.000").as_deref(), Some("80000"));
         assert_eq!(disambiguate_separators("28,50").as_deref(), Some("28.50"));
     }

@@ -181,12 +181,24 @@ fn day(d: NaiveDate) -> PartialDate {
 fn month_number(name: &str) -> Option<u32> {
     let n = name.to_lowercase();
     const MONTHS: [&str; 12] = [
-        "january", "february", "march", "april", "may", "june", "july", "august", "september",
-        "october", "november", "december",
+        "january",
+        "february",
+        "march",
+        "april",
+        "may",
+        "june",
+        "july",
+        "august",
+        "september",
+        "october",
+        "november",
+        "december",
     ];
     MONTHS
         .iter()
-        .position(|m| m.starts_with(&n[..n.len().min(3)]) && n.len() >= 3 && m.starts_with(&n) || *m == n)
+        .position(|m| {
+            m.starts_with(&n[..n.len().min(3)]) && n.len() >= 3 && m.starts_with(&n) || *m == n
+        })
         .map(|i| i as u32 + 1)
         .or_else(|| {
             MONTHS
@@ -235,7 +247,10 @@ mod tests {
     fn iso_timestamps_keep_second_precision() {
         let d = parsed("2026-09-02T18:14:02Z");
         assert_eq!(d.precision, DatePrecision::Exact);
-        assert_eq!(d.at.date_naive(), NaiveDate::from_ymd_opt(2026, 9, 2).unwrap());
+        assert_eq!(
+            d.at.date_naive(),
+            NaiveDate::from_ymd_opt(2026, 9, 2).unwrap()
+        );
     }
 
     #[test]
@@ -332,12 +347,19 @@ mod tests {
         assert_eq!(soon.at.year(), 2026, "October is still ahead of September");
 
         let wrapped = parse_close_date("Applications close January 10", now()).unwrap();
-        assert_eq!(wrapped.at.year(), 2027, "January must not resolve into the past");
+        assert_eq!(
+            wrapped.at.year(),
+            2027,
+            "January must not resolve into the past"
+        );
     }
 
     #[test]
     fn a_deadline_with_an_explicit_date_is_taken_literally() {
         let d = parse_close_date("2026-10-15", now()).unwrap();
-        assert_eq!(d.at.date_naive(), NaiveDate::from_ymd_opt(2026, 10, 15).unwrap());
+        assert_eq!(
+            d.at.date_naive(),
+            NaiveDate::from_ymd_opt(2026, 10, 15).unwrap()
+        );
     }
 }

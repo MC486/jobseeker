@@ -57,7 +57,11 @@ pub struct JobSnapshot {
     pub requires_clearance: Option<String>,
 }
 
-pub fn score(job: &JobSnapshot, profile: &ProfileSnapshot, cfg: &MatchingConfig) -> Result<MatchScore> {
+pub fn score(
+    job: &JobSnapshot,
+    profile: &ProfileSnapshot,
+    cfg: &MatchingConfig,
+) -> Result<MatchScore> {
     let started = std::time::Instant::now();
     let mut matches = Vec::new();
     let mut blockers = Vec::new();
@@ -134,7 +138,11 @@ pub fn score(job: &JobSnapshot, profile: &ProfileSnapshot, cfg: &MatchingConfig)
     })
 }
 
-fn judge_requirement(req: &Requirement, profile: &ProfileSnapshot, cfg: &MatchingConfig) -> RequirementMatch {
+fn judge_requirement(
+    req: &Requirement,
+    profile: &ProfileSnapshot,
+    cfg: &MatchingConfig,
+) -> RequirementMatch {
     if !req.kind.is_scored() {
         return RequirementMatch {
             requirement_id: req.id.clone(),
@@ -165,7 +173,11 @@ fn judge_requirement(req: &Requirement, profile: &ProfileSnapshot, cfg: &Matchin
     }
 }
 
-fn skill_verdict(req: &Requirement, profile: &ProfileSnapshot, cfg: &MatchingConfig) -> RequirementMatch {
+fn skill_verdict(
+    req: &Requirement,
+    profile: &ProfileSnapshot,
+    cfg: &MatchingConfig,
+) -> RequirementMatch {
     let mut best: Option<(&SkillEvidence, f32)> = None;
     for ev in &profile.skills {
         let credit = if ev.slug.is_empty() {
@@ -202,7 +214,10 @@ fn skill_verdict(req: &Requirement, profile: &ProfileSnapshot, cfg: &MatchingCon
         None => (None, 0.0, vec![]),
     };
 
-    let recency = recency_factor(best.and_then(|(e, _)| e.last_used_year), cfg.recency_decay_after_years);
+    let recency = recency_factor(
+        best.and_then(|(e, _)| e.last_used_year),
+        cfg.recency_decay_after_years,
+    );
     let (status, score) = verdict_from_years(years_have, req.min_years, score_raw * recency);
     let rationale = rationale_for(req, status, years_have);
 
@@ -224,7 +239,11 @@ fn slug_of(req: &Requirement) -> String {
         .to_string()
 }
 
-fn verdict_from_years(have: Option<f32>, needed: Option<f32>, similarity: f32) -> (VerdictStatus, f32) {
+fn verdict_from_years(
+    have: Option<f32>,
+    needed: Option<f32>,
+    similarity: f32,
+) -> (VerdictStatus, f32) {
     match (have, needed, similarity) {
         (None, _, s) if s <= 0.0 => (VerdictStatus::Gap, 0.0),
         (None, None, s) => (VerdictStatus::Met, s.clamp(0.0, 1.0)),
@@ -238,7 +257,9 @@ fn verdict_from_years(have: Option<f32>, needed: Option<f32>, similarity: f32) -
 }
 
 fn recency_factor(last_used_year: Option<i32>, decay_after: f32) -> f32 {
-    let Some(year) = last_used_year else { return 1.0 };
+    let Some(year) = last_used_year else {
+        return 1.0;
+    };
     let current = 2026i32;
     let age = (current - year) as f32;
     if age <= decay_after {
@@ -249,12 +270,18 @@ fn recency_factor(last_used_year: Option<i32>, decay_after: f32) -> f32 {
 }
 
 fn clearance_verdict(req: &Requirement, profile: &ProfileSnapshot) -> RequirementMatch {
-    let have = profile
-        .clearances
-        .iter()
-        .any(|c| req.text.to_ascii_lowercase().contains(&c.to_ascii_lowercase()) || c.eq_ignore_ascii_case(&req.normalized_text));
+    let have = profile.clearances.iter().any(|c| {
+        req.text
+            .to_ascii_lowercase()
+            .contains(&c.to_ascii_lowercase())
+            || c.eq_ignore_ascii_case(&req.normalized_text)
+    });
     let (status, score, rationale) = if have {
-        (VerdictStatus::Met, 1.0, "The required clearance is on the profile".to_string())
+        (
+            VerdictStatus::Met,
+            1.0,
+            "The required clearance is on the profile".to_string(),
+        )
     } else {
         (
             VerdictStatus::Gap,
@@ -284,11 +311,21 @@ fn education_verdict(req: &Requirement, profile: &ProfileSnapshot) -> Requiremen
             0.0,
             "Education level is not comparable".into(),
         ),
-        (Some(n), Some(h)) if h >= n => (VerdictStatus::Met, 1.0, "Meets the stated education level".into()),
-        (Some(n), Some(h)) if h + 1 >= n => {
-            (VerdictStatus::Partial, 0.6, "One level below the stated education".into())
-        }
-        _ => (VerdictStatus::Gap, 0.0, "Below the stated education level".into()),
+        (Some(n), Some(h)) if h >= n => (
+            VerdictStatus::Met,
+            1.0,
+            "Meets the stated education level".into(),
+        ),
+        (Some(n), Some(h)) if h + 1 >= n => (
+            VerdictStatus::Partial,
+            0.6,
+            "One level below the stated education".into(),
+        ),
+        _ => (
+            VerdictStatus::Gap,
+            0.0,
+            "Below the stated education level".into(),
+        ),
     };
     RequirementMatch {
         requirement_id: req.id.clone(),
@@ -319,7 +356,11 @@ fn coverage(
     (den > 0.0).then_some((num / den).clamp(0.0, 1.0))
 }
 
-fn compensation_fit(salary: &Salary, target_min: Option<i64>, flags: &mut Vec<String>) -> Option<f32> {
+fn compensation_fit(
+    salary: &Salary,
+    target_min: Option<i64>,
+    flags: &mut Vec<String>,
+) -> Option<f32> {
     let Some(target) = target_min else {
         flags.push("no_comp_target".into());
         return None;
@@ -342,7 +383,11 @@ fn compensation_fit(salary: &Salary, target_min: Option<i64>, flags: &mut Vec<St
     Some(((job_max - floor) as f32 / span).clamp(0.0, 1.0))
 }
 
-fn location_fit(job: &JobSnapshot, profile: &ProfileSnapshot, blockers: &mut Vec<Blocker>) -> Option<f32> {
+fn location_fit(
+    job: &JobSnapshot,
+    profile: &ProfileSnapshot,
+    blockers: &mut Vec<Blocker>,
+) -> Option<f32> {
     match job.work_mode {
         WorkMode::Remote if profile.accepts_remote => Some(1.0),
         WorkMode::Remote => Some(0.4),
@@ -350,12 +395,21 @@ fn location_fit(job: &JobSnapshot, profile: &ProfileSnapshot, blockers: &mut Vec
         WorkMode::Hybrid | WorkMode::Onsite => {
             let acceptable = job.locations.iter().any(|loc| {
                 profile.target_locations.iter().any(|pref| {
-                    loc.raw.to_ascii_lowercase().contains(&pref.to_ascii_lowercase())
-                        || loc.display().to_ascii_lowercase().contains(&pref.to_ascii_lowercase())
+                    loc.raw
+                        .to_ascii_lowercase()
+                        .contains(&pref.to_ascii_lowercase())
+                        || loc
+                            .display()
+                            .to_ascii_lowercase()
+                            .contains(&pref.to_ascii_lowercase())
                 })
             });
             if acceptable {
-                Some(if job.work_mode == WorkMode::Hybrid { 0.9 } else { 1.0 })
+                Some(if job.work_mode == WorkMode::Hybrid {
+                    0.9
+                } else {
+                    1.0
+                })
             } else if profile.willing_to_relocate {
                 Some(0.5)
             } else {
@@ -393,13 +447,18 @@ fn rationale_for(req: &Requirement, status: VerdictStatus, years_have: Option<f3
         }
         (VerdictStatus::Met, _, _) => format!("Evidence covers {}", req.text),
         (VerdictStatus::Partial, Some(n), Some(h)) => {
-            format!("Partial: about {h:.1} years against {n:.0} asked for {}", req.text)
+            format!(
+                "Partial: about {h:.1} years against {n:.0} asked for {}",
+                req.text
+            )
         }
         (VerdictStatus::Partial, _, _) => format!("Partial evidence for {}", req.text),
         (VerdictStatus::Gap, Some(n), Some(h)) => {
             format!("Missing roughly {:.1} years of {}", n - h, req.text)
         }
-        (VerdictStatus::Gap, Some(n), None) => format!("No evidence for {}; {n:.0}+ years asked", req.text),
+        (VerdictStatus::Gap, Some(n), None) => {
+            format!("No evidence for {}; {n:.0}+ years asked", req.text)
+        }
         (VerdictStatus::Gap, _, _) => format!("No evidence for {}", req.text),
         (VerdictStatus::Unknown, _, _) => format!("Could not judge {}", req.text),
     }
@@ -419,7 +478,12 @@ mod tests {
     use jobseeker_core::provenance::{Confidence, Provenance};
     use jobseeker_core::time::now;
 
-    fn req(text: &str, kind: RequirementKind, necessity: Necessity, years: Option<f32>) -> Requirement {
+    fn req(
+        text: &str,
+        kind: RequirementKind,
+        necessity: Necessity,
+        years: Option<f32>,
+    ) -> Requirement {
         Requirement {
             id: RequirementId::new(),
             job_id: JobId::new(),
@@ -486,8 +550,18 @@ mod tests {
     #[test]
     fn a_perfect_skill_overlap_is_a_strong_fit() {
         let job = job(vec![
-            req("Production Rust", RequirementKind::Skill, Necessity::Required, Some(5.0)),
-            req("Kubernetes", RequirementKind::Tool, Necessity::Required, Some(3.0)),
+            req(
+                "Production Rust",
+                RequirementKind::Skill,
+                Necessity::Required,
+                Some(5.0),
+            ),
+            req(
+                "Kubernetes",
+                RequirementKind::Tool,
+                Necessity::Required,
+                Some(3.0),
+            ),
         ]);
         let profile = profile(&[("rust", 8.0), ("kubernetes", 5.0)]);
         let score = score(&job, &profile, &MatchingConfig::default()).unwrap();
@@ -509,7 +583,9 @@ mod tests {
         let score = score(&job, &profile, &MatchingConfig::default()).unwrap();
         assert_eq!(score.requirement_matches[0].status, VerdictStatus::Gap);
         assert!(
-            score.requirement_matches[0].rationale.contains("Kubernetes"),
+            score.requirement_matches[0]
+                .rationale
+                .contains("Kubernetes"),
             "the rationale must name the gap: {}",
             score.requirement_matches[0].rationale
         );
@@ -517,18 +593,36 @@ mod tests {
 
     #[test]
     fn react_experience_partially_covers_a_javascript_requirement() {
-        let job = job(vec![req("JavaScript", RequirementKind::Skill, Necessity::Required, None)]);
+        let job = job(vec![req(
+            "JavaScript",
+            RequirementKind::Skill,
+            Necessity::Required,
+            None,
+        )]);
         let profile = profile(&[("react", 4.0)]);
         let score = score(&job, &profile, &MatchingConfig::default()).unwrap();
         let m = &score.requirement_matches[0];
-        assert_eq!(m.status, VerdictStatus::Met, "no year bar, any evidence meets it");
-        assert!(m.score < 1.0 && m.score > 0.0, "hierarchy decay must apply, got {}", m.score);
+        assert_eq!(
+            m.status,
+            VerdictStatus::Met,
+            "no year bar, any evidence meets it"
+        );
+        assert!(
+            m.score < 1.0 && m.score > 0.0,
+            "hierarchy decay must apply, got {}",
+            m.score
+        );
         assert_eq!(m.evidence[0].kind, EvidenceKind::SkillHierarchy);
     }
 
     #[test]
     fn javascript_does_not_cover_a_react_requirement() {
-        let job = job(vec![req("React", RequirementKind::Skill, Necessity::Required, None)]);
+        let job = job(vec![req(
+            "React",
+            RequirementKind::Skill,
+            Necessity::Required,
+            None,
+        )]);
         let profile = profile(&[("javascript", 10.0)]);
         let score = score(&job, &profile, &MatchingConfig::default()).unwrap();
         assert_eq!(score.requirement_matches[0].status, VerdictStatus::Gap);
@@ -536,7 +630,12 @@ mod tests {
 
     #[test]
     fn a_clearance_you_do_not_hold_caps_the_score() {
-        let mut job = job(vec![req("Production Rust", RequirementKind::Skill, Necessity::Required, None)]);
+        let mut job = job(vec![req(
+            "Production Rust",
+            RequirementKind::Skill,
+            Necessity::Required,
+            None,
+        )]);
         job.requires_clearance = Some("ts_sci".into());
         let profile = profile(&[("rust", 8.0)]);
         let score = score(&job, &profile, &MatchingConfig::default()).unwrap();

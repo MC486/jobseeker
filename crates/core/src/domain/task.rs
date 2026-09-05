@@ -208,7 +208,9 @@ mod tests {
     fn user_facing_work_outranks_background_work() {
         assert!(TaskKind::IngestCapture.default_priority() > TaskKind::Embed.default_priority());
         assert!(TaskKind::ExtractJob.default_priority() > TaskKind::ScoreMatch.default_priority());
-        assert!(TaskKind::Maintenance.default_priority() < TaskKind::RefreshListing.default_priority());
+        assert!(
+            TaskKind::Maintenance.default_priority() < TaskKind::RefreshListing.default_priority()
+        );
     }
 
     #[test]

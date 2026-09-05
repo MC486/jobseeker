@@ -44,7 +44,11 @@ impl std::str::FromStr for VerdictStatus {
             "partial" => VerdictStatus::Partial,
             "gap" => VerdictStatus::Gap,
             "unknown" => VerdictStatus::Unknown,
-            other => return Err(crate::Error::BadRequest(format!("unknown verdict: {other}"))),
+            other => {
+                return Err(crate::Error::BadRequest(format!(
+                    "unknown verdict: {other}"
+                )))
+            }
         })
     }
 }

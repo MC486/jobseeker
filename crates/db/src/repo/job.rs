@@ -85,7 +85,10 @@ impl JobSort {
 pub async fn list(db: &Db, filter: &JobFilter) -> Result<Page<JobListRow>> {
     let limit = clamp_limit(filter.limit);
     let sort_col = filter.sort.column();
-    let use_fts = filter.query.as_deref().is_some_and(|q| !q.trim().is_empty());
+    let use_fts = filter
+        .query
+        .as_deref()
+        .is_some_and(|q| !q.trim().is_empty());
 
     let mut sql = String::from(
         "SELECT j.id, j.title, c.name AS company_name, c.slug AS company_slug, j.status,
@@ -209,13 +212,19 @@ pub async fn list(db: &Db, filter: &JobFilter) -> Result<Page<JobListRow>> {
             salary_max_cents: row.try_get("salary_max_cents").map_err(db_err)?,
             salary_currency: row.try_get("salary_currency").map_err(db_err)?,
             salary_period: row.try_get("salary_period").map_err(db_err)?,
-            salary_is_estimate: row.try_get::<i64, _>("salary_is_estimate").map_err(db_err)? != 0,
+            salary_is_estimate: row
+                .try_get::<i64, _>("salary_is_estimate")
+                .map_err(db_err)?
+                != 0,
             posted_at: row.try_get("posted_at").map_err(db_err)?,
             closes_at: row.try_get("closes_at").map_err(db_err)?,
             primary_location: row.try_get("primary_location").map_err(db_err)?,
             user_rating: row.try_get("user_rating").map_err(db_err)?,
             is_archived: row.try_get::<i64, _>("is_archived").map_err(db_err)? != 0,
-            extraction_partial: row.try_get::<i64, _>("extraction_partial").map_err(db_err)? != 0,
+            extraction_partial: row
+                .try_get::<i64, _>("extraction_partial")
+                .map_err(db_err)?
+                != 0,
             updated_at: row.try_get("updated_at").map_err(db_err)?,
         });
     }
@@ -225,9 +234,14 @@ pub async fn list(db: &Db, filter: &JobFilter) -> Result<Page<JobListRow>> {
     let next_cursor = if has_more && !use_fts {
         items.last().map(|last| {
             let sort_key = match filter.sort {
-                JobSort::PostedAt | JobSort::Relevance => last.posted_at.clone().unwrap_or_default(),
+                JobSort::PostedAt | JobSort::Relevance => {
+                    last.posted_at.clone().unwrap_or_default()
+                }
                 JobSort::UpdatedAt => last.updated_at.clone(),
-                JobSort::Salary => last.salary_max_cents.map(|v| v.to_string()).unwrap_or_default(),
+                JobSort::Salary => last
+                    .salary_max_cents
+                    .map(|v| v.to_string())
+                    .unwrap_or_default(),
             };
             Cursor {
                 sort_key,
@@ -261,7 +275,9 @@ pub async fn count_by_status(db: &Db) -> Result<Vec<(String, i64)>> {
 
 /// Open jobs closing within `days` — the nag list.
 pub async fn closing_soon(db: &Db, days: i64, limit: i64) -> Result<Vec<JobListRow>> {
-    let cutoff = jobseeker_core::time::to_rfc3339(&(jobseeker_core::time::now() + chrono::Duration::days(days)));
+    let cutoff = jobseeker_core::time::to_rfc3339(
+        &(jobseeker_core::time::now() + chrono::Duration::days(days)),
+    );
     list(
         db,
         &JobFilter {
@@ -361,14 +377,146 @@ pub async fn reindex_fts(db: &Db, job_id: &JobId) -> Result<()> {
     .bind(rowid)
     .bind(row.try_get::<String, _>("title").map_err(db_err)?)
     .bind(row.try_get::<String, _>("company_name").map_err(db_err)?)
-    .bind(row.try_get::<String, _>("description_text").map_err(db_err)?)
-    .bind(row.try_get::<String, _>("requirements_text").map_err(db_err)?)
+    .bind(
+        row.try_get::<String, _>("description_text")
+            .map_err(db_err)?,
+    )
+    .bind(
+        row.try_get::<String, _>("requirements_text")
+            .map_err(db_err)?,
+    )
     .execute(&mut *tx)
     .await
     .map_err(db_err)?;
 
     tx.commit().await.map_err(db_err)?;
     Ok(())
+}
+
+/// One requirement as the job-detail page renders it.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RequirementRow {
+    pub id: String,
+    pub text: String,
+    pub normalized_text: String,
+    pub kind: String,
+    pub necessity: String,
+    pub min_years: Option<f64>,
+    pub is_blocker: bool,
+}
+
+/// Full job record for the detail view and the CLI `show` command.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct JobDetail {
+    pub id: String,
+    pub company_id: String,
+    pub company_name: String,
+    pub company_slug: String,
+    pub title: String,
+    pub status: String,
+    pub work_mode: String,
+    pub seniority: String,
+    pub employment_type: String,
+    pub salary_min_cents: Option<i64>,
+    pub salary_max_cents: Option<i64>,
+    pub salary_currency: Option<String>,
+    pub salary_period: String,
+    pub salary_is_estimate: bool,
+    pub salary_raw: Option<String>,
+    pub posted_at: Option<String>,
+    pub closes_at: Option<String>,
+    pub apply_url: Option<String>,
+    pub description_md: String,
+    pub file_path: Option<String>,
+    pub content_hash: String,
+    pub extraction_partial: bool,
+    pub extraction_model: Option<String>,
+    pub locations: Vec<String>,
+    pub requirements: Vec<RequirementRow>,
+    pub updated_at: String,
+}
+
+pub async fn get(db: &Db, id: &JobId) -> Result<Option<JobDetail>> {
+    let row = sqlx::query(
+        "SELECT j.id, j.company_id, c.name AS company_name, c.slug AS company_slug,
+                j.title, j.status, j.work_mode, j.seniority, j.employment_type,
+                j.salary_min_cents, j.salary_max_cents, j.salary_currency, j.salary_period,
+                j.salary_is_estimate, j.salary_raw, j.posted_at, j.closes_at, j.apply_url,
+                j.description_md, j.file_path, j.content_hash, j.extraction_partial,
+                j.extraction_model, j.updated_at
+           FROM job j
+           JOIN company c ON c.id = j.company_id
+          WHERE j.id = ?1 AND j.deleted_at IS NULL",
+    )
+    .bind(id.as_str())
+    .fetch_optional(db.reader())
+    .await
+    .map_err(db_err)?;
+    let Some(row) = row else { return Ok(None) };
+
+    let locations: Vec<String> = sqlx::query_scalar(
+        "SELECT raw FROM job_location WHERE job_id = ?1 ORDER BY is_primary DESC, ordinal ASC",
+    )
+    .bind(id.as_str())
+    .fetch_all(db.reader())
+    .await
+    .map_err(db_err)?;
+
+    let req_rows = sqlx::query(
+        "SELECT id, text, normalized_text, kind, necessity, min_years, is_blocker
+           FROM requirement WHERE job_id = ?1 ORDER BY ordinal ASC",
+    )
+    .bind(id.as_str())
+    .fetch_all(db.reader())
+    .await
+    .map_err(db_err)?;
+    let mut requirements = Vec::with_capacity(req_rows.len());
+    for r in req_rows {
+        requirements.push(RequirementRow {
+            id: r.try_get("id").map_err(db_err)?,
+            text: r.try_get("text").map_err(db_err)?,
+            normalized_text: r.try_get("normalized_text").map_err(db_err)?,
+            kind: r.try_get("kind").map_err(db_err)?,
+            necessity: r.try_get("necessity").map_err(db_err)?,
+            min_years: r.try_get("min_years").map_err(db_err)?,
+            is_blocker: r.try_get::<i64, _>("is_blocker").map_err(db_err)? != 0,
+        });
+    }
+
+    Ok(Some(JobDetail {
+        id: row.try_get("id").map_err(db_err)?,
+        company_id: row.try_get("company_id").map_err(db_err)?,
+        company_name: row.try_get("company_name").map_err(db_err)?,
+        company_slug: row.try_get("company_slug").map_err(db_err)?,
+        title: row.try_get("title").map_err(db_err)?,
+        status: row.try_get("status").map_err(db_err)?,
+        work_mode: row.try_get("work_mode").map_err(db_err)?,
+        seniority: row.try_get("seniority").map_err(db_err)?,
+        employment_type: row.try_get("employment_type").map_err(db_err)?,
+        salary_min_cents: row.try_get("salary_min_cents").map_err(db_err)?,
+        salary_max_cents: row.try_get("salary_max_cents").map_err(db_err)?,
+        salary_currency: row.try_get("salary_currency").map_err(db_err)?,
+        salary_period: row.try_get("salary_period").map_err(db_err)?,
+        salary_is_estimate: row
+            .try_get::<i64, _>("salary_is_estimate")
+            .map_err(db_err)?
+            != 0,
+        salary_raw: row.try_get("salary_raw").map_err(db_err)?,
+        posted_at: row.try_get("posted_at").map_err(db_err)?,
+        closes_at: row.try_get("closes_at").map_err(db_err)?,
+        apply_url: row.try_get("apply_url").map_err(db_err)?,
+        description_md: row.try_get("description_md").map_err(db_err)?,
+        file_path: row.try_get("file_path").map_err(db_err)?,
+        content_hash: row.try_get("content_hash").map_err(db_err)?,
+        extraction_partial: row
+            .try_get::<i64, _>("extraction_partial")
+            .map_err(db_err)?
+            != 0,
+        extraction_model: row.try_get("extraction_model").map_err(db_err)?,
+        locations,
+        requirements,
+        updated_at: row.try_get("updated_at").map_err(db_err)?,
+    }))
 }
 
 /// Mark every score for this job stale. A cheap UPDATE beats deleting rows: the UI can keep
@@ -401,7 +549,9 @@ mod tests {
         period: SalaryPeriod,
         posted_at: &str,
     ) -> JobId {
-        let company_id = company::resolve_or_create(db, company_name, None).await.unwrap();
+        let company_id = company::resolve_or_create(db, company_name, None)
+            .await
+            .unwrap();
         let id = JobId::new();
         sqlx::query(
             "INSERT INTO job (id, company_id, slug, title, title_normalized, status, work_mode,
@@ -429,8 +579,28 @@ mod tests {
     #[tokio::test]
     async fn lists_newest_first_by_default() {
         let db = Db::open_in_memory().await.unwrap();
-        insert_job(&db, "Acme", "Old Role", JobStatus::Open, WorkMode::Remote, None, SalaryPeriod::Year, "2026-01-01T00:00:00Z").await;
-        insert_job(&db, "Acme", "New Role", JobStatus::Open, WorkMode::Remote, None, SalaryPeriod::Year, "2026-09-01T00:00:00Z").await;
+        insert_job(
+            &db,
+            "Acme",
+            "Old Role",
+            JobStatus::Open,
+            WorkMode::Remote,
+            None,
+            SalaryPeriod::Year,
+            "2026-01-01T00:00:00Z",
+        )
+        .await;
+        insert_job(
+            &db,
+            "Acme",
+            "New Role",
+            JobStatus::Open,
+            WorkMode::Remote,
+            None,
+            SalaryPeriod::Year,
+            "2026-09-01T00:00:00Z",
+        )
+        .await;
 
         let page = list(&db, &JobFilter::default()).await.unwrap();
         assert_eq!(page.items.len(), 2);
@@ -441,9 +611,39 @@ mod tests {
     #[tokio::test]
     async fn filters_compose() {
         let db = Db::open_in_memory().await.unwrap();
-        insert_job(&db, "Acme", "Remote Open", JobStatus::Open, WorkMode::Remote, None, SalaryPeriod::Year, "2026-09-01T00:00:00Z").await;
-        insert_job(&db, "Acme", "Onsite Open", JobStatus::Open, WorkMode::Onsite, None, SalaryPeriod::Year, "2026-09-02T00:00:00Z").await;
-        insert_job(&db, "Acme", "Remote Closed", JobStatus::Closed, WorkMode::Remote, None, SalaryPeriod::Year, "2026-09-03T00:00:00Z").await;
+        insert_job(
+            &db,
+            "Acme",
+            "Remote Open",
+            JobStatus::Open,
+            WorkMode::Remote,
+            None,
+            SalaryPeriod::Year,
+            "2026-09-01T00:00:00Z",
+        )
+        .await;
+        insert_job(
+            &db,
+            "Acme",
+            "Onsite Open",
+            JobStatus::Open,
+            WorkMode::Onsite,
+            None,
+            SalaryPeriod::Year,
+            "2026-09-02T00:00:00Z",
+        )
+        .await;
+        insert_job(
+            &db,
+            "Acme",
+            "Remote Closed",
+            JobStatus::Closed,
+            WorkMode::Remote,
+            None,
+            SalaryPeriod::Year,
+            "2026-09-03T00:00:00Z",
+        )
+        .await;
 
         let page = list(
             &db,
@@ -463,9 +663,29 @@ mod tests {
     async fn salary_filter_annualizes_hourly_rates() {
         let db = Db::open_in_memory().await.unwrap();
         // $90/hr annualizes to $187,200 — above a $150k floor.
-        insert_job(&db, "Acme", "Contract", JobStatus::Open, WorkMode::Remote, Some(90_00), SalaryPeriod::Hour, "2026-09-01T00:00:00Z").await;
+        insert_job(
+            &db,
+            "Acme",
+            "Contract",
+            JobStatus::Open,
+            WorkMode::Remote,
+            Some(90_00),
+            SalaryPeriod::Hour,
+            "2026-09-01T00:00:00Z",
+        )
+        .await;
         // $120k/yr is below it.
-        insert_job(&db, "Acme", "Salaried", JobStatus::Open, WorkMode::Remote, Some(120_000_00), SalaryPeriod::Year, "2026-09-02T00:00:00Z").await;
+        insert_job(
+            &db,
+            "Acme",
+            "Salaried",
+            JobStatus::Open,
+            WorkMode::Remote,
+            Some(120_000_00),
+            SalaryPeriod::Year,
+            "2026-09-02T00:00:00Z",
+        )
+        .await;
 
         let page = list(
             &db,
@@ -483,14 +703,28 @@ mod tests {
     #[tokio::test]
     async fn archived_jobs_are_hidden_unless_asked_for() {
         let db = Db::open_in_memory().await.unwrap();
-        let id = insert_job(&db, "Acme", "Archived", JobStatus::Open, WorkMode::Remote, None, SalaryPeriod::Year, "2026-09-01T00:00:00Z").await;
+        let id = insert_job(
+            &db,
+            "Acme",
+            "Archived",
+            JobStatus::Open,
+            WorkMode::Remote,
+            None,
+            SalaryPeriod::Year,
+            "2026-09-01T00:00:00Z",
+        )
+        .await;
         sqlx::query("UPDATE job SET is_archived = 1 WHERE id = ?1")
             .bind(id.as_str())
             .execute(db.writer())
             .await
             .unwrap();
 
-        assert!(list(&db, &JobFilter::default()).await.unwrap().items.is_empty());
+        assert!(list(&db, &JobFilter::default())
+            .await
+            .unwrap()
+            .items
+            .is_empty());
         let with_archived = list(
             &db,
             &JobFilter {
@@ -548,7 +782,17 @@ mod tests {
     #[tokio::test]
     async fn full_text_search_finds_requirement_text() {
         let db = Db::open_in_memory().await.unwrap();
-        let id = insert_job(&db, "Acme", "Platform Engineer", JobStatus::Open, WorkMode::Remote, None, SalaryPeriod::Year, "2026-09-01T00:00:00Z").await;
+        let id = insert_job(
+            &db,
+            "Acme",
+            "Platform Engineer",
+            JobStatus::Open,
+            WorkMode::Remote,
+            None,
+            SalaryPeriod::Year,
+            "2026-09-01T00:00:00Z",
+        )
+        .await;
         sqlx::query(
             "INSERT INTO requirement (id, job_id, text, normalized_text, kind, necessity,
                                       created_at, updated_at)
@@ -577,7 +821,17 @@ mod tests {
     #[tokio::test]
     async fn reindexing_twice_does_not_duplicate_hits() {
         let db = Db::open_in_memory().await.unwrap();
-        let id = insert_job(&db, "Acme", "Rust Engineer", JobStatus::Open, WorkMode::Remote, None, SalaryPeriod::Year, "2026-09-01T00:00:00Z").await;
+        let id = insert_job(
+            &db,
+            "Acme",
+            "Rust Engineer",
+            JobStatus::Open,
+            WorkMode::Remote,
+            None,
+            SalaryPeriod::Year,
+            "2026-09-01T00:00:00Z",
+        )
+        .await;
         reindex_fts(&db, &id).await.unwrap();
         reindex_fts(&db, &id).await.unwrap();
 
@@ -596,10 +850,50 @@ mod tests {
     #[tokio::test]
     async fn status_counts_exclude_archived_and_deleted() {
         let db = Db::open_in_memory().await.unwrap();
-        insert_job(&db, "Acme", "A", JobStatus::Open, WorkMode::Remote, None, SalaryPeriod::Year, "2026-09-01T00:00:00Z").await;
-        insert_job(&db, "Acme", "B", JobStatus::Open, WorkMode::Remote, None, SalaryPeriod::Year, "2026-09-02T00:00:00Z").await;
-        let closed = insert_job(&db, "Acme", "C", JobStatus::Closed, WorkMode::Remote, None, SalaryPeriod::Year, "2026-09-03T00:00:00Z").await;
-        let archived = insert_job(&db, "Acme", "D", JobStatus::Open, WorkMode::Remote, None, SalaryPeriod::Year, "2026-09-04T00:00:00Z").await;
+        insert_job(
+            &db,
+            "Acme",
+            "A",
+            JobStatus::Open,
+            WorkMode::Remote,
+            None,
+            SalaryPeriod::Year,
+            "2026-09-01T00:00:00Z",
+        )
+        .await;
+        insert_job(
+            &db,
+            "Acme",
+            "B",
+            JobStatus::Open,
+            WorkMode::Remote,
+            None,
+            SalaryPeriod::Year,
+            "2026-09-02T00:00:00Z",
+        )
+        .await;
+        let closed = insert_job(
+            &db,
+            "Acme",
+            "C",
+            JobStatus::Closed,
+            WorkMode::Remote,
+            None,
+            SalaryPeriod::Year,
+            "2026-09-03T00:00:00Z",
+        )
+        .await;
+        let archived = insert_job(
+            &db,
+            "Acme",
+            "D",
+            JobStatus::Open,
+            WorkMode::Remote,
+            None,
+            SalaryPeriod::Year,
+            "2026-09-04T00:00:00Z",
+        )
+        .await;
         sqlx::query("UPDATE job SET is_archived = 1 WHERE id = ?1")
             .bind(archived.as_str())
             .execute(db.writer())
@@ -616,7 +910,17 @@ mod tests {
     #[tokio::test]
     async fn marking_scores_stale_preserves_the_last_known_value() {
         let db = Db::open_in_memory().await.unwrap();
-        let job = insert_job(&db, "Acme", "Role", JobStatus::Open, WorkMode::Remote, None, SalaryPeriod::Year, "2026-09-01T00:00:00Z").await;
+        let job = insert_job(
+            &db,
+            "Acme",
+            "Role",
+            JobStatus::Open,
+            WorkMode::Remote,
+            None,
+            SalaryPeriod::Year,
+            "2026-09-01T00:00:00Z",
+        )
+        .await;
         sqlx::query(
             "INSERT INTO profile (id, name, created_at, updated_at)
              VALUES ('p1', 'default', 'now', 'now');
@@ -636,6 +940,9 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(stale, 1);
-        assert!((overall - 0.81).abs() < 1e-9, "the value must survive staleness");
+        assert!(
+            (overall - 0.81).abs() < 1e-9,
+            "the value must survive staleness"
+        );
     }
 }

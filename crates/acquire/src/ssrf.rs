@@ -37,7 +37,8 @@ impl Guard {
         let host = parsed
             .host_str()
             .ok_or_else(|| Error::InvalidUrl("url has no host".into()))?;
-        if host.eq_ignore_ascii_case("localhost") || host.eq_ignore_ascii_case("metadata.google.internal")
+        if host.eq_ignore_ascii_case("localhost")
+            || host.eq_ignore_ascii_case("metadata.google.internal")
         {
             return self.reject(host);
         }
@@ -59,7 +60,10 @@ impl Guard {
 
     fn reject(&self, host: &str) -> Result<()> {
         if self.allow_private {
-            tracing::warn!(host, "allowing a private-network fetch (acquire.allow_private_networks)");
+            tracing::warn!(
+                host,
+                "allowing a private-network fetch (acquire.allow_private_networks)"
+            );
             return Ok(());
         }
         Err(Error::BlockedPrivateNetwork(host.to_string()))
@@ -168,18 +172,26 @@ mod tests {
     fn a_literal_private_url_is_rejected_without_resolving() {
         let guard = Guard::new(false);
         assert_eq!(
-            guard.check("http://127.0.0.1:8787/jobs").unwrap_err().code(),
+            guard
+                .check("http://127.0.0.1:8787/jobs")
+                .unwrap_err()
+                .code(),
             "blocked_private_network"
         );
         assert_eq!(
-            guard.check("http://169.254.169.254/latest/meta-data/").unwrap_err().code(),
+            guard
+                .check("http://169.254.169.254/latest/meta-data/")
+                .unwrap_err()
+                .code(),
             "blocked_private_network"
         );
         assert_eq!(
             guard.check("http://localhost/admin").unwrap_err().code(),
             "blocked_private_network"
         );
-        assert!(guard.check("https://boards.greenhouse.io/acme/jobs/1").is_ok());
+        assert!(guard
+            .check("https://boards.greenhouse.io/acme/jobs/1")
+            .is_ok());
     }
 
     #[test]
@@ -194,7 +206,13 @@ mod tests {
     #[test]
     fn non_http_schemes_are_rejected_even_when_the_host_is_public() {
         let guard = Guard::new(false);
-        assert_eq!(guard.check("file:///etc/passwd").unwrap_err().code(), "invalid_url");
-        assert_eq!(guard.check("gopher://example.com/").unwrap_err().code(), "invalid_url");
+        assert_eq!(
+            guard.check("file:///etc/passwd").unwrap_err().code(),
+            "invalid_url"
+        );
+        assert_eq!(
+            guard.check("gopher://example.com/").unwrap_err().code(),
+            "invalid_url"
+        );
     }
 }

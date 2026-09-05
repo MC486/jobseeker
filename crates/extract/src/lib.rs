@@ -52,44 +52,15 @@ impl Extraction {
 }
 
 /// Run every deterministic stage, then optionally the model, then inference.
+///
+/// Deterministic HTML parsing is a separate `fn` so `scraper::Html` (`!Send`) never
+/// appears in the async state machine and workers can run on the multi-thread runtime.
 pub async fn extract(
     input: &ExtractInput,
     llm: Option<&dyn LlmClient>,
     max_llm_chars: usize,
 ) -> Result<Extraction> {
-    let mut job = ExtractedJob::default();
-    let is_json = input
-        .content_type
-        .as_deref()
-        .is_some_and(|c| c.contains("json"))
-        || input.body.trim_start().starts_with('{')
-        || input.body.trim_start().starts_with('[');
-
-    if is_json {
-        jsonld::apply_json_value(&mut job, &parse_json(&input.body), Provenance::Api);
-    }
-
-    let document = html::parse(&input.body);
-    jsonld::apply_from_html(&mut job, &document, input.page_meta.as_ref());
-
-    if let Some(url) = &input.url {
-        rules::apply_url_hints(&mut job, url, input.source);
-    }
-    rules::apply_html(&mut job, &document, input.source);
-
-    let description_md = job
-        .description_md
-        .as_ref()
-        .map(|s| tidy_markdown(&s.value))
-        .or_else(|| job.description_html.as_ref().map(|s| html::to_markdown(&s.value)))
-        .unwrap_or_else(|| html::to_markdown(&input.body));
-    if job.description_md.is_none() && !description_md.trim().is_empty() {
-        merge_field(
-            &mut job.description_md,
-            Sourced::new(description_md.clone(), Provenance::Rules),
-        );
-    }
-    let description_text = markdown_to_text(&description_md);
+    let (mut job, description_md, description_text) = extract_deterministic(input);
 
     let mut partial = false;
     let mut model = None;
@@ -122,6 +93,46 @@ pub async fn extract(
         partial,
         model,
     })
+}
+
+fn extract_deterministic(input: &ExtractInput) -> (ExtractedJob, String, String) {
+    let mut job = ExtractedJob::default();
+    let is_json = input
+        .content_type
+        .as_deref()
+        .is_some_and(|c| c.contains("json"))
+        || input.body.trim_start().starts_with('{')
+        || input.body.trim_start().starts_with('[');
+
+    if is_json {
+        jsonld::apply_json_value(&mut job, &parse_json(&input.body), Provenance::Api);
+    }
+
+    let document = html::parse(&input.body);
+    jsonld::apply_from_html(&mut job, &document, input.page_meta.as_ref());
+    if let Some(url) = &input.url {
+        rules::apply_url_hints(&mut job, url, input.source);
+    }
+    rules::apply_html(&mut job, &document, input.source);
+
+    let description_md = job
+        .description_md
+        .as_ref()
+        .map(|s| tidy_markdown(&s.value))
+        .or_else(|| {
+            job.description_html
+                .as_ref()
+                .map(|s| html::to_markdown(&s.value))
+        })
+        .unwrap_or_else(|| html::to_markdown(&input.body));
+    if job.description_md.is_none() && !description_md.trim().is_empty() {
+        merge_field(
+            &mut job.description_md,
+            Sourced::new(description_md.clone(), Provenance::Rules),
+        );
+    }
+    let description_text = markdown_to_text(&description_md);
+    (job, description_md, description_text)
 }
 
 fn parse_json(body: &str) -> serde_json::Value {
@@ -172,18 +183,37 @@ mod tests {
 
     #[tokio::test]
     async fn json_ld_alone_produces_a_minimum_viable_job() {
-        let out = extract(&input(GREENHOUSE_HTML), None, 16_000).await.unwrap();
+        let out = extract(&input(GREENHOUSE_HTML), None, 16_000)
+            .await
+            .unwrap();
         assert!(out.job.has_minimum_viable_fields());
-        assert_eq!(out.job.title.as_ref().unwrap().value, "Senior Platform Engineer");
-        assert_eq!(out.job.company_name.as_ref().unwrap().value, "Acme Robotics");
-        assert_eq!(out.job.title.as_ref().unwrap().provenance, Provenance::Jsonld);
+        assert_eq!(
+            out.job.title.as_ref().unwrap().value,
+            "Senior Platform Engineer"
+        );
+        assert_eq!(
+            out.job.company_name.as_ref().unwrap().value,
+            "Acme Robotics"
+        );
+        assert_eq!(
+            out.job.title.as_ref().unwrap().provenance,
+            Provenance::Jsonld
+        );
         assert_eq!(out.job.work_mode.as_ref().unwrap().value, WorkMode::Remote);
-        assert_eq!(out.job.employment_type.as_ref().unwrap().value, EmploymentType::FullTime);
-        assert!(!out.job.locations.is_empty(), "remote-US must become a location");
+        assert_eq!(
+            out.job.employment_type.as_ref().unwrap().value,
+            EmploymentType::FullTime
+        );
+        assert!(
+            !out.job.locations.is_empty(),
+            "remote-US must become a location"
+        );
         assert!(out.job.salary.is_some());
         assert!(!out.requirements.is_empty(), "bullets must be atomized");
         assert!(
-            out.requirements.iter().any(|r| r.text.contains("Kubernetes")),
+            out.requirements
+                .iter()
+                .any(|r| r.text.contains("Kubernetes")),
             "got {:?}",
             out.requirements.iter().map(|r| &r.text).collect::<Vec<_>>()
         );
@@ -192,7 +222,9 @@ mod tests {
     #[tokio::test]
     async fn the_model_is_not_consulted_when_json_ld_already_filled_the_gaps() {
         let mock = MockClient::new("mock");
-        let out = extract(&input(GREENHOUSE_HTML), Some(&mock), 16_000).await.unwrap();
+        let out = extract(&input(GREENHOUSE_HTML), Some(&mock), 16_000)
+            .await
+            .unwrap();
         assert_eq!(
             mock.calls_for(Purpose::ExtractFields),
             0,
@@ -214,9 +246,18 @@ mod tests {
         </body></html>"#;
         let out = extract(&input(html), None, 16_000).await.unwrap();
         assert_eq!(out.job.title.as_ref().unwrap().value, "Staff Engineer");
-        assert_eq!(out.job.seniority.as_ref().unwrap().value, jobseeker_core::domain::enums::Seniority::Staff);
-        assert!(out.job.salary.is_some(), "the salary string must be captured");
-        assert!(out.partial, "without a model and without JSON-LD, several fields stay empty");
+        assert_eq!(
+            out.job.seniority.as_ref().unwrap().value,
+            jobseeker_core::domain::enums::Seniority::Staff
+        );
+        assert!(
+            out.job.salary.is_some(),
+            "the salary string must be captured"
+        );
+        assert!(
+            out.partial,
+            "without a model and without JSON-LD, several fields stay empty"
+        );
     }
 
     #[tokio::test]

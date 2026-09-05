@@ -15,11 +15,47 @@ use url::Url;
 /// Query parameters that identify the *reader*, not the posting. Dropping them is what makes
 /// two links to the same job compare equal.
 const TRACKING_PARAMS: &[&str] = &[
-    "gclid", "fbclid", "msclkid", "trk", "trkinfo", "refid", "originalsubdomain", "position",
-    "pagenum", "ebp", "origin", "from", "source", "vjk", "tk", "sk", "ref", "referer",
-    "referrer", "savedsearchid", "alid", "eid", "cid", "mid", "iis", "iisn", "advn", "adid",
-    "sponsored", "hidesmartapply", "applied", "campaignid", "gh_src", "lever-source",
-    "lever-origin", "source_id", "recruiter", "share", "shared", "spa", "seen",
+    "gclid",
+    "fbclid",
+    "msclkid",
+    "trk",
+    "trkinfo",
+    "refid",
+    "originalsubdomain",
+    "position",
+    "pagenum",
+    "ebp",
+    "origin",
+    "from",
+    "source",
+    "vjk",
+    "tk",
+    "sk",
+    "ref",
+    "referer",
+    "referrer",
+    "savedsearchid",
+    "alid",
+    "eid",
+    "cid",
+    "mid",
+    "iis",
+    "iisn",
+    "advn",
+    "adid",
+    "sponsored",
+    "hidesmartapply",
+    "applied",
+    "campaignid",
+    "gh_src",
+    "lever-source",
+    "lever-origin",
+    "source_id",
+    "recruiter",
+    "share",
+    "shared",
+    "spa",
+    "seen",
 ];
 
 /// A canonicalized URL plus the identity we deduplicate on.
@@ -139,8 +175,7 @@ struct Identity {
 fn site_identity(host: &str, path: &str, url: &Url) -> Option<Identity> {
     static LINKEDIN_VIEW: Lazy<Regex> =
         Lazy::new(|| Regex::new(r"^/jobs/view/(?:[^/]*-)?(\d{6,})").unwrap());
-    static GREENHOUSE: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r"^/([^/]+)/jobs/(\d+)").unwrap());
+    static GREENHOUSE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^/([^/]+)/jobs/(\d+)").unwrap());
     static LEVER: Lazy<Regex> = Lazy::new(|| {
         Regex::new(r"^/([^/]+)/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})")
             .unwrap()
@@ -149,10 +184,8 @@ fn site_identity(host: &str, path: &str, url: &Url) -> Option<Identity> {
         Regex::new(r"^/([^/]+)/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})")
             .unwrap()
     });
-    static WORKDAY: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r"_((?:R|REQ|JR)[-_]?\d{3,})$").unwrap());
-    static SMARTRECRUITERS: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r"^/([^/]+)/(\d{9,})").unwrap());
+    static WORKDAY: Lazy<Regex> = Lazy::new(|| Regex::new(r"_((?:R|REQ|JR)[-_]?\d{3,})$").unwrap());
+    static SMARTRECRUITERS: Lazy<Regex> = Lazy::new(|| Regex::new(r"^/([^/]+)/(\d{9,})").unwrap());
 
     let param = |k: &str| {
         url.query_pairs()
@@ -308,12 +341,14 @@ fn strip_tracking_params(url: &mut Url) {
 pub fn ats_api_url(c: &CanonicalUrl) -> Option<String> {
     let (board, id) = (c.board.as_deref()?, c.source_job_id.as_deref()?);
     Some(match c.source {
-        SourceKind::Greenhouse => format!(
-            "https://boards-api.greenhouse.io/v1/boards/{board}/jobs/{id}?questions=false"
-        ),
+        SourceKind::Greenhouse => {
+            format!("https://boards-api.greenhouse.io/v1/boards/{board}/jobs/{id}?questions=false")
+        }
         SourceKind::Lever => format!("https://api.lever.co/v0/postings/{board}/{id}"),
         SourceKind::Ashby => {
-            format!("https://api.ashbyhq.com/posting-api/job-board/{board}?includeCompensation=true")
+            format!(
+                "https://api.ashbyhq.com/posting-api/job-board/{board}?includeCompensation=true"
+            )
         }
         SourceKind::SmartRecruiters => {
             format!("https://api.smartrecruiters.com/v1/companies/{board}/postings/{id}")
@@ -381,7 +416,10 @@ mod tests {
     #[test]
     fn ats_urls_expose_board_and_id_for_cross_post_matching() {
         let gh = canon("https://job-boards.greenhouse.io/acmerobotics/jobs/5512034?gh_src=abc");
-        assert_eq!(gh.canonical, "https://boards.greenhouse.io/acmerobotics/jobs/5512034");
+        assert_eq!(
+            gh.canonical,
+            "https://boards.greenhouse.io/acmerobotics/jobs/5512034"
+        );
         assert_eq!(gh.source, SourceKind::Greenhouse);
         assert_eq!(gh.board.as_deref(), Some("acmerobotics"));
         assert_eq!(gh.source_job_id.as_deref(), Some("5512034"));
@@ -440,7 +478,11 @@ mod tests {
             Some("https://boards-api.greenhouse.io/v1/boards/acme/jobs/1?questions=false")
         );
         let li = canon("https://www.linkedin.com/jobs/view/4123456789");
-        assert_eq!(ats_api_url(&li), None, "aggregators have no public posting API");
+        assert_eq!(
+            ats_api_url(&li),
+            None,
+            "aggregators have no public posting API"
+        );
     }
 
     #[test]

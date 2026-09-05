@@ -32,10 +32,14 @@ pub struct JobLocation {
 impl JobLocation {
     /// `"San Francisco, CA, US"` / `"Remote (US)"`.
     pub fn display(&self) -> String {
-        let parts: Vec<&str> = [self.city.as_deref(), self.region.as_deref(), self.country.as_deref()]
-            .into_iter()
-            .flatten()
-            .collect();
+        let parts: Vec<&str> = [
+            self.city.as_deref(),
+            self.region.as_deref(),
+            self.country.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
         if parts.is_empty() {
             return self.raw.clone();
         }
@@ -50,7 +54,12 @@ impl JobLocation {
     /// Loose match against a location the user is willing to work in. Any provided level
     /// (city/region/country) must agree; missing levels are treated as compatible so that a
     /// posting that only says "US" still matches "San Francisco, CA, US".
-    pub fn matches_preference(&self, city: Option<&str>, region: Option<&str>, country: Option<&str>) -> bool {
+    pub fn matches_preference(
+        &self,
+        city: Option<&str>,
+        region: Option<&str>,
+        country: Option<&str>,
+    ) -> bool {
         fn agrees(a: Option<&str>, b: Option<&str>) -> bool {
             match (a, b) {
                 (Some(a), Some(b)) => a.eq_ignore_ascii_case(b),
@@ -85,7 +94,12 @@ impl RawLocation {
 mod tests {
     use super::*;
 
-    fn loc(city: Option<&str>, region: Option<&str>, country: Option<&str>, remote: bool) -> JobLocation {
+    fn loc(
+        city: Option<&str>,
+        region: Option<&str>,
+        country: Option<&str>,
+        remote: bool,
+    ) -> JobLocation {
         JobLocation {
             job_id: JobId::new(),
             raw: "raw".into(),

@@ -23,3 +23,7 @@ thiserror.workspace = true
 tracing.workspace = true
 tokio.workspace = true
 async-trait = "0.1"
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

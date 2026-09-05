@@ -89,6 +89,50 @@ pub async fn content_seen(db: &Db, listing_id: &ListingId, content_hash: &str) -
 }
 
 /// Where the (compressed) body lives, so extraction can read it.
+/// A capture as the extraction pipeline sees it.
+#[derive(Debug, Clone)]
+pub struct CaptureRow {
+    pub id: CaptureId,
+    pub listing_id: Option<ListingId>,
+    pub url: Option<String>,
+    pub method: CaptureMethod,
+    pub http_status: Option<u16>,
+    pub content_type: Option<String>,
+    pub byte_len: i64,
+    pub content_hash: String,
+    pub storage_path: String,
+    pub extract_status: ExtractStatus,
+}
+
+pub async fn get(db: &Db, id: &CaptureId) -> Result<Option<CaptureRow>> {
+    let row = sqlx::query(
+        "SELECT id, listing_id, url, method, http_status, content_type, byte_len,
+                content_hash, storage_path, extract_status
+           FROM capture WHERE id = ?1",
+    )
+    .bind(id.as_str())
+    .fetch_optional(db.reader())
+    .await
+    .map_err(db_err)?;
+    let Some(row) = row else { return Ok(None) };
+    let method: String = row.try_get("method").map_err(db_err)?;
+    let status: String = row.try_get("extract_status").map_err(db_err)?;
+    let listing_id: Option<String> = row.try_get("listing_id").map_err(db_err)?;
+    let http_status: Option<i64> = row.try_get("http_status").map_err(db_err)?;
+    Ok(Some(CaptureRow {
+        id: row.try_get::<String, _>("id").map_err(db_err)?.parse()?,
+        listing_id: listing_id.map(|s| s.parse()).transpose()?,
+        url: row.try_get("url").map_err(db_err)?,
+        method: method.parse()?,
+        http_status: http_status.map(|s| s as u16),
+        content_type: row.try_get("content_type").map_err(db_err)?,
+        byte_len: row.try_get("byte_len").map_err(db_err)?,
+        content_hash: row.try_get("content_hash").map_err(db_err)?,
+        storage_path: row.try_get("storage_path").map_err(db_err)?,
+        extract_status: status.parse()?,
+    }))
+}
+
 pub async fn storage_path(db: &Db, id: &CaptureId) -> Result<Option<String>> {
     sqlx::query_scalar("SELECT storage_path FROM capture WHERE id = ?1")
         .bind(id.as_str())
@@ -185,25 +229,36 @@ mod tests {
         let db = Db::open_in_memory().await.unwrap();
         let listing_id = a_listing(&db).await;
 
-        insert(&db, &a_capture(listing_id.clone(), "b3:aaa")).await.unwrap();
-        let second = insert(&db, &a_capture(listing_id.clone(), "b3:bbb")).await.unwrap();
+        insert(&db, &a_capture(listing_id.clone(), "b3:aaa"))
+            .await
+            .unwrap();
+        let second = insert(&db, &a_capture(listing_id.clone(), "b3:bbb"))
+            .await
+            .unwrap();
 
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM capture")
             .fetch_one(db.reader())
             .await
             .unwrap();
         assert_eq!(count, 2, "history is append-only");
-        assert_eq!(latest_for_listing(&db, &listing_id).await.unwrap(), Some(second));
+        assert_eq!(
+            latest_for_listing(&db, &listing_id).await.unwrap(),
+            Some(second)
+        );
     }
 
     #[tokio::test]
     async fn unchanged_content_is_detected_so_a_refresh_can_short_circuit() {
         let db = Db::open_in_memory().await.unwrap();
         let listing_id = a_listing(&db).await;
-        insert(&db, &a_capture(listing_id.clone(), "b3:same")).await.unwrap();
+        insert(&db, &a_capture(listing_id.clone(), "b3:same"))
+            .await
+            .unwrap();
 
         assert!(content_seen(&db, &listing_id, "b3:same").await.unwrap());
-        assert!(!content_seen(&db, &listing_id, "b3:different").await.unwrap());
+        assert!(!content_seen(&db, &listing_id, "b3:different")
+            .await
+            .unwrap());
     }
 
     #[tokio::test]
@@ -213,7 +268,9 @@ mod tests {
         let id = insert(&db, &a_capture(listing_id, "b3:aaa")).await.unwrap();
 
         assert_eq!(pending_extraction(&db, 10).await.unwrap(), vec![id.clone()]);
-        set_extract_status(&db, &id, ExtractStatus::Ok, None).await.unwrap();
+        set_extract_status(&db, &id, ExtractStatus::Ok, None)
+            .await
+            .unwrap();
         assert!(pending_extraction(&db, 10).await.unwrap().is_empty());
     }
 
@@ -223,15 +280,21 @@ mod tests {
         let listing_id = a_listing(&db).await;
         let id = insert(&db, &a_capture(listing_id, "b3:aaa")).await.unwrap();
 
-        set_extract_status(&db, &id, ExtractStatus::Failed, Some("no job container found"))
-            .await
-            .unwrap();
-        let (status, error, path): (String, Option<String>, String) =
-            sqlx::query_as("SELECT extract_status, extract_error, storage_path FROM capture WHERE id = ?1")
-                .bind(id.as_str())
-                .fetch_one(db.reader())
-                .await
-                .unwrap();
+        set_extract_status(
+            &db,
+            &id,
+            ExtractStatus::Failed,
+            Some("no job container found"),
+        )
+        .await
+        .unwrap();
+        let (status, error, path): (String, Option<String>, String) = sqlx::query_as(
+            "SELECT extract_status, extract_error, storage_path FROM capture WHERE id = ?1",
+        )
+        .bind(id.as_str())
+        .fetch_one(db.reader())
+        .await
+        .unwrap();
         assert_eq!(status, "failed");
         assert_eq!(error.as_deref(), Some("no job container found"));
         assert!(
@@ -244,7 +307,9 @@ mod tests {
     async fn a_capture_outlives_its_listing() {
         let db = Db::open_in_memory().await.unwrap();
         let listing_id = a_listing(&db).await;
-        insert(&db, &a_capture(listing_id.clone(), "b3:aaa")).await.unwrap();
+        insert(&db, &a_capture(listing_id.clone(), "b3:aaa"))
+            .await
+            .unwrap();
 
         sqlx::query("DELETE FROM job_source_listing WHERE id = ?1")
             .bind(listing_id.as_str())
@@ -253,12 +318,11 @@ mod tests {
             .unwrap();
 
         // ON DELETE SET NULL, not CASCADE: the evidence must not vanish with the listing.
-        let (count, orphaned): (i64, i64) = sqlx::query_as(
-            "SELECT COUNT(*), SUM(listing_id IS NULL) FROM capture",
-        )
-        .fetch_one(db.reader())
-        .await
-        .unwrap();
+        let (count, orphaned): (i64, i64) =
+            sqlx::query_as("SELECT COUNT(*), SUM(listing_id IS NULL) FROM capture")
+                .fetch_one(db.reader())
+                .await
+                .unwrap();
         assert_eq!(count, 1);
         assert_eq!(orphaned, 1);
     }
@@ -267,7 +331,9 @@ mod tests {
     async fn referenced_blobs_are_reported_for_garbage_collection() {
         let db = Db::open_in_memory().await.unwrap();
         let listing_id = a_listing(&db).await;
-        insert(&db, &a_capture(listing_id.clone(), "b3:aaa")).await.unwrap();
+        insert(&db, &a_capture(listing_id.clone(), "b3:aaa"))
+            .await
+            .unwrap();
         insert(&db, &a_capture(listing_id, "b3:bbb")).await.unwrap();
 
         let blobs = referenced_blobs(&db).await.unwrap();

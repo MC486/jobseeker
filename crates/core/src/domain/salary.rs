@@ -209,14 +209,25 @@ mod tests {
         let monthly = sal(Some(8_000_00), None, SalaryPeriod::Month, false);
         assert_eq!(monthly.annualized_max_cents(), Some(8_000_00 * 12));
 
-        let yearly = sal(Some(185_000_00), Some(225_000_00), SalaryPeriod::Year, false);
+        let yearly = sal(
+            Some(185_000_00),
+            Some(225_000_00),
+            SalaryPeriod::Year,
+            false,
+        );
         assert_eq!(yearly.annualized_max_cents(), Some(225_000_00));
     }
 
     #[test]
     fn display_is_readable_and_marks_estimates() {
         assert_eq!(
-            sal(Some(185_000_00), Some(225_000_00), SalaryPeriod::Year, false).display(),
+            sal(
+                Some(185_000_00),
+                Some(225_000_00),
+                SalaryPeriod::Year,
+                false
+            )
+            .display(),
             "$185,000–$225,000/yr"
         );
         assert_eq!(
@@ -227,7 +238,10 @@ mod tests {
             sal(Some(60_00), Some(60_00), SalaryPeriod::Hour, false).display(),
             "$60/hr"
         );
-        assert_eq!(sal(None, None, SalaryPeriod::Year, false).display(), "not stated");
+        assert_eq!(
+            sal(None, None, SalaryPeriod::Year, false).display(),
+            "not stated"
+        );
     }
 
     #[test]

@@ -29,7 +29,10 @@ impl HostLimiter {
         let sleep_for = {
             let map = self.last.lock().expect("rate lock");
             map.get(&host)
-                .map(|last| self.delay.saturating_sub(Instant::now().saturating_duration_since(*last)))
+                .map(|last| {
+                    self.delay
+                        .saturating_sub(Instant::now().saturating_duration_since(*last))
+                })
                 .unwrap_or(Duration::ZERO)
         };
         if !sleep_for.is_zero() {
@@ -46,7 +49,10 @@ impl HostLimiter {
         let host = host_of(url);
         let map = self.last.lock().expect("rate lock");
         map.get(&host)
-            .map(|last| self.delay.saturating_sub(Instant::now().saturating_duration_since(*last)))
+            .map(|last| {
+                self.delay
+                    .saturating_sub(Instant::now().saturating_duration_since(*last))
+            })
             .unwrap_or(Duration::ZERO)
     }
 }
@@ -66,7 +72,9 @@ mod tests {
     async fn the_first_request_to_a_host_does_not_wait() {
         let limiter = HostLimiter::new(500);
         let start = Instant::now();
-        limiter.wait("https://boards.greenhouse.io/acme/jobs/1").await;
+        limiter
+            .wait("https://boards.greenhouse.io/acme/jobs/1")
+            .await;
         assert!(
             start.elapsed() < Duration::from_millis(50),
             "a quiet host must be requested immediately"
@@ -76,7 +84,9 @@ mod tests {
     #[tokio::test]
     async fn a_second_request_to_the_same_host_is_delayed() {
         let limiter = HostLimiter::new(500);
-        limiter.wait("https://boards.greenhouse.io/acme/jobs/1").await;
+        limiter
+            .wait("https://boards.greenhouse.io/acme/jobs/1")
+            .await;
         let remaining = limiter.remaining("https://boards.greenhouse.io/acme/jobs/2");
         assert!(
             remaining >= Duration::from_millis(400),
@@ -87,7 +97,9 @@ mod tests {
     #[tokio::test]
     async fn different_hosts_do_not_block_each_other() {
         let limiter = HostLimiter::new(500);
-        limiter.wait("https://boards.greenhouse.io/acme/jobs/1").await;
+        limiter
+            .wait("https://boards.greenhouse.io/acme/jobs/1")
+            .await;
         let start = Instant::now();
         limiter.wait("https://jobs.lever.co/other/abc").await;
         assert!(

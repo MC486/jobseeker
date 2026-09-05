@@ -9,8 +9,8 @@
 //! written by the pipeline, which also gives the user a real cost ledger.
 
 use std::collections::HashMap;
-use std::sync::Mutex;
 use std::sync::Arc;
+use std::sync::Mutex;
 
 use jobseeker_core::config::LlmProvider;
 use jobseeker_core::Result;
@@ -135,7 +135,11 @@ mod tests {
         let second = cache.complete(&r).await.unwrap();
         assert!(second.cached, "the second answer is free");
         assert_eq!(second.text, first.text);
-        assert_eq!(mock.call_count(), 1, "the model must not be consulted twice");
+        assert_eq!(
+            mock.call_count(),
+            1,
+            "the model must not be consulted twice"
+        );
         assert_eq!(cache.stats(), (1, 1));
     }
 
@@ -165,7 +169,11 @@ mod tests {
             .complete(&Request::new(Purpose::Narrate, "sys", "text"))
             .await
             .unwrap();
-        assert_eq!(mock.call_count(), 2, "purpose is part of the identity of a call");
+        assert_eq!(
+            mock.call_count(),
+            2,
+            "purpose is part of the identity of a call"
+        );
     }
 
     #[tokio::test]
@@ -184,7 +192,11 @@ mod tests {
         let (cache, mock) = cached();
         for i in 0..MAX_ENTRIES + 8 {
             cache
-                .complete(&Request::new(Purpose::ExtractFields, "sys", format!("posting {i}")))
+                .complete(&Request::new(
+                    Purpose::ExtractFields,
+                    "sys",
+                    format!("posting {i}"),
+                ))
                 .await
                 .unwrap();
         }

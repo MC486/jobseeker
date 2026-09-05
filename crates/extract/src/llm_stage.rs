@@ -71,10 +71,15 @@ async fn complete_validated(client: &dyn LlmClient, request: &Request) -> Result
 }
 
 fn apply_fields(job: &mut ExtractedJob, fields: LlmFields) {
-    let confidence = fields.confidence.unwrap_or(Provenance::Llm.baseline_confidence());
+    let confidence = fields
+        .confidence
+        .unwrap_or(Provenance::Llm.baseline_confidence());
     let put = |slot: &mut Option<Sourced<String>>, value: Option<String>| {
         if let Some(v) = value.filter(|s| !s.is_empty()) {
-            merge_field(slot, Sourced::with_confidence(v, Provenance::Llm, confidence));
+            merge_field(
+                slot,
+                Sourced::with_confidence(v, Provenance::Llm, confidence),
+            );
         }
     };
     put(&mut job.title, fields.title);
@@ -204,12 +209,19 @@ mod tests {
         job.title = Some(Sourced::new("Keep Me".into(), Provenance::Jsonld));
         let mock = MockClient::new("m");
         fill_gaps(&mut job, "a posting", &mock, 1000).await.unwrap();
-        assert_eq!(job.title.unwrap().value, "Keep Me", "JSON-LD outranks the model");
+        assert_eq!(
+            job.title.unwrap().value,
+            "Keep Me",
+            "JSON-LD outranks the model"
+        );
         assert_eq!(
             job.company_name.as_ref().map(|s| s.value.as_str()),
             Some("Acme Robotics"),
             "the gap the mock fills"
         );
-        assert_eq!(job.company_name.as_ref().map(|s| s.provenance), Some(Provenance::Llm));
+        assert_eq!(
+            job.company_name.as_ref().map(|s| s.provenance),
+            Some(Provenance::Llm)
+        );
     }
 }

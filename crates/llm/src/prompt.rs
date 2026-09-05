@@ -124,7 +124,12 @@ pub fn atomize_requirements(description: &str, max_chars: usize) -> Request {
     .with_schema(atomize_requirements_schema())
 }
 
-pub fn phrase_bullet(original: &str, job_title: &str, company: &str, target_skills: &[String]) -> Request {
+pub fn phrase_bullet(
+    original: &str,
+    job_title: &str,
+    company: &str,
+    target_skills: &[String],
+) -> Request {
     Request::new(
         Purpose::PhraseBullet,
         PHRASE_SYSTEM,
@@ -173,9 +178,15 @@ mod tests {
         let mut job = ExtractedJob::default();
         job.title = Some(Sourced::new("Engineer".into(), Provenance::Jsonld));
         let request = extract_fields(&job, "a long posting about the role", 16_000);
-        assert!(request.user.contains("company_name"), "still missing: {}", request.user);
         assert!(
-            !request.user.contains("Fill only these missing fields, leave the rest null: title,"),
+            request.user.contains("company_name"),
+            "still missing: {}",
+            request.user
+        );
+        assert!(
+            !request
+                .user
+                .contains("Fill only these missing fields, leave the rest null: title,"),
             "a filled field must not be re-asked: {}",
             request.user
         );
@@ -198,7 +209,10 @@ mod tests {
     fn truncation_drops_an_incomplete_paragraph_rather_than_a_half_bullet() {
         let text = "First paragraph is long enough to keep.\n\nSecond paragraph is much longer and would be cut mid-sentence if we sliced blindly.\n\nThird.";
         let out = truncate(text, 70);
-        assert!(out.contains("First paragraph is long enough to keep"), "got {out}");
+        assert!(
+            out.contains("First paragraph is long enough to keep"),
+            "got {out}"
+        );
         assert!(
             !out.contains("Second paragraph is much"),
             "the incomplete paragraph must be dropped: {out}"

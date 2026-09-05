@@ -157,7 +157,11 @@ mod tests {
 
     #[test]
     fn the_first_heading_is_the_title_candidate() {
-        let doc = parse("<html><body><h1>Senior Platform Engineer</h1><h1>Ignore</h1></body></html>");
-        assert_eq!(first_heading(&doc).as_deref(), Some("Senior Platform Engineer"));
+        let doc =
+            parse("<html><body><h1>Senior Platform Engineer</h1><h1>Ignore</h1></body></html>");
+        assert_eq!(
+            first_heading(&doc).as_deref(),
+            Some("Senior Platform Engineer")
+        );
     }
 }

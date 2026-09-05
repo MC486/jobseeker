@@ -74,6 +74,43 @@ pub async fn upsert_by_url(db: &Db, input: &UpsertListing) -> Result<(ListingId,
     Ok((id, true))
 }
 
+/// A listing as the pipeline and API see it.
+#[derive(Debug, Clone)]
+pub struct ListingRow {
+    pub id: ListingId,
+    pub job_id: Option<JobId>,
+    pub url: String,
+    pub url_canonical: String,
+    pub source: SourceKind,
+    pub source_job_id: Option<String>,
+    pub status: String,
+}
+
+pub async fn get(db: &Db, id: &ListingId) -> Result<Option<ListingRow>> {
+    let row = sqlx::query(
+        "SELECT l.id, l.job_id, l.url, l.url_canonical, l.source_job_id, l.status, s.kind
+           FROM job_source_listing l
+           JOIN source s ON s.id = l.source_id
+          WHERE l.id = ?1",
+    )
+    .bind(id.as_str())
+    .fetch_optional(db.reader())
+    .await
+    .map_err(db_err)?;
+    let Some(row) = row else { return Ok(None) };
+    let kind: String = row.try_get("kind").map_err(db_err)?;
+    let job_id: Option<String> = row.try_get("job_id").map_err(db_err)?;
+    Ok(Some(ListingRow {
+        id: row.try_get::<String, _>("id").map_err(db_err)?.parse()?,
+        job_id: job_id.map(|s| s.parse()).transpose()?,
+        url: row.try_get("url").map_err(db_err)?,
+        url_canonical: row.try_get("url_canonical").map_err(db_err)?,
+        source: kind.parse()?,
+        source_job_id: row.try_get("source_job_id").map_err(db_err)?,
+        status: row.try_get("status").map_err(db_err)?,
+    }))
+}
+
 pub async fn find_by_url_hash(db: &Db, url_hash: &str) -> Result<Option<ListingId>> {
     let id: Option<String> =
         sqlx::query_scalar("SELECT id FROM job_source_listing WHERE url_hash = ?1")
@@ -306,7 +343,10 @@ mod tests {
         // The employer's own ATS then displaces it.
         let (greenhouse, _) = upsert_by_url(
             &db,
-            &listing(SourceKind::Greenhouse, "https://boards.greenhouse.io/acme/jobs/1"),
+            &listing(
+                SourceKind::Greenhouse,
+                "https://boards.greenhouse.io/acme/jobs/1",
+            ),
         )
         .await
         .unwrap();
@@ -371,19 +411,21 @@ mod tests {
 
         assert_eq!(record_check_failure(&db, &id).await.unwrap(), 1);
         assert_eq!(record_check_failure(&db, &id).await.unwrap(), 2);
-        let status: String = sqlx::query_scalar("SELECT status FROM job_source_listing WHERE id = ?1")
-            .bind(id.as_str())
-            .fetch_one(db.reader())
-            .await
-            .unwrap();
+        let status: String =
+            sqlx::query_scalar("SELECT status FROM job_source_listing WHERE id = ?1")
+                .bind(id.as_str())
+                .fetch_one(db.reader())
+                .await
+                .unwrap();
         assert_eq!(status, "open");
 
         assert_eq!(record_check_failure(&db, &id).await.unwrap(), 3);
-        let status: String = sqlx::query_scalar("SELECT status FROM job_source_listing WHERE id = ?1")
-            .bind(id.as_str())
-            .fetch_one(db.reader())
-            .await
-            .unwrap();
+        let status: String =
+            sqlx::query_scalar("SELECT status FROM job_source_listing WHERE id = ?1")
+                .bind(id.as_str())
+                .fetch_one(db.reader())
+                .await
+                .unwrap();
         assert_eq!(status, "unknown", "a flaky site is not a closed posting");
     }
 

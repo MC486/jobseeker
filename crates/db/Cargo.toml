@@ -8,6 +8,7 @@ license.workspace = true
 
 [dependencies]
 jobseeker-core.workspace = true
+jobseeker-normalize.workspace = true
 sqlx.workspace = true
 serde.workspace = true
 serde_json.workspace = true

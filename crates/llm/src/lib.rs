@@ -153,8 +153,9 @@ impl Completion {
     /// worth one repair attempt, a transport error is worth a retry.
     pub fn parse<T: serde::de::DeserializeOwned>(&self) -> Result<T> {
         let value = self.json()?;
-        serde_json::from_value(value)
-            .map_err(|e| Error::SchemaViolation(format!("{e} in response: {}", truncate(&self.text))))
+        serde_json::from_value(value).map_err(|e| {
+            Error::SchemaViolation(format!("{e} in response: {}", truncate(&self.text)))
+        })
     }
 }
 
@@ -302,7 +303,8 @@ mod tests {
 
     #[test]
     fn fenced_json_parses() {
-        let c = completion("Here you go:\n```json\n{\"title\":\"Engineer\"}\n```\nHope that helps!");
+        let c =
+            completion("Here you go:\n```json\n{\"title\":\"Engineer\"}\n```\nHope that helps!");
         assert_eq!(c.json().unwrap()["title"], "Engineer");
     }
 
@@ -316,7 +318,10 @@ mod tests {
     fn braces_inside_strings_do_not_truncate_the_object() {
         let c = completion(r#"{"note":"salary is {redacted}","title":"Engineer"}"#);
         let v = c.json().unwrap();
-        assert_eq!(v["title"], "Engineer", "the object must not end at the inner brace");
+        assert_eq!(
+            v["title"], "Engineer",
+            "the object must not end at the inner brace"
+        );
         assert_eq!(v["note"], "salary is {redacted}");
     }
 
@@ -334,8 +339,14 @@ mod tests {
 
     #[test]
     fn prose_with_no_json_is_a_schema_violation_not_a_parse_error() {
-        let err = completion("I'm sorry, I can't help with that.").json().unwrap_err();
-        assert_eq!(err.code(), "schema_violation", "so the caller knows to repair, not retry");
+        let err = completion("I'm sorry, I can't help with that.")
+            .json()
+            .unwrap_err();
+        assert_eq!(
+            err.code(),
+            "schema_violation",
+            "so the caller knows to repair, not retry"
+        );
     }
 
     #[test]
@@ -350,7 +361,11 @@ mod tests {
         assert_eq!(a.cache_key("m"), b.cache_key("m"));
 
         let other_model = a.cache_key("other");
-        assert_ne!(a.cache_key("m"), other_model, "a different model is a different answer");
+        assert_ne!(
+            a.cache_key("m"),
+            other_model,
+            "a different model is a different answer"
+        );
 
         let other_purpose = Request::new(Purpose::Narrate, "sys", "user");
         assert_ne!(

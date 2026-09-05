@@ -25,10 +25,7 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let tmp = path.with_extension(format!(
-        "tmp.{}",
-        std::process::id()
-    ));
+    let tmp = path.with_extension(format!("tmp.{}", std::process::id()));
     {
         let mut file = File::create(&tmp)?;
         file.write_all(bytes)?;
@@ -82,7 +79,9 @@ fn strip_nulls(value: serde_json::Value) -> serde_json::Value {
 
 /// Content-addressed blob path: `captures/<hh>/<hash>.<ext>.zst`.
 pub fn blob_path(root: &Path, hash: &str, ext: &str) -> PathBuf {
-    root.join("captures").join(shard(hash)).join(format!("{hash}.{ext}.zst"))
+    root.join("captures")
+        .join(shard(hash))
+        .join(format!("{hash}.{ext}.zst"))
 }
 
 /// Compress `bytes` with zstd level 10 and write them atomically to the content-addressed
@@ -103,7 +102,13 @@ pub fn read_blob(path: &Path) -> Result<Vec<u8>> {
 }
 
 /// `jobs/<company-slug>/<date>-<job-slug>-<id8>/`
-pub fn job_dir(root: &Path, company_slug: &str, posted: Option<&str>, title: &str, id: &JobId) -> PathBuf {
+pub fn job_dir(
+    root: &Path,
+    company_slug: &str,
+    posted: Option<&str>,
+    title: &str,
+    id: &JobId,
+) -> PathBuf {
     let date = posted.unwrap_or("undated");
     let slug = slugify_max(title, 60);
     root.join("jobs")
@@ -129,7 +134,10 @@ mod tests {
             .filter_map(|e| e.ok())
             .filter(|e| e.file_name().to_string_lossy().contains(".tmp."))
             .collect();
-        assert!(leftovers.is_empty(), "tmp files must not survive a successful write");
+        assert!(
+            leftovers.is_empty(),
+            "tmp files must not survive a successful write"
+        );
     }
 
     #[test]
@@ -174,7 +182,13 @@ mod tests {
     #[test]
     fn job_directories_sort_by_date_and_are_unique_per_id() {
         let id = JobId::new();
-        let path = job_dir(Path::new("/data"), "Acme Robotics", Some("2026-09-02"), "Senior Platform Engineer", &id);
+        let path = job_dir(
+            Path::new("/data"),
+            "Acme Robotics",
+            Some("2026-09-02"),
+            "Senior Platform Engineer",
+            &id,
+        );
         let s = path.to_string_lossy();
         assert!(s.contains("jobs/acme-robotics/2026-09-02-senior-platform-engineer-"));
         assert!(s.ends_with(id.short()));

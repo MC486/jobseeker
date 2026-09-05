@@ -13,19 +13,72 @@ use std::collections::BTreeSet;
 /// Kubernetes" vs "experience without Kubernetes" is not a risk, but "5 years" vs "no
 /// years" is).
 pub const STOPWORDS: &[&str] = &[
-    "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "has", "have", "in", "including",
-    "into", "is", "it", "its", "of", "on", "or", "our", "that", "the", "their", "to", "with",
-    "you", "your", "we", "us", "will", "must", "should", "able", "ability", "strong", "solid",
-    "excellent", "good", "great", "proven", "demonstrated", "experience", "experienced",
-    "knowledge", "understanding", "familiarity", "familiar", "working", "work", "plus", "using",
-    "use", "skills", "skill",
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "by",
+    "for",
+    "from",
+    "has",
+    "have",
+    "in",
+    "including",
+    "into",
+    "is",
+    "it",
+    "its",
+    "of",
+    "on",
+    "or",
+    "our",
+    "that",
+    "the",
+    "their",
+    "to",
+    "with",
+    "you",
+    "your",
+    "we",
+    "us",
+    "will",
+    "must",
+    "should",
+    "able",
+    "ability",
+    "strong",
+    "solid",
+    "excellent",
+    "good",
+    "great",
+    "proven",
+    "demonstrated",
+    "experience",
+    "experienced",
+    "knowledge",
+    "understanding",
+    "familiarity",
+    "familiar",
+    "working",
+    "work",
+    "plus",
+    "using",
+    "use",
+    "skills",
+    "skill",
 ];
 
 static WORD: Lazy<Regex> = Lazy::new(|| Regex::new(r"[a-z0-9][a-z0-9+#._-]*").unwrap());
 
 /// Lowercase, strip accents, collapse whitespace. The entry point for every comparison key.
 pub fn normalize(input: &str) -> String {
-    deunicode_lower(input).split_whitespace().collect::<Vec<_>>().join(" ")
+    deunicode_lower(input)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn deunicode_lower(input: &str) -> String {
@@ -49,7 +102,10 @@ fn deunicode_lower(input: &str) -> String {
 pub fn tokenize(input: &str) -> Vec<String> {
     let lowered = deunicode_lower(input);
     WORD.find_iter(&lowered)
-        .map(|m| m.as_str().trim_matches(|c: char| c == '.' || c == '-' || c == '_'))
+        .map(|m| {
+            m.as_str()
+                .trim_matches(|c: char| c == '.' || c == '-' || c == '_')
+        })
         .filter(|t| !t.is_empty() && !STOPWORDS.contains(t))
         .map(str::to_string)
         .collect()
@@ -64,8 +120,10 @@ pub fn comparison_key(input: &str) -> String {
 
 /// Jaccard similarity over token sets, in `0.0..=1.0`.
 pub fn jaccard(a: &str, b: &str) -> f32 {
-    let (a, b): (BTreeSet<_>, BTreeSet<_>) =
-        (tokenize(a).into_iter().collect(), tokenize(b).into_iter().collect());
+    let (a, b): (BTreeSet<_>, BTreeSet<_>) = (
+        tokenize(a).into_iter().collect(),
+        tokenize(b).into_iter().collect(),
+    );
     if a.is_empty() && b.is_empty() {
         return 1.0;
     }
@@ -88,7 +146,10 @@ pub fn token_cosine(a: &str, b: &str) -> f32 {
         m
     };
     let (a, b) = (count(a), count(b));
-    let dot: f32 = a.iter().map(|(k, v)| b.get(k).copied().unwrap_or(0.0) * v).sum();
+    let dot: f32 = a
+        .iter()
+        .map(|(k, v)| b.get(k).copied().unwrap_or(0.0) * v)
+        .sum();
     let na: f32 = a.values().map(|v| v * v).sum::<f32>().sqrt();
     let nb: f32 = b.values().map(|v| v * v).sum::<f32>().sqrt();
     if na == 0.0 || nb == 0.0 {
@@ -193,13 +254,19 @@ mod tests {
 
     #[test]
     fn comparison_keys_are_order_independent_but_content_sensitive() {
-        assert_eq!(comparison_key("rust and python"), comparison_key("python and rust"));
+        assert_eq!(
+            comparison_key("rust and python"),
+            comparison_key("python and rust")
+        );
         assert_ne!(comparison_key("rust"), comparison_key("python"));
     }
 
     #[test]
     fn jaccard_reports_partial_overlap() {
-        assert_eq!(jaccard("senior platform engineer", "senior platform engineer"), 1.0);
+        assert_eq!(
+            jaccard("senior platform engineer", "senior platform engineer"),
+            1.0
+        );
         assert_eq!(jaccard("rust", "python"), 0.0);
         let partial = jaccard("senior platform engineer", "staff platform engineer");
         assert!(partial > 0.3 && partial < 0.7, "got {partial}");
@@ -210,7 +277,10 @@ mod tests {
         let a = "rust rust rust kubernetes";
         let b = "rust kubernetes kubernetes kubernetes";
         assert_eq!(jaccard(a, b), 1.0, "identical token sets");
-        assert!(token_cosine(a, b) < 1.0, "different emphasis must be detectable");
+        assert!(
+            token_cosine(a, b) < 1.0,
+            "different emphasis must be detectable"
+        );
     }
 
     #[test]
@@ -231,7 +301,10 @@ mod tests {
     #[test]
     fn markdown_becomes_searchable_text() {
         let md = "## Required\n\n- **5+ years** of [Rust](https://rust-lang.org)\n- `Kubernetes`\n";
-        assert_eq!(markdown_to_text(md), "Required\n5+ years of Rust\nKubernetes");
+        assert_eq!(
+            markdown_to_text(md),
+            "Required\n5+ years of Rust\nKubernetes"
+        );
     }
 
     #[test]

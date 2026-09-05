@@ -231,12 +231,16 @@ mod tests {
         let mut c = cfg();
         c.base_url = Some("http://gpu-box.lan:11434/".into());
         let client = OllamaClient::new(&c).unwrap();
-        assert_eq!(client.base_url, "http://gpu-box.lan:11434", "trailing slash removed");
+        assert_eq!(
+            client.base_url, "http://gpu-box.lan:11434",
+            "trailing slash removed"
+        );
     }
 
     #[test]
     fn connection_and_timeout_errors_are_retryable_and_actionable() {
-        let connect = Error::LlmUnavailable("cannot reach ollama at x; is `ollama serve` running?".into());
+        let connect =
+            Error::LlmUnavailable("cannot reach ollama at x; is `ollama serve` running?".into());
         assert!(connect.is_retryable(), "a down provider is worth retrying");
         assert_eq!(connect.http_status(), 503);
     }

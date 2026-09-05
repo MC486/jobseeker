@@ -17,8 +17,8 @@ demonstrable, so "done" is not a judgment call.
 - [x] Web app shell, generated API client, SSE plumbing
 - [x] Extension skeleton with pairing
 - [x] CLI skeleton (`serve`, `migrate`, `add`, `list`, `show`)
-- [ ] JSON-LD extractor + salary/date/location normalizers, wired end to end
-- [ ] File materialization (`job.md` / `job.json` / `requirements.json` / `raw/`)
+- [x] JSON-LD extractor + salary/date/location normalizers, wired end to end
+- [x] File materialization (`job.md` / `job.json` / `requirements.json`)
 
 **Exit:** `jobseeker add <greenhouse-url>` produces a queryable job row, four files on disk,
 and a rendered job detail page. AS-01 passes.

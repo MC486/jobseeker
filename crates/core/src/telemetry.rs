@@ -16,7 +16,11 @@ pub fn init(cfg: &LogConfig) -> crate::Result<()> {
     let registry = tracing_subscriber::registry().with(filter);
     match cfg.format.as_str() {
         "json" => registry
-            .with(tracing_subscriber::fmt::layer().json().with_current_span(true))
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .json()
+                    .with_current_span(true),
+            )
             .try_init()
             .map_err(|e| crate::Error::Internal(e.to_string()))?,
         "pretty" | "text" => registry

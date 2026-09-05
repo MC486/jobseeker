@@ -51,15 +51,50 @@ pub fn slugify_max(input: &str, max_len: usize) -> String {
 /// `"Acme, Inc."`, `"ACME Inc"` and `"Acme"` collapse to one key (see FR-E-14).
 pub fn normalize_company_name(name: &str) -> String {
     const SUFFIXES: &[&str] = &[
-        "inc", "inc.", "llc", "l.l.c.", "ltd", "ltd.", "limited", "corp", "corp.",
-        "corporation", "co", "co.", "company", "gmbh", "ag", "sa", "s.a.", "bv", "b.v.",
-        "nv", "n.v.", "plc", "pty", "ab", "as", "oy", "aps", "srl", "spa", "kk", "pbc",
-        "holdings", "group",
+        "inc",
+        "inc.",
+        "llc",
+        "l.l.c.",
+        "ltd",
+        "ltd.",
+        "limited",
+        "corp",
+        "corp.",
+        "corporation",
+        "co",
+        "co.",
+        "company",
+        "gmbh",
+        "ag",
+        "sa",
+        "s.a.",
+        "bv",
+        "b.v.",
+        "nv",
+        "n.v.",
+        "plc",
+        "pty",
+        "ab",
+        "as",
+        "oy",
+        "aps",
+        "srl",
+        "spa",
+        "kk",
+        "pbc",
+        "holdings",
+        "group",
     ];
     let ascii = deunicode(name).to_lowercase();
     let cleaned: String = ascii
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c.is_whitespace() || c == '.' { c } else { ' ' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c.is_whitespace() || c == '.' {
+                c
+            } else {
+                ' '
+            }
+        })
         .collect();
     let mut tokens: Vec<&str> = cleaned.split_whitespace().collect();
     while let Some(last) = tokens.last() {
@@ -86,9 +121,32 @@ pub fn normalize_company_name(name: &str) -> String {
 /// out so `"Senior Platform Engineer II"` and `"Platform Engineer"` compare as related.
 pub fn normalize_job_title(title: &str) -> String {
     const NOISE: &[&str] = &[
-        "senior", "sr", "junior", "jr", "staff", "principal", "lead", "associate", "i",
-        "ii", "iii", "iv", "v", "level", "remote", "hybrid", "onsite", "contract",
-        "fulltime", "parttime", "the", "a", "an", "and", "of", "at",
+        "senior",
+        "sr",
+        "junior",
+        "jr",
+        "staff",
+        "principal",
+        "lead",
+        "associate",
+        "i",
+        "ii",
+        "iii",
+        "iv",
+        "v",
+        "level",
+        "remote",
+        "hybrid",
+        "onsite",
+        "contract",
+        "fulltime",
+        "parttime",
+        "the",
+        "a",
+        "an",
+        "and",
+        "of",
+        "at",
     ];
     let ascii = deunicode(title).to_lowercase();
     let cleaned: String = ascii
@@ -111,7 +169,10 @@ mod tests {
     #[test]
     fn slugs_are_ascii_and_stable() {
         assert_eq!(slugify("Acme Robotics, Inc."), "acme-robotics-inc");
-        assert_eq!(slugify("Senior  Platform   Engineer"), "senior-platform-engineer");
+        assert_eq!(
+            slugify("Senior  Platform   Engineer"),
+            "senior-platform-engineer"
+        );
         assert_eq!(slugify("Café & Bar"), "cafe-bar");
         assert_eq!(slugify("  ---  "), "untitled");
         assert_eq!(slugify("Sr. Développeur"), "sr-developpeur");

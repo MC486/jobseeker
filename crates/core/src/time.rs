@@ -83,8 +83,7 @@ impl PartialDate {
     }
 
     pub fn from_naive_date(d: NaiveDate) -> Self {
-        let at = Utc
-            .from_utc_datetime(&d.and_hms_opt(12, 0, 0).expect("noon is a valid time"));
+        let at = Utc.from_utc_datetime(&d.and_hms_opt(12, 0, 0).expect("noon is a valid time"));
         Self {
             at,
             precision: DatePrecision::Day,

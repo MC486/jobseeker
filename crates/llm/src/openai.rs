@@ -262,7 +262,9 @@ impl LlmClient for OpenAiClient {
                     .choices
                     .first()
                     .and_then(|c| c.message.content.clone())
-                    .ok_or_else(|| Error::SchemaViolation("the provider returned no content".into()))?;
+                    .ok_or_else(|| {
+                        Error::SchemaViolation("the provider returned no content".into())
+                    })?;
                 let usage = parsed.usage;
                 (
                     text,
@@ -282,7 +284,9 @@ impl LlmClient for OpenAiClient {
                     .collect::<Vec<_>>()
                     .join("");
                 if text.is_empty() {
-                    return Err(Error::SchemaViolation("the provider returned no content".into()));
+                    return Err(Error::SchemaViolation(
+                        "the provider returned no content".into(),
+                    ));
                 }
                 let usage = parsed.usage;
                 (
@@ -428,7 +432,10 @@ mod tests {
         let request = Request::new(crate::Purpose::ExtractFields, "be terse", "the posting")
             .with_schema(serde_json::json!({"type": "object"}));
         let body = anthropic.chat_body(&request);
-        assert_eq!(body["system"], "be terse", "the system prompt is top-level here");
+        assert_eq!(
+            body["system"], "be terse",
+            "the system prompt is top-level here"
+        );
         assert!(
             body["messages"][0]["content"]
                 .as_str()
@@ -458,8 +465,7 @@ mod tests {
         );
         assert_eq!(constrained["response_format"]["type"], "json_schema");
         assert_eq!(
-            constrained["response_format"]["json_schema"]["name"],
-            "extract_fields",
+            constrained["response_format"]["json_schema"]["name"], "extract_fields",
             "the purpose names the schema, which shows up in provider logs"
         );
 

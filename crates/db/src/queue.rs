@@ -76,6 +76,24 @@ impl NewTask {
     }
 }
 
+/// Public view of a task row.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct TaskView {
+    pub id: String,
+    pub kind: String,
+    pub status: String,
+    pub priority: i64,
+    pub attempts: u32,
+    pub max_attempts: u32,
+    pub last_error: Option<String>,
+    pub progress: Option<f64>,
+    pub progress_message: Option<String>,
+    pub payload: serde_json::Value,
+    pub created_at: String,
+    pub updated_at: String,
+    pub finished_at: Option<String>,
+}
+
 pub struct Queue<'a> {
     db: &'a Db,
     lease_seconds: i64,
@@ -97,7 +115,9 @@ impl<'a> Queue<'a> {
         let id = TaskId::new();
         let ts = to_rfc3339(&now());
         let available_at = to_rfc3339(&task.available_at.unwrap_or_else(now));
-        let priority = task.priority.unwrap_or_else(|| task.kind.default_priority());
+        let priority = task
+            .priority
+            .unwrap_or_else(|| task.kind.default_priority());
         let max_attempts = task.max_attempts.unwrap_or(self.default_max_attempts);
         let payload = serde_json::to_string(&task.payload)?;
 
@@ -325,6 +345,37 @@ impl<'a> Queue<'a> {
         .map_err(db_err)
     }
 
+    /// A task as the API and CLI report it.
+    pub async fn get(&self, id: &TaskId) -> Result<Option<TaskView>> {
+        let row = sqlx::query(
+            "SELECT id, kind, payload_json, status, priority, attempts, max_attempts,
+                    last_error, progress, progress_message, created_at, updated_at, finished_at
+               FROM task WHERE id = ?1",
+        )
+        .bind(id.as_str())
+        .fetch_optional(self.db.writer())
+        .await
+        .map_err(db_err)?;
+        let Some(row) = row else { return Ok(None) };
+        Ok(Some(TaskView {
+            id: row.try_get::<String, _>("id").map_err(db_err)?,
+            kind: row.try_get("kind").map_err(db_err)?,
+            status: row.try_get("status").map_err(db_err)?,
+            priority: row.try_get("priority").map_err(db_err)?,
+            attempts: row.try_get::<i64, _>("attempts").map_err(db_err)? as u32,
+            max_attempts: row.try_get::<i64, _>("max_attempts").map_err(db_err)? as u32,
+            last_error: row.try_get("last_error").map_err(db_err)?,
+            progress: row.try_get("progress").map_err(db_err)?,
+            progress_message: row.try_get("progress_message").map_err(db_err)?,
+            payload: serde_json::from_str(
+                &row.try_get::<String, _>("payload_json").map_err(db_err)?,
+            )?,
+            created_at: row.try_get("created_at").map_err(db_err)?,
+            updated_at: row.try_get("updated_at").map_err(db_err)?,
+            finished_at: row.try_get("finished_at").map_err(db_err)?,
+        }))
+    }
+
     /// Queue depth per status, for `/metrics` and `/readyz`.
     pub async fn depth(&self) -> Result<Vec<(String, i64)>> {
         sqlx::query_as("SELECT status, COUNT(*) FROM task GROUP BY status")
@@ -335,7 +386,11 @@ impl<'a> Queue<'a> {
 
     /// Drop old terminal tasks. Failures are kept longer than successes because the error is
     /// the useful part.
-    pub async fn prune(&self, done_older_than_days: i64, failed_older_than_days: i64) -> Result<u64> {
+    pub async fn prune(
+        &self,
+        done_older_than_days: i64,
+        failed_older_than_days: i64,
+    ) -> Result<u64> {
         let done_cutoff = to_rfc3339(&(now() - chrono::Duration::days(done_older_than_days)));
         let failed_cutoff = to_rfc3339(&(now() - chrono::Duration::days(failed_older_than_days)));
         let result = sqlx::query(
@@ -374,7 +429,11 @@ mod tests {
             .await
             .unwrap();
 
-        let claimed = q.claim().await.unwrap().expect("a task should be available");
+        let claimed = q
+            .claim()
+            .await
+            .unwrap()
+            .expect("a task should be available");
         assert_eq!(claimed.id, id);
         assert_eq!(claimed.kind, TaskKind::ExtractJob);
         assert_eq!(claimed.payload["capture_id"], "abc");
@@ -496,7 +555,10 @@ mod tests {
 
         // First attempt: retryable.
         let c1 = q.claim().await.unwrap().unwrap();
-        assert_eq!(q.fail(&c1, &Error::FetchTimeout(1)).await.unwrap(), TaskStatus::Queued);
+        assert_eq!(
+            q.fail(&c1, &Error::FetchTimeout(1)).await.unwrap(),
+            TaskStatus::Queued
+        );
 
         // Make it available again, then exhaust the budget.
         sqlx::query("UPDATE task SET available_at = '2000-01-01T00:00:00Z'")
@@ -505,7 +567,10 @@ mod tests {
             .unwrap();
         let c2 = q.claim().await.unwrap().unwrap();
         assert_eq!(c2.attempts, 2);
-        assert_eq!(q.fail(&c2, &Error::FetchTimeout(1)).await.unwrap(), TaskStatus::Failed);
+        assert_eq!(
+            q.fail(&c2, &Error::FetchTimeout(1)).await.unwrap(),
+            TaskStatus::Failed
+        );
     }
 
     #[tokio::test]

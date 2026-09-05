@@ -183,7 +183,10 @@ impl Accomplishment {
     }
 
     pub fn variant<'a>(&'a self, name: &str) -> &'a str {
-        self.variants.get(name).map(String::as_str).unwrap_or(&self.text)
+        self.variants
+            .get(name)
+            .map(String::as_str)
+            .unwrap_or(&self.text)
     }
 
     /// Selection preference: strong, quantified, verified bullets first. The components are
@@ -256,17 +259,32 @@ mod tests {
 
     #[test]
     fn tenure_is_computed_from_partial_dates() {
-        assert_eq!(item("2021-03", Some("2024-08"), false).duration_years("2026-09"), Some(41.0 / 12.0));
-        assert_eq!(item("2024-09", None, true).duration_years("2026-09"), Some(2.0));
-        assert_eq!(item("2021", Some("2024"), false).duration_years("2026-09"), Some(3.0));
+        assert_eq!(
+            item("2021-03", Some("2024-08"), false).duration_years("2026-09"),
+            Some(41.0 / 12.0)
+        );
+        assert_eq!(
+            item("2024-09", None, true).duration_years("2026-09"),
+            Some(2.0)
+        );
+        assert_eq!(
+            item("2021", Some("2024"), false).duration_years("2026-09"),
+            Some(3.0)
+        );
     }
 
     #[test]
     fn unusable_dates_yield_none_rather_than_zero() {
         assert_eq!(item("2021-03", None, false).duration_years("2026-09"), None);
-        assert_eq!(item("not-a-date", Some("2024-08"), false).duration_years("2026-09"), None);
+        assert_eq!(
+            item("not-a-date", Some("2024-08"), false).duration_years("2026-09"),
+            None
+        );
         // An end before the start is data entry error, not negative tenure.
-        assert_eq!(item("2024-08", Some("2021-03"), false).duration_years("2026-09"), None);
+        assert_eq!(
+            item("2024-08", Some("2021-03"), false).duration_years("2026-09"),
+            None
+        );
     }
 
     fn acc(strength: i32, metric: bool, verified: bool) -> Accomplishment {
@@ -274,7 +292,10 @@ mod tests {
             id: AccomplishmentId::new(),
             experience_item_id: ExperienceId::new(),
             text: "Rebuilt the ingestion pipeline in Rust".into(),
-            variants: BTreeMap::from([("short".to_string(), "Rebuilt ingestion (Rust)".to_string())]),
+            variants: BTreeMap::from([(
+                "short".to_string(),
+                "Rebuilt ingestion (Rust)".to_string(),
+            )]),
             situation: None,
             action: None,
             result: None,

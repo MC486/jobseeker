@@ -11,7 +11,10 @@ pub fn apply(job: &mut ExtractedJob) {
     if job.seniority.is_none() {
         if let Some(title) = job.title.as_ref() {
             if let Some(level) = infer_seniority(&title.value) {
-                merge_field(&mut job.seniority, Sourced::new(level, Provenance::Inferred));
+                merge_field(
+                    &mut job.seniority,
+                    Sourced::new(level, Provenance::Inferred),
+                );
             }
         }
     }
@@ -32,7 +35,10 @@ pub fn apply(job: &mut ExtractedJob) {
     if job.employment_type.is_none() {
         if let Some(title) = job.title.as_ref() {
             if let Some(kind) = infer_employment_type(&title.value) {
-                merge_field(&mut job.employment_type, Sourced::new(kind, Provenance::Inferred));
+                merge_field(
+                    &mut job.employment_type,
+                    Sourced::new(kind, Provenance::Inferred),
+                );
             }
         }
     }
@@ -50,7 +56,10 @@ mod tests {
         job.title = Some(Sourced::new("Staff Engineer".into(), Provenance::Jsonld));
         apply(&mut job);
         assert_eq!(job.seniority.as_ref().unwrap().value, Seniority::Staff);
-        assert_eq!(job.seniority.as_ref().unwrap().provenance, Provenance::Inferred);
+        assert_eq!(
+            job.seniority.as_ref().unwrap().provenance,
+            Provenance::Inferred
+        );
 
         job.seniority = Some(Sourced::new(Seniority::Senior, Provenance::Jsonld));
         apply(&mut job);
@@ -64,8 +73,10 @@ mod tests {
     #[test]
     fn a_remote_location_string_implies_remote_work() {
         let mut job = ExtractedJob::default();
-        job.locations
-            .push(Sourced::new(RawLocation::new("Remote - US"), Provenance::Jsonld));
+        job.locations.push(Sourced::new(
+            RawLocation::new("Remote - US"),
+            Provenance::Jsonld,
+        ));
         apply(&mut job);
         assert_eq!(
             job.work_mode.unwrap().value,

@@ -134,7 +134,10 @@ impl Fetcher {
 
             let body = response.bytes().await.map_err(classify)?;
             if body.len() as u64 > self.max_body_bytes {
-                return Err(Error::PayloadTooLarge(body.len() as u64, self.max_body_bytes));
+                return Err(Error::PayloadTooLarge(
+                    body.len() as u64,
+                    self.max_body_bytes,
+                ));
             }
 
             let status_code = status.as_u16();
@@ -199,8 +202,11 @@ mod tests {
             "https://acme.com/login"
         );
         assert_eq!(
-            resolve_redirect("https://acme.com/jobs/1", "https://boards.greenhouse.io/acme/jobs/1")
-                .unwrap(),
+            resolve_redirect(
+                "https://acme.com/jobs/1",
+                "https://boards.greenhouse.io/acme/jobs/1"
+            )
+            .unwrap(),
             "https://boards.greenhouse.io/acme/jobs/1"
         );
     }

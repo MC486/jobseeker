@@ -11,7 +11,7 @@ use figment::providers::{Env, Format, Serialized, Toml};
 use figment::Figment;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Config {
     pub server: ServerConfig,
@@ -154,22 +154,6 @@ pub struct LogConfig {
 // ---------------------------------------------------------------------------------------
 // Defaults
 // ---------------------------------------------------------------------------------------
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            server: ServerConfig::default(),
-            data: DataConfig::default(),
-            auth: AuthConfig::default(),
-            worker: WorkerConfig::default(),
-            acquire: AcquireConfig::default(),
-            llm: LlmConfig::default(),
-            matching: MatchingConfig::default(),
-            resume: ResumeConfig::default(),
-            log: LogConfig::default(),
-        }
-    }
-}
 
 impl Default for ServerConfig {
     fn default() -> Self {

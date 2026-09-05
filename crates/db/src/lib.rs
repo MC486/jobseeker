@@ -4,6 +4,7 @@
 //! single-connection writer pool makes `SQLITE_BUSY` structurally impossible instead of
 //! something to retry (see `docs/03-architecture.md` §3.2).
 
+pub mod persist;
 pub mod queue;
 pub mod repo;
 
@@ -107,11 +108,12 @@ impl Db {
     /// Highest migration version applied to this database.
     pub async fn applied_version(&self) -> Result<Option<i64>> {
         // The table does not exist before the first migration runs.
-        let exists: Option<String> =
-            sqlx::query_scalar("SELECT name FROM sqlite_master WHERE type='table' AND name='_sqlx_migrations'")
-                .fetch_optional(&self.reader)
-                .await
-                .map_err(db_err)?;
+        let exists: Option<String> = sqlx::query_scalar(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='_sqlx_migrations'",
+        )
+        .fetch_optional(&self.reader)
+        .await
+        .map_err(db_err)?;
         if exists.is_none() {
             return Ok(None);
         }
@@ -146,7 +148,10 @@ impl Db {
 
     /// Consistent hot snapshot for backups, without stopping the service.
     pub async fn vacuum_into(&self, dest: &Path) -> Result<()> {
-        let sql = format!("VACUUM INTO '{}'", dest.display().to_string().replace('\'', "''"));
+        let sql = format!(
+            "VACUUM INTO '{}'",
+            dest.display().to_string().replace('\'', "''")
+        );
         // SQLite cannot bind a filename here. `dest` is an operator-supplied path and single
         // quotes are doubled above, so the literal cannot be closed early.
         sqlx::query(sqlx::AssertSqlSafe(sql))
@@ -234,10 +239,11 @@ mod tests {
                 .fetch_one(db.reader())
                 .await
                 .unwrap();
-        let linkedin: i64 = sqlx::query_scalar("SELECT fidelity FROM source WHERE kind = 'linkedin'")
-            .fetch_one(db.reader())
-            .await
-            .unwrap();
+        let linkedin: i64 =
+            sqlx::query_scalar("SELECT fidelity FROM source WHERE kind = 'linkedin'")
+                .fetch_one(db.reader())
+                .await
+                .unwrap();
         assert!(
             greenhouse > linkedin,
             "an employer's ATS must outrank an aggregator"

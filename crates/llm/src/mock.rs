@@ -162,7 +162,9 @@ impl LlmClient for MockClient {
             let mut fail = self.fail_next.lock().expect("mock lock");
             if *fail {
                 *fail = false;
-                return Err(Error::LlmUnavailable("mock failure requested by test".into()));
+                return Err(Error::LlmUnavailable(
+                    "mock failure requested by test".into(),
+                ));
             }
         }
 
@@ -245,7 +247,10 @@ mod tests {
         let c = client();
         c.script("SPECIAL", r#"{"title":"Scripted"}"#);
         let r = Request::new(Purpose::ExtractFields, "sys", "a SPECIAL posting");
-        assert_eq!(c.complete(&r).await.unwrap().json().unwrap()["title"], "Scripted");
+        assert_eq!(
+            c.complete(&r).await.unwrap().json().unwrap()["title"],
+            "Scripted"
+        );
 
         let other = Request::new(Purpose::ExtractFields, "sys", "an ordinary posting");
         assert_eq!(
@@ -258,8 +263,12 @@ mod tests {
     async fn calls_are_counted_so_a_test_can_assert_the_model_was_not_needed() {
         let c = client();
         assert_eq!(c.call_count(), 0);
-        c.complete(&Request::new(Purpose::ExtractFields, "s", "u")).await.unwrap();
-        c.complete(&Request::new(Purpose::Narrate, "s", "u")).await.unwrap();
+        c.complete(&Request::new(Purpose::ExtractFields, "s", "u"))
+            .await
+            .unwrap();
+        c.complete(&Request::new(Purpose::Narrate, "s", "u"))
+            .await
+            .unwrap();
         assert_eq!(c.call_count(), 2);
         assert_eq!(c.calls_for(Purpose::ExtractFields), 1);
         assert_eq!(c.calls_for(Purpose::ParseResume), 0);
@@ -276,7 +285,10 @@ mod tests {
         assert_eq!(err.code(), "llm_unavailable");
         assert!(err.is_retryable());
         // The failure is one-shot: the next call succeeds.
-        assert!(c.complete(&Request::new(Purpose::ExtractFields, "s", "u")).await.is_ok());
+        assert!(c
+            .complete(&Request::new(Purpose::ExtractFields, "s", "u"))
+            .await
+            .is_ok());
     }
 
     #[tokio::test]
@@ -284,10 +296,16 @@ mod tests {
         let c = client();
         let a = c.embed(&["hello".to_string()]).await.unwrap();
         let b = c.embed(&["hello".to_string()]).await.unwrap();
-        assert_eq!(a[0].vector, b[0].vector, "the same text must embed identically");
+        assert_eq!(
+            a[0].vector, b[0].vector,
+            "the same text must embed identically"
+        );
 
         let norm: f32 = a[0].vector.iter().map(|x| x * x).sum::<f32>().sqrt();
-        assert!((norm - 1.0).abs() < 1e-5, "expected unit length, got {norm}");
+        assert!(
+            (norm - 1.0).abs() < 1e-5,
+            "expected unit length, got {norm}"
+        );
         assert_eq!(a[0].dimensions, a[0].vector.len());
 
         let different = c.embed(&["goodbye".to_string()]).await.unwrap();
@@ -309,7 +327,11 @@ mod tests {
         // The mock must not invent facts, because the no-new-facts validator is tested
         // against it and a fabricating mock would make that test vacuous.
         let c = client();
-        let r = Request::new(Purpose::PhraseBullet, "sys", "Rebuilt the ingestion pipeline");
+        let r = Request::new(
+            Purpose::PhraseBullet,
+            "sys",
+            "Rebuilt the ingestion pipeline",
+        );
         let json = c.complete(&r).await.unwrap().json().unwrap();
         assert_eq!(json["text"], "Rebuilt the ingestion pipeline");
     }

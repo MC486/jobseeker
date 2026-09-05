@@ -138,8 +138,9 @@ fn extract_work_mode(text: &str) -> Option<WorkMode> {
         Regex::new(r"(?i)\b(fully[ -]?remote|remote|work from home|wfh|telecommute|distributed)\b")
             .unwrap()
     });
-    static HYBRID: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r"(?i)\b(hybrid|flexible|partially remote|\d\s*days?\s*(?:(?:a|per)\s*(?:week|month)\s*)?(?:in|per|at|from)\s*(?:the\s*)?office)\b").unwrap());
+    static HYBRID: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"(?i)\b(hybrid|flexible|partially remote|\d\s*days?\s*(?:(?:a|per)\s*(?:week|month)\s*)?(?:in|per|at|from)\s*(?:the\s*)?office)\b").unwrap()
+    });
     static ONSITE: Lazy<Regex> =
         Lazy::new(|| Regex::new(r"(?i)\b(on[- ]?site|in[- ]?office|in[- ]?person)\b").unwrap());
 
@@ -239,8 +240,9 @@ pub fn normalize_country(input: &str) -> Option<String> {
         match s.as_str() {
             "us" | "usa" | "u.s." | "u.s.a." | "united states" | "united states of america" => "US",
             "ca" | "can" | "canada" => "CA",
-            "uk" | "gb" | "united kingdom" | "great britain" | "england" | "scotland"
-            | "wales" => "GB",
+            "uk" | "gb" | "united kingdom" | "great britain" | "england" | "scotland" | "wales" => {
+                "GB"
+            }
             "de" | "germany" | "deutschland" => "DE",
             "fr" | "france" => "FR",
             "es" | "spain" => "ES",
@@ -298,26 +300,70 @@ fn titlecase(s: &str) -> String {
 }
 
 const US_STATES: &[(&str, &str)] = &[
-    ("alabama", "AL"), ("alaska", "AK"), ("arizona", "AZ"), ("arkansas", "AR"),
-    ("california", "CA"), ("colorado", "CO"), ("connecticut", "CT"), ("delaware", "DE"),
-    ("florida", "FL"), ("georgia", "GA"), ("hawaii", "HI"), ("idaho", "ID"),
-    ("illinois", "IL"), ("indiana", "IN"), ("iowa", "IA"), ("kansas", "KS"),
-    ("kentucky", "KY"), ("louisiana", "LA"), ("maine", "ME"), ("maryland", "MD"),
-    ("massachusetts", "MA"), ("michigan", "MI"), ("minnesota", "MN"), ("mississippi", "MS"),
-    ("missouri", "MO"), ("montana", "MT"), ("nebraska", "NE"), ("nevada", "NV"),
-    ("new hampshire", "NH"), ("new jersey", "NJ"), ("new mexico", "NM"), ("new york", "NY"),
-    ("north carolina", "NC"), ("north dakota", "ND"), ("ohio", "OH"), ("oklahoma", "OK"),
-    ("oregon", "OR"), ("pennsylvania", "PA"), ("rhode island", "RI"),
-    ("south carolina", "SC"), ("south dakota", "SD"), ("tennessee", "TN"), ("texas", "TX"),
-    ("utah", "UT"), ("vermont", "VT"), ("virginia", "VA"), ("washington", "WA"),
-    ("west virginia", "WV"), ("wisconsin", "WI"), ("wyoming", "WY"),
-    ("district of columbia", "DC"), ("washington dc", "DC"),
+    ("alabama", "AL"),
+    ("alaska", "AK"),
+    ("arizona", "AZ"),
+    ("arkansas", "AR"),
+    ("california", "CA"),
+    ("colorado", "CO"),
+    ("connecticut", "CT"),
+    ("delaware", "DE"),
+    ("florida", "FL"),
+    ("georgia", "GA"),
+    ("hawaii", "HI"),
+    ("idaho", "ID"),
+    ("illinois", "IL"),
+    ("indiana", "IN"),
+    ("iowa", "IA"),
+    ("kansas", "KS"),
+    ("kentucky", "KY"),
+    ("louisiana", "LA"),
+    ("maine", "ME"),
+    ("maryland", "MD"),
+    ("massachusetts", "MA"),
+    ("michigan", "MI"),
+    ("minnesota", "MN"),
+    ("mississippi", "MS"),
+    ("missouri", "MO"),
+    ("montana", "MT"),
+    ("nebraska", "NE"),
+    ("nevada", "NV"),
+    ("new hampshire", "NH"),
+    ("new jersey", "NJ"),
+    ("new mexico", "NM"),
+    ("new york", "NY"),
+    ("north carolina", "NC"),
+    ("north dakota", "ND"),
+    ("ohio", "OH"),
+    ("oklahoma", "OK"),
+    ("oregon", "OR"),
+    ("pennsylvania", "PA"),
+    ("rhode island", "RI"),
+    ("south carolina", "SC"),
+    ("south dakota", "SD"),
+    ("tennessee", "TN"),
+    ("texas", "TX"),
+    ("utah", "UT"),
+    ("vermont", "VT"),
+    ("virginia", "VA"),
+    ("washington", "WA"),
+    ("west virginia", "WV"),
+    ("wisconsin", "WI"),
+    ("wyoming", "WY"),
+    ("district of columbia", "DC"),
+    ("washington dc", "DC"),
 ];
 
 const CA_PROVINCES: &[(&str, &str)] = &[
-    ("alberta", "AB"), ("british columbia", "BC"), ("manitoba", "MB"),
-    ("new brunswick", "NB"), ("newfoundland and labrador", "NL"), ("nova scotia", "NS"),
-    ("ontario", "ON"), ("prince edward island", "PE"), ("quebec", "QC"),
+    ("alberta", "AB"),
+    ("british columbia", "BC"),
+    ("manitoba", "MB"),
+    ("new brunswick", "NB"),
+    ("newfoundland and labrador", "NL"),
+    ("nova scotia", "NS"),
+    ("ontario", "ON"),
+    ("prince edward island", "PE"),
+    ("quebec", "QC"),
     ("saskatchewan", "SK"),
 ];
 
@@ -343,7 +389,11 @@ mod tests {
     fn a_two_part_string_distinguishes_a_state_from_a_country() {
         let us = p("San Francisco, CA");
         assert_eq!(us.region.as_deref(), Some("CA"));
-        assert_eq!(us.country.as_deref(), Some("US"), "the state implies the country");
+        assert_eq!(
+            us.country.as_deref(),
+            Some("US"),
+            "the state implies the country"
+        );
 
         let de = p("Berlin, Germany");
         assert_eq!(de.city.as_deref(), Some("Berlin"));
@@ -419,8 +469,14 @@ mod tests {
 
     #[test]
     fn postal_codes_are_extracted_when_present() {
-        assert_eq!(p("Mountain View, CA 94043").postal_code.as_deref(), Some("94043"));
-        assert_eq!(p("London, EC2A 4NE, UK").postal_code.as_deref(), Some("EC2A 4NE"));
+        assert_eq!(
+            p("Mountain View, CA 94043").postal_code.as_deref(),
+            Some("94043")
+        );
+        assert_eq!(
+            p("London, EC2A 4NE, UK").postal_code.as_deref(),
+            Some("EC2A 4NE")
+        );
         assert_eq!(p("Austin, TX").postal_code, None);
     }
 
@@ -430,7 +486,10 @@ mod tests {
             split_locations("San Francisco, CA; New York, NY"),
             vec!["San Francisco, CA", "New York, NY"]
         );
-        assert_eq!(split_locations("Austin, TX or Remote"), vec!["Austin, TX", "Remote"]);
+        assert_eq!(
+            split_locations("Austin, TX or Remote"),
+            vec!["Austin, TX", "Remote"]
+        );
     }
 
     #[test]
@@ -443,8 +502,14 @@ mod tests {
 
     #[test]
     fn city_names_are_titlecased_including_hyphenated_ones() {
-        assert_eq!(p("winston-salem, nc").city.as_deref(), Some("Winston-Salem"));
-        assert_eq!(p("SAN FRANCISCO, CA").city.as_deref(), Some("San Francisco"));
+        assert_eq!(
+            p("winston-salem, nc").city.as_deref(),
+            Some("Winston-Salem")
+        );
+        assert_eq!(
+            p("SAN FRANCISCO, CA").city.as_deref(),
+            Some("San Francisco")
+        );
     }
 
     #[test]

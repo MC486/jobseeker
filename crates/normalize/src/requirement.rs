@@ -69,7 +69,10 @@ pub fn classify_heading(heading: &str) -> Section {
         Regex::new(r"(?i)\b(nice[- ]to[- ]have|bonus|plus(?:es)?|icing|extra credit|would be (?:a )?plus)\b").unwrap()
     });
     static PREFERRED: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r"(?i)\b(preferred|desired|desirable|ideal|we'?d love|additional|not required but)\b").unwrap()
+        Regex::new(
+            r"(?i)\b(preferred|desired|desirable|ideal|we'?d love|additional|not required but)\b",
+        )
+        .unwrap()
     });
     static REQUIRED: Lazy<Regex> = Lazy::new(|| {
         Regex::new(r"(?i)\b(requirements?|qualifications?|must[- ]haves?|what (?:you|we)'?ll need|who you are|what we'?re looking for|minimum|basic qualifications|skills? (?:and|&) experience|about you)\b").unwrap()
@@ -78,7 +81,10 @@ pub fn classify_heading(heading: &str) -> Section {
         Regex::new(r"(?i)\b(responsibilit\w+|what you'?ll do|the role|day[- ]to[- ]day|your impact|duties|about the (?:role|job)|in this role)\b").unwrap()
     });
     static BENEFITS: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r"(?i)\b(benefits?|perks?|what we offer|compensation|why (?:join|work)|our offer)\b").unwrap()
+        Regex::new(
+            r"(?i)\b(benefits?|perks?|what we offer|compensation|why (?:join|work)|our offer)\b",
+        )
+        .unwrap()
     });
 
     // Order matters: "Preferred Qualifications" matches both PREFERRED and REQUIRED, and it
@@ -133,9 +139,15 @@ pub fn atomize(description_md: &str) -> Vec<AtomizedRequirement> {
             continue;
         }
 
-        let Some(b) = BULLET.captures(line) else { continue };
-        let Some(necessity) = section.necessity() else { continue };
-        let group = b.get(1).expect("the bullet pattern always captures its body");
+        let Some(b) = BULLET.captures(line) else {
+            continue;
+        };
+        let Some(necessity) = section.necessity() else {
+            continue;
+        };
+        let group = b
+            .get(1)
+            .expect("the bullet pattern always captures its body");
         let bullet = group.as_str().trim();
         if bullet.len() < 8 {
             continue;
@@ -165,7 +177,9 @@ pub fn atomize(description_md: &str) -> Vec<AtomizedRequirement> {
                 // skill overlap substitutes for it (`docs/07-matching.md`).
                 is_blocker: necessity == Necessity::Required
                     && (clearance.is_some() || is_authorization_demand(&atom)),
-                quantity_raw: years.map(|_| atom.clone()).and_then(|_| quantity_phrase(&atom)),
+                quantity_raw: years
+                    .map(|_| atom.clone())
+                    .and_then(|_| quantity_phrase(&atom)),
                 source_span: Some((bullet_offset, bullet_offset + bullet.len())),
                 text: atom,
             });
@@ -184,8 +198,9 @@ pub fn split_compound(bullet: &str) -> Vec<String> {
     // A slash only separates alternatives when it is spaced. Unspaced slashes are part of
     // the term itself — `TS/SCI`, `CI/CD`, `C/C++` — and splitting them produces fragments
     // that mean nothing and, worse, lose a clearance blocker.
-    static SPLIT: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r"(?i)\s*(?:;|,\s*(?:and|or)\s+|\s+and\s+|\s+or\s+|\s+/\s+)\s*").unwrap());
+    static SPLIT: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"(?i)\s*(?:;|,\s*(?:and|or)\s+|\s+and\s+|\s+or\s+|\s+/\s+)\s*").unwrap()
+    });
 
     let cleaned = bullet.trim().trim_end_matches(['.', ';', ',']).to_string();
     // A bullet that reads as a sentence is a responsibility, not a list of skills; splitting
@@ -357,13 +372,22 @@ You will own the ingestion platform.
     #[test]
     fn headings_are_classified_including_the_confusing_ones() {
         assert_eq!(classify_heading("Requirements"), Section::Required);
-        assert_eq!(classify_heading("Minimum Qualifications"), Section::Required);
+        assert_eq!(
+            classify_heading("Minimum Qualifications"),
+            Section::Required
+        );
         assert_eq!(classify_heading("What you'll need"), Section::Required);
         // This one matches both "preferred" and "qualifications"; preferred must win.
-        assert_eq!(classify_heading("Preferred Qualifications"), Section::Preferred);
+        assert_eq!(
+            classify_heading("Preferred Qualifications"),
+            Section::Preferred
+        );
         assert_eq!(classify_heading("Nice to have"), Section::NiceToHave);
         assert_eq!(classify_heading("Bonus points"), Section::NiceToHave);
-        assert_eq!(classify_heading("What you'll do"), Section::Responsibilities);
+        assert_eq!(
+            classify_heading("What you'll do"),
+            Section::Responsibilities
+        );
         assert_eq!(classify_heading("Benefits & Perks"), Section::Benefits);
     }
 
@@ -381,11 +405,13 @@ You will own the ingestion platform.
     fn benefits_and_responsibilities_are_not_requirements() {
         let a = atoms();
         assert!(
-            !a.iter().any(|r| r.text.contains("PTO") || r.text.contains("401")),
+            !a.iter()
+                .any(|r| r.text.contains("PTO") || r.text.contains("401")),
             "benefits are not demands on the candidate: {a:#?}"
         );
         assert!(
-            !a.iter().any(|r| r.text.contains("Partner with the hardware")),
+            !a.iter()
+                .any(|r| r.text.contains("Partner with the hardware")),
             "responsibilities describe the job, not a bar to clear"
         );
     }
@@ -402,7 +428,10 @@ You will own the ingestion platform.
     fn a_compound_bullet_splits_and_keeps_the_shared_year_count() {
         let split = split_compound("5+ years of experience with Python and Kubernetes");
         assert_eq!(split.len(), 2, "two demands, not one: {split:?}");
-        assert!(split.iter().all(|s| s.contains("5+ years")), "got {split:?}");
+        assert!(
+            split.iter().all(|s| s.contains("5+ years")),
+            "got {split:?}"
+        );
         assert!(split.iter().any(|s| s.contains("Python")));
         assert!(split.iter().any(|s| s.contains("Kubernetes")));
     }
@@ -429,7 +458,10 @@ You will own the ingestion platform.
     fn an_unspaced_slash_is_part_of_the_term_not_a_separator() {
         // Splitting these was silently destroying a clearance blocker: "Must hold an active
         // TS/SCI" became "Must hold an active TS" plus a stray "SCI clearance".
-        assert_eq!(split_compound("Must hold an active TS/SCI clearance").len(), 1);
+        assert_eq!(
+            split_compound("Must hold an active TS/SCI clearance").len(),
+            1
+        );
         assert_eq!(split_compound("CI/CD pipeline ownership").len(), 1);
         assert_eq!(split_compound("Production C/C++").len(), 1);
         // A spaced slash really is a list of alternatives.
@@ -451,7 +483,10 @@ You will own the ingestion platform.
     fn clearance_requirements_are_marked_as_hard_blockers() {
         let a = atoms();
         let clearance = a.iter().find(|r| r.text.contains("TS/SCI")).unwrap();
-        assert!(clearance.is_blocker, "a clearance is categorical, not a graded gap");
+        assert!(
+            clearance.is_blocker,
+            "a clearance is categorical, not a graded gap"
+        );
 
         let kube = a.iter().find(|r| r.text.contains("Kubernetes")).unwrap();
         assert!(!kube.is_blocker, "a missing skill is a gap you can close");
@@ -459,7 +494,9 @@ You will own the ingestion platform.
 
     #[test]
     fn work_authorization_is_also_a_blocker() {
-        let reqs = atomize("## Requirements\n\n- Must be authorized to work in the US without sponsorship\n");
+        let reqs = atomize(
+            "## Requirements\n\n- Must be authorized to work in the US without sponsorship\n",
+        );
         assert_eq!(reqs.len(), 1);
         assert!(reqs[0].is_blocker);
         assert_eq!(reqs[0].kind, RequirementKind::Logistics);
@@ -470,7 +507,11 @@ You will own the ingestion platform.
         let md = "## Requirements\n\n- Experience with Kubernetes in production\n\
                   - Production Kubernetes experience\n";
         let reqs = atomize(md);
-        assert_eq!(reqs.len(), 1, "the same demand phrased twice is one row: {reqs:#?}");
+        assert_eq!(
+            reqs.len(),
+            1,
+            "the same demand phrased twice is one row: {reqs:#?}"
+        );
     }
 
     #[test]
@@ -488,7 +529,11 @@ You will own the ingestion platform.
         let md = "## Requirements\n\n- 4+ years of Go\n";
         let reqs = atomize(md);
         let (start, end) = reqs[0].source_span.unwrap();
-        assert_eq!(&md[start..end], "4+ years of Go", "the span must cover the text, not the marker");
+        assert_eq!(
+            &md[start..end],
+            "4+ years of Go",
+            "the span must cover the text, not the marker"
+        );
     }
 
     #[test]

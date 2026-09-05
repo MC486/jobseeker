@@ -154,7 +154,9 @@ impl ExtractedJob {
         if self.description_md.is_none() && self.description_html.is_none() {
             missing.push("description");
         }
-        if self.locations.is_empty() && self.work_mode.as_ref().map(|w| w.value) != Some(WorkMode::Remote) {
+        if self.locations.is_empty()
+            && self.work_mode.as_ref().map(|w| w.value) != Some(WorkMode::Remote)
+        {
             missing.push("locations");
         }
         if self.work_mode.is_none() {
@@ -214,7 +216,10 @@ mod tests {
         assert!(!e.has_minimum_viable_fields());
         e.title = Some(Sourced::new("Engineer".into(), Provenance::Jsonld));
         e.company_name = Some(Sourced::new("Acme".into(), Provenance::Jsonld));
-        assert!(!e.has_minimum_viable_fields(), "description is still missing");
+        assert!(
+            !e.has_minimum_viable_fields(),
+            "description is still missing"
+        );
         e.description_md = Some(Sourced::new("# Role".into(), Provenance::Jsonld));
         assert!(e.has_minimum_viable_fields());
     }

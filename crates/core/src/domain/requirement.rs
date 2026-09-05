@@ -139,7 +139,11 @@ impl std::str::FromStr for SkillKind {
             "soft" => SkillKind::Soft,
             "certification" => SkillKind::Certification,
             "language_human" => SkillKind::LanguageHuman,
-            other => return Err(crate::Error::BadRequest(format!("unknown skill kind: {other}"))),
+            other => {
+                return Err(crate::Error::BadRequest(format!(
+                    "unknown skill kind: {other}"
+                )))
+            }
         })
     }
 }

@@ -41,7 +41,8 @@ impl Cursor {
             .step_by(2)
             .map(|i| u8::from_str_radix(&s[i..i + 2], 16))
             .collect();
-        let bytes = bytes.map_err(|_| jobseeker_core::Error::BadRequest("malformed cursor".into()))?;
+        let bytes =
+            bytes.map_err(|_| jobseeker_core::Error::BadRequest("malformed cursor".into()))?;
         let decoded = String::from_utf8(bytes)
             .map_err(|_| jobseeker_core::Error::BadRequest("malformed cursor".into()))?;
         let (sort_key, id) = decoded

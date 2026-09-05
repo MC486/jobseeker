@@ -47,7 +47,9 @@ pub fn apply_json_value(job: &mut ExtractedJob, value: &Value, provenance: Prove
                 apply_posting(job, value, provenance);
             }
             // Greenhouse's board API is a posting without an `@type`.
-            if map.get("title").is_some() && (map.get("content").is_some() || map.get("description").is_some()) {
+            if map.get("title").is_some()
+                && (map.get("content").is_some() || map.get("description").is_some())
+            {
                 apply_posting(job, value, provenance);
             }
         }
@@ -57,10 +59,13 @@ pub fn apply_json_value(job: &mut ExtractedJob, value: &Value, provenance: Prove
 
 fn is_job_posting(value: &Value) -> bool {
     match value.get("@type") {
-        Some(Value::String(t)) => t.eq_ignore_ascii_case("JobPosting") || t.eq_ignore_ascii_case("Job"),
+        Some(Value::String(t)) => {
+            t.eq_ignore_ascii_case("JobPosting") || t.eq_ignore_ascii_case("Job")
+        }
         Some(Value::Array(types)) => types.iter().any(|t| {
-            t.as_str()
-                .is_some_and(|s| s.eq_ignore_ascii_case("JobPosting") || s.eq_ignore_ascii_case("Job"))
+            t.as_str().is_some_and(|s| {
+                s.eq_ignore_ascii_case("JobPosting") || s.eq_ignore_ascii_case("Job")
+            })
         }),
         _ => false,
     }
@@ -74,12 +79,18 @@ fn apply_posting(job: &mut ExtractedJob, posting: &Value, provenance: Provenance
     if let Some(title) = text_field(posting, &["title", "name"]) {
         merge_field(&mut job.title, Sourced::new(title, provenance));
     }
-    if let Some(company) = organization_name(posting.get("hiringOrganization").or_else(|| posting.get("company")))
-    {
+    if let Some(company) = organization_name(
+        posting
+            .get("hiringOrganization")
+            .or_else(|| posting.get("company")),
+    ) {
         merge_field(&mut job.company_name, Sourced::new(company, provenance));
     }
     if let Some(html) = text_field(posting, &["description", "content"]) {
-        merge_field(&mut job.description_html, Sourced::new(html.clone(), provenance));
+        merge_field(
+            &mut job.description_html,
+            Sourced::new(html.clone(), provenance),
+        );
         merge_field(
             &mut job.description_md,
             Sourced::new(crate::html::to_markdown(&html), provenance),
@@ -224,9 +235,8 @@ fn collect_location(value: Option<&Value>, out: &mut Vec<RawLocation>, remote_hi
                 out.push(RawLocation {
                     text: parts.join(", "),
                     is_remote_hint: remote_hint,
-                    country_hint: country.and_then(|c| {
-                        jobseeker_normalize::location::normalize_country(&c)
-                    }),
+                    country_hint: country
+                        .and_then(|c| jobseeker_normalize::location::normalize_country(&c)),
                 });
             } else if let Some(name) = map.get("name").and_then(as_text) {
                 out.push(RawLocation {
@@ -246,7 +256,9 @@ fn collect_location(value: Option<&Value>, out: &mut Vec<RawLocation>, remote_hi
 }
 
 fn salary_from(posting: &Value) -> Option<RawSalary> {
-    let salary = posting.get("baseSalary").or_else(|| posting.get("estimatedSalary"))?;
+    let salary = posting
+        .get("baseSalary")
+        .or_else(|| posting.get("estimatedSalary"))?;
     let currency = salary.get("currency").and_then(as_text);
     let value = salary.get("value").unwrap_or(salary);
     let min = numberish(value.get("minValue")).or_else(|| numberish(value.get("value")));
@@ -261,11 +273,13 @@ fn salary_from(posting: &Value) -> Option<RawSalary> {
         (Some(a), Some(b)) if (a - b).abs() < f64::EPSILON => text.push_str(&format!("{a:.0}")),
         (Some(a), Some(b)) => text.push_str(&format!("{a:.0} - {b:.0}")),
         (Some(a), None) => text.push_str(&format!("{a:.0}")),
-        _ => return as_text(salary).map(|t| RawSalary {
-            text: t,
-            country_hint: None,
-            source_kind: None,
-        }),
+        _ => {
+            return as_text(salary).map(|t| RawSalary {
+                text: t,
+                country_hint: None,
+                source_kind: None,
+            })
+        }
     }
     if !period.is_empty() {
         text.push(' ');
@@ -301,7 +315,11 @@ mod tests {
 
     fn job_from(json: &str) -> ExtractedJob {
         let mut job = ExtractedJob::default();
-        apply_json_value(&mut job, &serde_json::from_str(json).unwrap(), Provenance::Jsonld);
+        apply_json_value(
+            &mut job,
+            &serde_json::from_str(json).unwrap(),
+            Provenance::Jsonld,
+        );
         job
     }
 
@@ -326,7 +344,11 @@ mod tests {
         assert_eq!(job.employment_type.unwrap().value, EmploymentType::FullTime);
         assert_eq!(job.locations[0].value.text, "US");
         assert!(job.salary.unwrap().value.text.contains("185000"));
-        assert!(job.description_md.unwrap().value.contains("Build the platform"));
+        assert!(job
+            .description_md
+            .unwrap()
+            .value
+            .contains("Build the platform"));
     }
 
     #[test]
@@ -335,12 +357,18 @@ mod tests {
             r#"{"@graph":[{"@type":"Organization","name":"Nope"},{"@type":"JobPosting","title":"Hidden","hiringOrganization":"Acme","description":"x"}]}"#,
         );
         assert_eq!(job.title.unwrap().value, "Hidden");
-        assert_eq!(job.company_name.unwrap().value, "Acme", "a bare string org is accepted");
+        assert_eq!(
+            job.company_name.unwrap().value,
+            "Acme",
+            "a bare string org is accepted"
+        );
     }
 
     #[test]
     fn hiring_organization_as_a_string_is_accepted() {
-        let job = job_from(r#"{"@type":"JobPosting","title":"E","hiringOrganization":"Acme","description":"d"}"#);
+        let job = job_from(
+            r#"{"@type":"JobPosting","title":"E","hiringOrganization":"Acme","description":"d"}"#,
+        );
         assert_eq!(job.company_name.unwrap().value, "Acme");
     }
 
@@ -351,6 +379,9 @@ mod tests {
         );
         assert_eq!(job.title.unwrap().value, "Platform Engineer");
         assert_eq!(job.source_job_id.unwrap().value, "5512034");
-        assert_eq!(job.apply_url.unwrap().value, "https://boards.greenhouse.io/acme/jobs/5512034");
+        assert_eq!(
+            job.apply_url.unwrap().value,
+            "https://boards.greenhouse.io/acme/jobs/5512034"
+        );
     }
 }

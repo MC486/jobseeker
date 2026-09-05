@@ -82,7 +82,11 @@ impl Acquire {
     pub async fn fetch_url(&self, input: &str) -> Result<FetchOutcome> {
         let planned = plan(input)?;
         self.guard.check(&planned.fetch_url)?;
-        if !self.robots.allows(&self.fetcher, &planned.fetch_url).await? {
+        if !self
+            .robots
+            .allows(&self.fetcher, &planned.fetch_url)
+            .await?
+        {
             return Err(Error::RobotsDisallowed(planned.canonical.canonical.clone()));
         }
         self.limiter.wait(&planned.fetch_url).await;
@@ -128,7 +132,13 @@ mod tests {
 
     #[test]
     fn a_non_http_url_is_rejected_before_any_guardrail() {
-        assert_eq!(plan("ftp://example.com/job").unwrap_err().code(), "invalid_url");
-        assert_eq!(plan("javascript:alert(1)").unwrap_err().code(), "invalid_url");
+        assert_eq!(
+            plan("ftp://example.com/job").unwrap_err().code(),
+            "invalid_url"
+        );
+        assert_eq!(
+            plan("javascript:alert(1)").unwrap_err().code(),
+            "invalid_url"
+        );
     }
 }

@@ -10,15 +10,15 @@
 
 pub mod date;
 pub mod location;
+pub mod requirement;
 pub mod salary;
 pub mod seniority;
 pub mod skill;
-pub mod requirement;
 pub mod text;
 pub mod url;
 
 pub use date::parse_posted_date;
 pub use location::parse_location;
 pub use salary::parse_salary;
-pub use seniority::{infer_seniority, infer_employment_type, infer_work_mode};
+pub use seniority::{infer_employment_type, infer_seniority, infer_work_mode};
 pub use url::{canonicalize, detect_source, CanonicalUrl};

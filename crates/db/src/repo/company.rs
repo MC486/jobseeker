@@ -136,8 +136,12 @@ mod tests {
         let db = Db::open_in_memory().await.unwrap();
 
         let a = resolve_or_create(&db, "Acme Robotics", None).await.unwrap();
-        let b = resolve_or_create(&db, "Acme Robotics, Inc.", None).await.unwrap();
-        let c = resolve_or_create(&db, "ACME ROBOTICS LLC", None).await.unwrap();
+        let b = resolve_or_create(&db, "Acme Robotics, Inc.", None)
+            .await
+            .unwrap();
+        let c = resolve_or_create(&db, "ACME ROBOTICS LLC", None)
+            .await
+            .unwrap();
         assert_eq!(a, b);
         assert_eq!(a, c);
 
@@ -152,7 +156,9 @@ mod tests {
     async fn genuinely_different_companies_stay_separate() {
         let db = Db::open_in_memory().await.unwrap();
         let a = resolve_or_create(&db, "Acme Robotics", None).await.unwrap();
-        let b = resolve_or_create(&db, "Acme Financial", None).await.unwrap();
+        let b = resolve_or_create(&db, "Acme Financial", None)
+            .await
+            .unwrap();
         assert_ne!(a, b);
     }
 

@@ -12,8 +12,8 @@ use jobseeker_core::provenance::{merge_field, Provenance, Sourced};
 use jobseeker_core::time::now;
 use jobseeker_normalize::date::parse_posted_date;
 use jobseeker_normalize::seniority::{
-    detect_clearance, detect_education, detect_visa_sponsorship, extract_years, infer_employment_type,
-    infer_seniority, infer_work_mode,
+    detect_clearance, detect_education, detect_visa_sponsorship, extract_years,
+    infer_employment_type, infer_seniority, infer_work_mode,
 };
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -35,7 +35,10 @@ pub fn apply_url_hints(job: &mut ExtractedJob, url: &str, source: SourceKind) {
     }
     if job.apply_kind.is_none() {
         use jobseeker_core::domain::enums::ApplyKind;
-        merge_field(&mut job.apply_kind, Sourced::new(ApplyKind::Ats, Provenance::Inferred));
+        merge_field(
+            &mut job.apply_kind,
+            Sourced::new(ApplyKind::Ats, Provenance::Inferred),
+        );
     }
 }
 
@@ -50,7 +53,10 @@ pub fn apply_html(job: &mut ExtractedJob, document: &Html, source: SourceKind) {
     if job.description_html.is_none() && !text.is_empty() {
         merge_field(
             &mut job.description_md,
-            Sourced::new(jobseeker_normalize::text::tidy_markdown(&text), Provenance::Rules),
+            Sourced::new(
+                jobseeker_normalize::text::tidy_markdown(&text),
+                Provenance::Rules,
+            ),
         );
     }
 
@@ -61,13 +67,19 @@ pub fn apply_html(job: &mut ExtractedJob, document: &Html, source: SourceKind) {
     }
     if job.employment_type.is_none() {
         if let Some(kind) = infer_employment_type(&text) {
-            merge_field(&mut job.employment_type, Sourced::new(kind, Provenance::Rules));
+            merge_field(
+                &mut job.employment_type,
+                Sourced::new(kind, Provenance::Rules),
+            );
         }
     }
     if job.seniority.is_none() {
         if let Some(title) = job.title.as_ref() {
             if let Some(level) = infer_seniority(&title.value) {
-                merge_field(&mut job.seniority, Sourced::new(level, Provenance::Inferred));
+                merge_field(
+                    &mut job.seniority,
+                    Sourced::new(level, Provenance::Inferred),
+                );
             }
         }
     }
@@ -90,7 +102,8 @@ pub fn apply_html(job: &mut ExtractedJob, document: &Html, source: SourceKind) {
 
     if job.locations.is_empty() {
         if let Some(loc) = find_location(&text) {
-            job.locations.push(Sourced::new(RawLocation::new(loc), Provenance::Rules));
+            job.locations
+                .push(Sourced::new(RawLocation::new(loc), Provenance::Rules));
         }
     }
 
@@ -104,13 +117,19 @@ pub fn apply_html(job: &mut ExtractedJob, document: &Html, source: SourceKind) {
 
     if job.requires_clearance.is_none() {
         if let Some(c) = detect_clearance(&text) {
-            merge_field(&mut job.requires_clearance, Sourced::new(c, Provenance::Rules));
+            merge_field(
+                &mut job.requires_clearance,
+                Sourced::new(c, Provenance::Rules),
+            );
         }
     }
     if job.visa_sponsorship.is_none() {
         let stance = detect_visa_sponsorship(&text);
         if stance != jobseeker_core::domain::enums::Tristate::Unspecified {
-            merge_field(&mut job.visa_sponsorship, Sourced::new(stance, Provenance::Rules));
+            merge_field(
+                &mut job.visa_sponsorship,
+                Sourced::new(stance, Provenance::Rules),
+            );
         }
     }
     if job.education_min.is_none() {
@@ -120,7 +139,10 @@ pub fn apply_html(job: &mut ExtractedJob, document: &Html, source: SourceKind) {
     }
     if job.years_experience_min.is_none() {
         if let Some((min, _)) = extract_years(&text) {
-            merge_field(&mut job.years_experience_min, Sourced::new(min, Provenance::Rules));
+            merge_field(
+                &mut job.years_experience_min,
+                Sourced::new(min, Provenance::Rules),
+            );
         }
     }
 
@@ -150,10 +172,10 @@ fn find_salary(text: &str) -> Option<String> {
 }
 
 fn find_location(text: &str) -> Option<String> {
-    static RE: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r"(?i)(?:location|based in|office)[:\s]+([^\n]{3,60})").unwrap()
-    });
-    RE.captures(text).map(|c| c[1].trim().trim_end_matches('.').to_string())
+    static RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"(?i)(?:location|based in|office)[:\s]+([^\n]{3,60})").unwrap());
+    RE.captures(text)
+        .map(|c| c[1].trim().trim_end_matches('.').to_string())
 }
 
 fn find_date(text: &str) -> Option<String> {
@@ -165,8 +187,10 @@ fn find_date(text: &str) -> Option<String> {
 
 fn find_company(text: &str) -> Option<String> {
     static RE: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r"(?i)\b(?:at|join|about)\s+([A-Z][\w&. ]{1,40}?)\s+(?:is hiring|is looking|we are)")
-            .unwrap()
+        Regex::new(
+            r"(?i)\b(?:at|join|about)\s+([A-Z][\w&. ]{1,40}?)\s+(?:is hiring|is looking|we are)",
+        )
+        .unwrap()
     });
     RE.captures(text).map(|c| c[1].trim().to_string())
 }

@@ -13,30 +13,35 @@ use regex::Regex;
 /// Order matters: `"Senior Engineering Manager"` is a manager, and `"Staff Engineer"` must
 /// not be read as entry-level because it contains "staff".
 pub fn infer_seniority(title: &str) -> Option<Seniority> {
-    static INTERN: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r"(?i)\b(intern|internship|co[- ]?op|apprentice|trainee)\b").unwrap());
+    static INTERN: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"(?i)\b(intern|internship|co[- ]?op|apprentice|trainee)\b").unwrap()
+    });
     static EXEC: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r"(?i)\b(chief\s+\w+\s+officer|cto|ceo|coo|cfo|ciso|cpo|founder|head of engineering)\b").unwrap()
+        Regex::new(
+            r"(?i)\b(chief\s+\w+\s+officer|cto|ceo|coo|cfo|ciso|cpo|founder|head of engineering)\b",
+        )
+        .unwrap()
     });
     static VP: Lazy<Regex> =
         Lazy::new(|| Regex::new(r"(?i)\b(vp|vice president|svp|evp)\b").unwrap());
-    static DIRECTOR: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r"(?i)\b(director|head of)\b").unwrap());
-    static MANAGER: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r"(?i)\b(engineering manager|manager|em)\b").unwrap()
-    });
+    static DIRECTOR: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)\b(director|head of)\b").unwrap());
+    static MANAGER: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"(?i)\b(engineering manager|manager|em)\b").unwrap());
     static PRINCIPAL: Lazy<Regex> =
         Lazy::new(|| Regex::new(r"(?i)\b(principal|distinguished|fellow|architect)\b").unwrap());
     static STAFF: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)\bstaff\b").unwrap());
-    static LEAD: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)\b(lead|tech lead|technical lead)\b").unwrap());
-    static SENIOR: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r"(?i)\b(senior|snr|sr\.?|experienced)\b|\bi{3,}\b|\biv\b").unwrap());
+    static LEAD: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"(?i)\b(lead|tech lead|technical lead)\b").unwrap());
+    static SENIOR: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"(?i)\b(senior|snr|sr\.?|experienced)\b|\bi{3,}\b|\biv\b").unwrap()
+    });
     static JUNIOR: Lazy<Regex> =
         Lazy::new(|| Regex::new(r"(?i)\b(junior|jr\.?|associate)\b").unwrap());
     static ENTRY: Lazy<Regex> = Lazy::new(|| {
         Regex::new(r"(?i)\b(entry[- ]level|new grad|graduate|early career|i)\b").unwrap()
     });
-    static MID: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)\b(mid[- ]level|intermediate|ii)\b").unwrap());
+    static MID: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"(?i)\b(mid[- ]level|intermediate|ii)\b").unwrap());
 
     // Intern before everything: a "Senior Software Engineering Intern" is an intern.
     if INTERN.is_match(title) {
@@ -110,10 +115,12 @@ pub fn infer_employment_type(text: &str) -> Option<EmploymentType> {
     static INTERN: Lazy<Regex> =
         Lazy::new(|| Regex::new(r"(?i)\b(internship|intern|co[- ]?op)\b").unwrap());
     static C2H: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r"(?i)\b(contract[- ]to[- ]hire|c2h|contract to perm|temp[- ]to[- ]perm)\b").unwrap()
+        Regex::new(r"(?i)\b(contract[- ]to[- ]hire|c2h|contract to perm|temp[- ]to[- ]perm)\b")
+            .unwrap()
     });
     static CONTRACT: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r"(?i)\b(contract|contractor|freelance|1099|w2 contract|consulting|sow)\b").unwrap()
+        Regex::new(r"(?i)\b(contract|contractor|freelance|1099|w2 contract|consulting|sow)\b")
+            .unwrap()
     });
     static TEMP: Lazy<Regex> =
         Lazy::new(|| Regex::new(r"(?i)\b(temporary|temp|seasonal)\b").unwrap());
@@ -121,9 +128,8 @@ pub fn infer_employment_type(text: &str) -> Option<EmploymentType> {
         Lazy::new(|| Regex::new(r"(?i)\b(part[- ]time|parttime|pt)\b").unwrap());
     static VOLUNTEER: Lazy<Regex> =
         Lazy::new(|| Regex::new(r"(?i)\b(volunteer|unpaid|pro bono)\b").unwrap());
-    static FULL: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r"(?i)\b(full[- ]time|fulltime|ft|permanent|perm)\b").unwrap()
-    });
+    static FULL: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"(?i)\b(full[- ]time|fulltime|ft|permanent|perm)\b").unwrap());
 
     if INTERN.is_match(text) {
         Some(EmploymentType::Internship)
@@ -214,13 +220,15 @@ pub fn detect_visa_sponsorship(text: &str) -> Tristate {
 /// `"5+ years"` → `(5, None)`.
 pub fn extract_years(text: &str) -> Option<(f32, Option<f32>)> {
     static RANGE: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r"(?i)\b(\d{1,2})\s*(?:-|–|to)\s*(\d{1,2})\+?\s*(?:\+|or more)?\s*years?\b").unwrap()
+        Regex::new(r"(?i)\b(\d{1,2})\s*(?:-|–|to)\s*(\d{1,2})\+?\s*(?:\+|or more)?\s*years?\b")
+            .unwrap()
     });
     static MIN: Lazy<Regex> = Lazy::new(|| {
         Regex::new(r"(?i)\b(?:at least\s*|minimum (?:of )?\s*|min\.?\s*|over\s*|)(\d{1,2})\s*\+?\s*(?:or more\s*)?years?\b").unwrap()
     });
     static WORDS: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r"(?i)\b(one|two|three|four|five|six|seven|eight|nine|ten)\s*\+?\s*years?\b").unwrap()
+        Regex::new(r"(?i)\b(one|two|three|four|five|six|seven|eight|nine|ten)\s*\+?\s*years?\b")
+            .unwrap()
     });
 
     if let Some(c) = RANGE.captures(text) {
@@ -255,17 +263,15 @@ pub fn detect_education(text: &str) -> Option<jobseeker_core::domain::enums::Edu
     use jobseeker_core::domain::enums::EducationLevel as E;
     static PHD: Lazy<Regex> =
         Lazy::new(|| Regex::new(r"(?i)\b(ph\.?d|doctorate|doctoral)\b").unwrap());
-    static MASTER: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r"(?i)\b(master'?s?|m\.?s\.?c?\.?|m\.?eng|mba)\b").unwrap()
-    });
+    static MASTER: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"(?i)\b(master'?s?|m\.?s\.?c?\.?|m\.?eng|mba)\b").unwrap());
     static BACHELOR: Lazy<Regex> = Lazy::new(|| {
         Regex::new(r"(?i)\b(bachelor'?s?|b\.?s\.?c?\.?|b\.?a\.?|b\.?eng|undergraduate degree|4[- ]year degree)\b").unwrap()
     });
     static ASSOCIATE: Lazy<Regex> =
         Lazy::new(|| Regex::new(r"(?i)\b(associate'?s? degree|a\.?a\.?s?\.?)\b").unwrap());
-    static HS: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r"(?i)\b(high school|ged|secondary school)\b").unwrap()
-    });
+    static HS: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"(?i)\b(high school|ged|secondary school)\b").unwrap());
     static NONE: Lazy<Regex> = Lazy::new(|| {
         Regex::new(r"(?i)\b(no degree required|degree not required|equivalent experience in lieu of|or equivalent practical experience)\b").unwrap()
     });
@@ -295,12 +301,27 @@ mod tests {
 
     #[test]
     fn seniority_is_read_from_the_title() {
-        assert_eq!(infer_seniority("Senior Software Engineer"), Some(Seniority::Senior));
-        assert_eq!(infer_seniority("Sr. Backend Engineer"), Some(Seniority::Senior));
-        assert_eq!(infer_seniority("Staff Platform Engineer"), Some(Seniority::Staff));
-        assert_eq!(infer_seniority("Principal Engineer"), Some(Seniority::Principal));
+        assert_eq!(
+            infer_seniority("Senior Software Engineer"),
+            Some(Seniority::Senior)
+        );
+        assert_eq!(
+            infer_seniority("Sr. Backend Engineer"),
+            Some(Seniority::Senior)
+        );
+        assert_eq!(
+            infer_seniority("Staff Platform Engineer"),
+            Some(Seniority::Staff)
+        );
+        assert_eq!(
+            infer_seniority("Principal Engineer"),
+            Some(Seniority::Principal)
+        );
         assert_eq!(infer_seniority("Junior Developer"), Some(Seniority::Junior));
-        assert_eq!(infer_seniority("Software Engineer II"), Some(Seniority::Mid));
+        assert_eq!(
+            infer_seniority("Software Engineer II"),
+            Some(Seniority::Mid)
+        );
     }
 
     #[test]
@@ -310,9 +331,15 @@ mod tests {
             Some(Seniority::Manager),
             "this is a management role, not a senior IC role"
         );
-        assert_eq!(infer_seniority("Director of Engineering"), Some(Seniority::Director));
+        assert_eq!(
+            infer_seniority("Director of Engineering"),
+            Some(Seniority::Director)
+        );
         assert_eq!(infer_seniority("VP of Platform"), Some(Seniority::Vp));
-        assert_eq!(infer_seniority("Chief Technology Officer"), Some(Seniority::Exec));
+        assert_eq!(
+            infer_seniority("Chief Technology Officer"),
+            Some(Seniority::Exec)
+        );
     }
 
     #[test]
@@ -321,7 +348,10 @@ mod tests {
             infer_seniority("Senior Software Engineering Intern"),
             Some(Seniority::Intern)
         );
-        assert_eq!(infer_seniority("Engineering Co-op"), Some(Seniority::Intern));
+        assert_eq!(
+            infer_seniority("Engineering Co-op"),
+            Some(Seniority::Intern)
+        );
     }
 
     #[test]
@@ -335,13 +365,19 @@ mod tests {
 
     #[test]
     fn hybrid_is_never_misread_as_fully_remote() {
-        assert_eq!(infer_work_mode("Hybrid remote - Austin, TX"), Some(WorkMode::Hybrid));
+        assert_eq!(
+            infer_work_mode("Hybrid remote - Austin, TX"),
+            Some(WorkMode::Hybrid)
+        );
         assert_eq!(
             infer_work_mode("Remote, with 2 days per week in the office"),
             Some(WorkMode::Hybrid)
         );
         assert_eq!(infer_work_mode("100% remote"), Some(WorkMode::Remote));
-        assert_eq!(infer_work_mode("This role is on-site in Seattle"), Some(WorkMode::Onsite));
+        assert_eq!(
+            infer_work_mode("This role is on-site in Seattle"),
+            Some(WorkMode::Onsite)
+        );
         assert_eq!(infer_work_mode("Engineering role"), None);
     }
 
@@ -351,26 +387,50 @@ mod tests {
             infer_employment_type("6 month contract-to-hire"),
             Some(EmploymentType::ContractToHire)
         );
-        assert_eq!(infer_employment_type("W2 contract, 12 months"), Some(EmploymentType::Contract));
-        assert_eq!(infer_employment_type("Full-time, permanent"), Some(EmploymentType::FullTime));
-        assert_eq!(infer_employment_type("Summer internship"), Some(EmploymentType::Internship));
-        assert_eq!(infer_employment_type("Part-time, 20 hrs/week"), Some(EmploymentType::PartTime));
+        assert_eq!(
+            infer_employment_type("W2 contract, 12 months"),
+            Some(EmploymentType::Contract)
+        );
+        assert_eq!(
+            infer_employment_type("Full-time, permanent"),
+            Some(EmploymentType::FullTime)
+        );
+        assert_eq!(
+            infer_employment_type("Summer internship"),
+            Some(EmploymentType::Internship)
+        );
+        assert_eq!(
+            infer_employment_type("Part-time, 20 hrs/week"),
+            Some(EmploymentType::PartTime)
+        );
     }
 
     #[test]
     fn clearances_are_normalized_to_comparable_keys() {
-        assert_eq!(detect_clearance("Must hold an active TS/SCI").as_deref(), Some("ts_sci"));
+        assert_eq!(
+            detect_clearance("Must hold an active TS/SCI").as_deref(),
+            Some("ts_sci")
+        );
         assert_eq!(
             detect_clearance("TS/SCI with CI polygraph required").as_deref(),
             Some("ts_sci"),
         );
-        assert_eq!(detect_clearance("Active Secret clearance").as_deref(), Some("secret"));
-        assert_eq!(detect_clearance("Public Trust required").as_deref(), Some("public_trust"));
+        assert_eq!(
+            detect_clearance("Active Secret clearance").as_deref(),
+            Some("secret")
+        );
+        assert_eq!(
+            detect_clearance("Public Trust required").as_deref(),
+            Some("public_trust")
+        );
     }
 
     #[test]
     fn a_statement_that_no_clearance_is_needed_does_not_create_a_blocker() {
-        assert_eq!(detect_clearance("No clearance required for this role"), None);
+        assert_eq!(
+            detect_clearance("No clearance required for this role"),
+            None
+        );
         assert_eq!(detect_clearance("Security clearance not required"), None);
         assert_eq!(detect_clearance("Build great software"), None);
     }
@@ -395,7 +455,10 @@ mod tests {
     #[test]
     fn years_of_experience_are_extracted_as_ranges_or_floors() {
         assert_eq!(extract_years("5+ years of experience"), Some((5.0, None)));
-        assert_eq!(extract_years("5-7 years in distributed systems"), Some((5.0, Some(7.0))));
+        assert_eq!(
+            extract_years("5-7 years in distributed systems"),
+            Some((5.0, Some(7.0)))
+        );
         assert_eq!(extract_years("At least 3 years"), Some((3.0, None)));
         assert_eq!(extract_years("three years of Rust"), Some((3.0, None)));
         assert_eq!(extract_years("Strong communication skills"), None);
@@ -404,8 +467,14 @@ mod tests {
     #[test]
     fn education_is_detected_at_the_highest_stated_level() {
         use jobseeker_core::domain::enums::EducationLevel as E;
-        assert_eq!(detect_education("PhD in Computer Science"), Some(E::Doctorate));
-        assert_eq!(detect_education("Master's degree preferred"), Some(E::Master));
+        assert_eq!(
+            detect_education("PhD in Computer Science"),
+            Some(E::Doctorate)
+        );
+        assert_eq!(
+            detect_education("Master's degree preferred"),
+            Some(E::Master)
+        );
         assert_eq!(detect_education("BS in Engineering"), Some(E::Bachelor));
         assert_eq!(detect_education("Build great software"), None);
     }
