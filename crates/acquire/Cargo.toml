@@ -8,6 +8,7 @@ license.workspace = true
 
 [dependencies]
 jobseeker-core.workspace = true
+jobseeker-normalize.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 reqwest.workspace = true
@@ -19,3 +20,6 @@ chrono.workspace = true
 regex.workspace = true
 once_cell.workspace = true
 async-trait = "0.1"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
