@@ -162,6 +162,15 @@ async fn main() -> Result<()> {
                 .await?
                 .with_context(|| format!("no job {id}"))?;
             println!("{}", serde_json::to_string_pretty(&job)?);
+            if let Some(score) =
+                jobseeker_db::repo::score::latest_for_job(&pipeline.db, &id, None).await?
+            {
+                println!(
+                    "match {:.0}% ({})",
+                    score.overall * 100.0,
+                    if score.is_stale { "stale" } else { "fresh" }
+                );
+            }
         }
         Command::Reconcile => {
             anyhow::bail!("reconcile is scheduled for M1; files are written on extract today");

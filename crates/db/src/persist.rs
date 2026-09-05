@@ -78,6 +78,7 @@ pub async fn persist_extracted(db: &Db, input: PersistExtracted<'_>) -> Result<P
     }
 
     crate::repo::job::reindex_fts(db, &job_id).await?;
+    write_job_provenance(db, &job_id, input.job, input.model).await?;
     Ok(PersistOutcome {
         job_id,
         company_id,
@@ -316,7 +317,27 @@ async fn update_job(
     company_id: &CompanyId,
     input: &PersistExtracted<'_>,
 ) -> Result<()> {
-    let row = JobRow::from_input(input);
+    let mut row = JobRow::from_input(input);
+    // FR-E-03: a human title edit is never clobbered by a later extract.
+    let manual_title: Option<String> = sqlx::query_scalar(
+        "SELECT field FROM field_provenance
+          WHERE entity_kind = 'job' AND entity_id = ?1 AND field = 'title' AND provenance = 'manual'",
+    )
+    .bind(job_id.as_str())
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(db_err)?;
+    if manual_title.is_some() {
+        let existing: (String, String, String) =
+            sqlx::query_as("SELECT title, slug, title_normalized FROM job WHERE id = ?1")
+                .bind(job_id.as_str())
+                .fetch_one(&mut **tx)
+                .await
+                .map_err(db_err)?;
+        row.title = existing.0;
+        row.slug = existing.1;
+        row.title_normalized = existing.2;
+    }
     let ts = to_rfc3339(&now());
     sqlx::query(
         r#"UPDATE job SET
@@ -485,6 +506,86 @@ async fn replace_requirements(
     Ok(())
 }
 
+/// Write provenance for extracted fields without clobbering a manual edit.
+pub async fn write_job_provenance(
+    db: &Db,
+    job_id: &JobId,
+    extracted: &ExtractedJob,
+    model: Option<&str>,
+) -> Result<()> {
+    let ts = to_rfc3339(&now());
+    let pairs: Vec<(&str, Option<(jobseeker_core::provenance::Provenance, f32)>)> = vec![
+        (
+            "title",
+            extracted
+                .title
+                .as_ref()
+                .map(|s| (s.provenance, s.confidence.get())),
+        ),
+        (
+            "company_name",
+            extracted
+                .company_name
+                .as_ref()
+                .map(|s| (s.provenance, s.confidence.get())),
+        ),
+        (
+            "work_mode",
+            extracted
+                .work_mode
+                .as_ref()
+                .map(|s| (s.provenance, s.confidence.get())),
+        ),
+        (
+            "salary",
+            extracted
+                .salary
+                .as_ref()
+                .map(|s| (s.provenance, s.confidence.get())),
+        ),
+        (
+            "posted_at",
+            extracted
+                .posted_at
+                .as_ref()
+                .map(|s| (s.provenance, s.confidence.get())),
+        ),
+        (
+            "apply_url",
+            extracted
+                .apply_url
+                .as_ref()
+                .map(|s| (s.provenance, s.confidence.get())),
+        ),
+    ];
+    for (field, src) in pairs {
+        let Some((prov, conf)) = src else { continue };
+        let id = uuid::Uuid::now_v7().to_string();
+        sqlx::query(
+            r#"INSERT INTO field_provenance
+                (id, entity_kind, entity_id, field, provenance, confidence, model, updated_at)
+               VALUES (?1, 'job', ?2, ?3, ?4, ?5, ?6, ?7)
+               ON CONFLICT (entity_kind, entity_id, field) DO UPDATE SET
+                 provenance = excluded.provenance,
+                 confidence = excluded.confidence,
+                 model = excluded.model,
+                 updated_at = excluded.updated_at
+               WHERE field_provenance.provenance != 'manual'"#,
+        )
+        .bind(&id)
+        .bind(job_id.as_str())
+        .bind(field)
+        .bind(prov.as_str())
+        .bind(conf as f64)
+        .bind(model)
+        .bind(&ts)
+        .execute(db.writer())
+        .await
+        .map_err(db_err)?;
+    }
+    Ok(())
+}
+
 /// Record the materialized file directory on the job row.
 pub async fn set_file_path(db: &Db, job_id: &JobId, file_path: &str) -> Result<()> {
     sqlx::query("UPDATE job SET file_path = ?1, updated_at = ?2 WHERE id = ?3")
@@ -611,6 +712,94 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(attached, first.job_id.as_str());
+
+        let prov: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM field_provenance WHERE entity_kind = 'job' AND entity_id = ?1",
+        )
+        .bind(first.job_id.as_str())
+        .fetch_one(db.reader())
+        .await
+        .unwrap();
+        assert!(prov >= 2, "title and company_name must have provenance");
+    }
+
+    #[tokio::test]
+    async fn a_manual_title_survives_reextract() {
+        let db = Db::open_in_memory().await.unwrap();
+        let (listing_id, _) = listing::upsert_by_url(
+            &db,
+            &UpsertListing {
+                source: SourceKind::Greenhouse,
+                url: "https://boards.greenhouse.io/acme/jobs/9".into(),
+                url_canonical: "https://boards.greenhouse.io/acme/jobs/9".into(),
+                source_job_id: Some("9".into()),
+                title_at_source: Some("Original".into()),
+                company_name_at_source: Some("Acme".into()),
+            },
+        )
+        .await
+        .unwrap();
+        let mut extracted = ExtractedJob::default();
+        extracted.title = Some(Sourced::new("Original".into(), Provenance::Jsonld));
+        extracted.company_name = Some(Sourced::new("Acme".into(), Provenance::Jsonld));
+        let out = persist_extracted(
+            &db,
+            PersistExtracted {
+                listing_id: Some(&listing_id),
+                job: &extracted,
+                requirements: &[],
+                description_md: "",
+                description_text: "",
+                content_hash: "b3:a",
+                partial: true,
+                model: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        crate::repo::job::patch(
+            &db,
+            &out.job_id,
+            &crate::repo::job::JobPatch {
+                title: Some("Human title".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        extracted.title = Some(Sourced::new("Machine title".into(), Provenance::Jsonld));
+        persist_extracted(
+            &db,
+            PersistExtracted {
+                listing_id: Some(&listing_id),
+                job: &extracted,
+                requirements: &[],
+                description_md: "",
+                description_text: "",
+                content_hash: "b3:b",
+                partial: true,
+                model: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let detail = crate::repo::job::get(&db, &out.job_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(detail.title, "Human title");
+        let source: String = sqlx::query_scalar(
+            "SELECT provenance FROM field_provenance
+              WHERE entity_kind = 'job' AND entity_id = ?1 AND field = 'title'",
+        )
+        .bind(out.job_id.as_str())
+        .fetch_one(db.reader())
+        .await
+        .unwrap();
+        assert_eq!(source, "manual");
     }
 
     #[tokio::test]

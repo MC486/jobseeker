@@ -33,6 +33,7 @@ pub struct JobListRow {
     pub user_rating: Option<i64>,
     pub is_archived: bool,
     pub extraction_partial: bool,
+    pub match_overall: Option<f64>,
     pub updated_at: String,
 }
 
@@ -96,6 +97,9 @@ pub async fn list(db: &Db, filter: &JobFilter) -> Result<Page<JobListRow>> {
                 j.salary_currency, j.salary_period, j.salary_is_estimate,
                 j.posted_at, j.closes_at, j.user_rating, j.is_archived,
                 j.extraction_partial, j.updated_at,
+                (SELECT m.overall FROM match_score m
+                  WHERE m.job_id = j.id
+                  ORDER BY m.computed_at DESC LIMIT 1) AS match_overall,
                 (SELECT COALESCE(NULLIF(TRIM(COALESCE(l.city,'') || CASE WHEN l.city IS NOT NULL
                                           AND l.region IS NOT NULL THEN ', ' ELSE '' END
                                           || COALESCE(l.region,'')), ''), l.raw)
@@ -225,6 +229,7 @@ pub async fn list(db: &Db, filter: &JobFilter) -> Result<Page<JobListRow>> {
                 .try_get::<i64, _>("extraction_partial")
                 .map_err(db_err)?
                 != 0,
+            match_overall: row.try_get("match_overall").map_err(db_err)?,
             updated_at: row.try_get("updated_at").map_err(db_err)?,
         });
     }
@@ -393,6 +398,14 @@ pub async fn reindex_fts(db: &Db, job_id: &JobId) -> Result<()> {
     Ok(())
 }
 
+/// Where one stored field came from, so the UI can show a confidence dot.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct FieldProvenanceRow {
+    pub field: String,
+    pub provenance: String,
+    pub confidence: f64,
+}
+
 /// One requirement as the job-detail page renders it.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct RequirementRow {
@@ -433,6 +446,11 @@ pub struct JobDetail {
     pub extraction_model: Option<String>,
     pub locations: Vec<String>,
     pub requirements: Vec<RequirementRow>,
+    pub requires_clearance: Option<String>,
+    pub user_rating: Option<i64>,
+    pub user_notes_md: Option<String>,
+    pub is_archived: bool,
+    pub provenance: Vec<FieldProvenanceRow>,
     pub updated_at: String,
 }
 
@@ -443,7 +461,8 @@ pub async fn get(db: &Db, id: &JobId) -> Result<Option<JobDetail>> {
                 j.salary_min_cents, j.salary_max_cents, j.salary_currency, j.salary_period,
                 j.salary_is_estimate, j.salary_raw, j.posted_at, j.closes_at, j.apply_url,
                 j.description_md, j.file_path, j.content_hash, j.extraction_partial,
-                j.extraction_model, j.updated_at
+                j.extraction_model, j.requires_clearance, j.user_rating, j.user_notes_md,
+                j.is_archived, j.updated_at
            FROM job j
            JOIN company c ON c.id = j.company_id
           WHERE j.id = ?1 AND j.deleted_at IS NULL",
@@ -515,8 +534,273 @@ pub async fn get(db: &Db, id: &JobId) -> Result<Option<JobDetail>> {
         extraction_model: row.try_get("extraction_model").map_err(db_err)?,
         locations,
         requirements,
+        requires_clearance: row.try_get("requires_clearance").map_err(db_err)?,
+        user_rating: row.try_get("user_rating").map_err(db_err)?,
+        user_notes_md: row.try_get("user_notes_md").map_err(db_err)?,
+        is_archived: row.try_get::<i64, _>("is_archived").map_err(db_err)? != 0,
+        provenance: load_provenance(db, id).await?,
         updated_at: row.try_get("updated_at").map_err(db_err)?,
     }))
+}
+
+async fn load_provenance(db: &Db, id: &JobId) -> Result<Vec<FieldProvenanceRow>> {
+    let rows = sqlx::query(
+        "SELECT field, provenance, confidence FROM field_provenance
+          WHERE entity_kind = 'job' AND entity_id = ?1
+          ORDER BY field ASC",
+    )
+    .bind(id.as_str())
+    .fetch_all(db.reader())
+    .await
+    .map_err(db_err)?;
+    let mut out = Vec::with_capacity(rows.len());
+    for r in rows {
+        out.push(FieldProvenanceRow {
+            field: r.try_get("field").map_err(db_err)?,
+            provenance: r.try_get("provenance").map_err(db_err)?,
+            confidence: r.try_get("confidence").map_err(db_err)?,
+        });
+    }
+    Ok(out)
+}
+
+/// Job + requirements in domain types, for the matcher.
+pub async fn scoring_inputs(
+    db: &Db,
+    id: &JobId,
+) -> Result<
+    Option<(
+        jobseeker_core::domain::job::Job,
+        Vec<jobseeker_core::domain::requirement::Requirement>,
+        Vec<jobseeker_core::domain::location::JobLocation>,
+    )>,
+> {
+    let detail = match get(db, id).await? {
+        Some(d) => d,
+        None => return Ok(None),
+    };
+    let salary = jobseeker_core::domain::salary::Salary {
+        min_cents: detail.salary_min_cents,
+        max_cents: detail.salary_max_cents,
+        currency: detail
+            .salary_currency
+            .clone()
+            .unwrap_or_else(|| "USD".into()),
+        period: detail
+            .salary_period
+            .parse()
+            .unwrap_or(jobseeker_core::domain::salary::SalaryPeriod::Unknown),
+        is_estimate: detail.salary_is_estimate,
+        raw: detail.salary_raw.clone(),
+    };
+
+    let loc_rows = sqlx::query(
+        "SELECT raw, city, region, country, is_primary, is_remote_scope, ordinal
+           FROM job_location WHERE job_id = ?1 ORDER BY ordinal ASC",
+    )
+    .bind(id.as_str())
+    .fetch_all(db.reader())
+    .await
+    .map_err(db_err)?;
+    let mut locations = Vec::new();
+    for r in loc_rows {
+        locations.push(jobseeker_core::domain::location::JobLocation {
+            job_id: id.clone(),
+            raw: r.try_get("raw").map_err(db_err)?,
+            city: r.try_get("city").map_err(db_err)?,
+            region: r.try_get("region").map_err(db_err)?,
+            country: r.try_get("country").map_err(db_err)?,
+            postal_code: None,
+            lat: None,
+            lon: None,
+            is_primary: r.try_get::<i64, _>("is_primary").map_err(db_err)? != 0,
+            is_remote_scope: r.try_get::<i64, _>("is_remote_scope").map_err(db_err)? != 0,
+            timezone_requirement: None,
+            ordinal: r.try_get("ordinal").map_err(db_err)?,
+        });
+    }
+
+    let now = jobseeker_core::time::now();
+    let req_rows = sqlx::query(
+        "SELECT id, ordinal, text, normalized_text, kind, necessity, min_years, max_years,
+                is_blocker, quantity_raw, confidence, provenance
+           FROM requirement WHERE job_id = ?1 ORDER BY ordinal ASC",
+    )
+    .bind(id.as_str())
+    .fetch_all(db.reader())
+    .await
+    .map_err(db_err)?;
+    let mut requirements = Vec::new();
+    for r in req_rows {
+        let kind: String = r.try_get("kind").map_err(db_err)?;
+        let necessity: String = r.try_get("necessity").map_err(db_err)?;
+        let provenance: String = r.try_get("provenance").map_err(db_err)?;
+        let conf: f64 = r.try_get("confidence").map_err(db_err)?;
+        requirements.push(jobseeker_core::domain::requirement::Requirement {
+            id: r.try_get::<String, _>("id").map_err(db_err)?.parse()?,
+            job_id: id.clone(),
+            ordinal: r.try_get("ordinal").map_err(db_err)?,
+            text: r.try_get("text").map_err(db_err)?,
+            normalized_text: r.try_get("normalized_text").map_err(db_err)?,
+            kind: kind.parse()?,
+            necessity: necessity.parse()?,
+            skill_id: None,
+            min_years: r
+                .try_get::<Option<f64>, _>("min_years")
+                .map_err(db_err)?
+                .map(|y| y as f32),
+            max_years: r
+                .try_get::<Option<f64>, _>("max_years")
+                .map_err(db_err)?
+                .map(|y| y as f32),
+            level: None,
+            education_level: None,
+            field_of_study: None,
+            is_blocker: r.try_get::<i64, _>("is_blocker").map_err(db_err)? != 0,
+            quantity_raw: r.try_get("quantity_raw").map_err(db_err)?,
+            source_span: None,
+            confidence: jobseeker_core::provenance::Confidence::new(conf as f32),
+            provenance: provenance.parse()?,
+            created_at: now,
+            updated_at: now,
+        });
+    }
+
+    // A thin Job is enough for the snapshot fields the scorer reads.
+    let job = jobseeker_core::domain::job::Job {
+        id: id.clone(),
+        company_id: detail.company_id.parse()?,
+        slug: String::new(),
+        title: detail.title,
+        title_normalized: String::new(),
+        seniority: detail.seniority.parse()?,
+        employment_type: detail.employment_type.parse()?,
+        work_mode: detail.work_mode.parse()?,
+        work_mode_detail: None,
+        department: None,
+        team: None,
+        description_md: detail.description_md,
+        description_text: String::new(),
+        summary: None,
+        responsibilities_md: None,
+        benefits_md: None,
+        salary,
+        equity_offered: false,
+        comp_notes: None,
+        posted_at: None,
+        closes_at: None,
+        first_seen_at: now,
+        last_seen_at: now,
+        closed_at: None,
+        status: detail.status.parse()?,
+        apply_url: detail.apply_url,
+        apply_kind: jobseeker_core::domain::enums::ApplyKind::Unknown,
+        canonical_listing_id: None,
+        requires_clearance: detail.requires_clearance,
+        visa_sponsorship: jobseeker_core::domain::enums::Tristate::Unspecified,
+        travel_pct: None,
+        education_min: jobseeker_core::domain::enums::EducationLevel::Unknown,
+        years_experience_min: None,
+        years_experience_max: None,
+        content_hash: detail.content_hash,
+        extraction_model: None,
+        extracted_at: None,
+        extraction_confidence: None,
+        extraction_partial: detail.extraction_partial,
+        file_path: detail.file_path,
+        user_rating: None,
+        user_notes_md: None,
+        is_archived: false,
+        created_at: now,
+        updated_at: now,
+    };
+    Ok(Some((job, requirements, locations)))
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct JobPatch {
+    pub title: Option<String>,
+    pub user_rating: Option<i32>,
+    pub user_notes_md: Option<String>,
+    pub is_archived: Option<bool>,
+    pub status: Option<String>,
+}
+
+/// User edits. Fields written here become provenance `manual`.
+pub async fn patch(db: &Db, id: &JobId, patch: &JobPatch) -> Result<u64> {
+    let ts = jobseeker_core::time::to_rfc3339(&jobseeker_core::time::now());
+    if let Some(title) = &patch.title {
+        let slug = jobseeker_core::slug::slugify(title);
+        let title_normalized = jobseeker_core::slug::normalize_job_title(title);
+        sqlx::query(
+            "UPDATE job SET title = ?2, slug = ?3, title_normalized = ?4, updated_at = ?5
+              WHERE id = ?1 AND deleted_at IS NULL",
+        )
+        .bind(id.as_str())
+        .bind(title)
+        .bind(&slug)
+        .bind(&title_normalized)
+        .bind(&ts)
+        .execute(db.writer())
+        .await
+        .map_err(db_err)?;
+    }
+    let result = sqlx::query(
+        r#"UPDATE job SET
+            user_rating = COALESCE(?2, user_rating),
+            user_notes_md = COALESCE(?3, user_notes_md),
+            is_archived = COALESCE(?4, is_archived),
+            status = COALESCE(?5, status),
+            updated_at = ?6
+          WHERE id = ?1 AND deleted_at IS NULL"#,
+    )
+    .bind(id.as_str())
+    .bind(patch.user_rating.map(i64::from))
+    .bind(patch.user_notes_md.as_deref())
+    .bind(patch.is_archived.map(i64::from))
+    .bind(patch.status.as_deref())
+    .bind(&ts)
+    .execute(db.writer())
+    .await
+    .map_err(db_err)?;
+    let touched_any = result.rows_affected() > 0 || patch.title.is_some();
+    if touched_any {
+        for field in [
+            "title",
+            "user_rating",
+            "user_notes_md",
+            "is_archived",
+            "status",
+        ] {
+            let touched = match field {
+                "title" => patch.title.is_some(),
+                "user_rating" => patch.user_rating.is_some(),
+                "user_notes_md" => patch.user_notes_md.is_some(),
+                "is_archived" => patch.is_archived.is_some(),
+                "status" => patch.status.is_some(),
+                _ => false,
+            };
+            if !touched {
+                continue;
+            }
+            let pid = uuid::Uuid::now_v7().to_string();
+            sqlx::query(
+                r#"INSERT INTO field_provenance
+                    (id, entity_kind, entity_id, field, provenance, confidence, updated_at)
+                   VALUES (?1, 'job', ?2, ?3, 'manual', 1.0, ?4)
+                   ON CONFLICT (entity_kind, entity_id, field) DO UPDATE SET
+                     provenance = 'manual', confidence = 1.0, updated_at = excluded.updated_at"#,
+            )
+            .bind(&pid)
+            .bind(id.as_str())
+            .bind(field)
+            .bind(&ts)
+            .execute(db.writer())
+            .await
+            .map_err(db_err)?;
+        }
+    }
+    Ok(result.rows_affected())
 }
 
 /// Mark every score for this job stale. A cheap UPDATE beats deleting rows: the UI can keep

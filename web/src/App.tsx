@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { api, JobDetail, JobListRow, TaskView } from "./api";
+import { api, JobDetail, JobListRow, MatchSummary, TaskView } from "./api";
 
 type Route =
   | { name: "home" }
@@ -181,6 +181,9 @@ function JobList() {
               <div className="text-sm text-zinc-400">
                 {row.company_name} · {row.work_mode} · {row.status}
                 {row.primary_location ? ` · ${row.primary_location}` : ""}
+                {row.match_overall != null
+                  ? ` · ${Math.round(row.match_overall * 100)}% match`
+                  : ""}
               </div>
             </button>
           </li>
@@ -191,45 +194,142 @@ function JobList() {
   );
 }
 
+function provenanceDot(job: JobDetail, field: string) {
+  const row = job.provenance.find((p) => p.field === field);
+  if (!row) return null;
+  const color =
+    row.provenance === "manual"
+      ? "bg-emerald-400"
+      : row.confidence >= 0.85
+        ? "bg-indigo-400"
+        : row.confidence >= 0.6
+          ? "bg-amber-400"
+          : "bg-zinc-500";
+  return (
+    <span
+      className={`ml-2 inline-block h-2 w-2 rounded-full ${color}`}
+      title={`${row.field}: ${row.provenance} (${Math.round(row.confidence * 100)}%)`}
+    />
+  );
+}
+
 function JobPage({ id }: { id: string }) {
   const [job, setJob] = useState<JobDetail | null>(null);
+  const [match, setMatch] = useState<MatchSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   useEffect(() => {
+    let cancelled = false;
     api
       .job(id)
-      .then(setJob)
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : "failed"));
+      .then((detail) => {
+        if (!cancelled) setJob(detail);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : "failed");
+      });
+    api
+      .jobMatch(id)
+      .then((score) => {
+        if (!cancelled) setMatch(score);
+      })
+      .catch(() => {
+        if (!cancelled) setMatch(null);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [id]);
+
+  async function toggleArchive() {
+    if (!job) return;
+    setBusy(true);
+    try {
+      const next = await api.patchJob(id, { is_archived: !job.is_archived });
+      setJob(next);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (error) return <p className="text-red-300">{error}</p>;
   if (!job) return <p className="text-zinc-500">Loading…</p>;
+  const verdictByReq = new Map((match?.verdicts ?? []).map((v) => [v.requirement_id, v]));
   return (
     <article className="space-y-6">
       <div>
         <p className="text-sm text-zinc-400">{job.company_name}</p>
-        <h1 className="text-2xl font-semibold">{job.title}</h1>
+        <h1 className="text-2xl font-semibold">
+          {job.title}
+          {provenanceDot(job, "title")}
+        </h1>
         <p className="mt-1 text-sm text-zinc-400">
           {job.work_mode} · {job.seniority} · {job.employment_type}
           {job.extraction_partial ? " · partial extraction" : ""}
+          {job.is_archived ? " · archived" : ""}
         </p>
         {job.apply_url && (
           <a className="mt-2 inline-block text-sm text-indigo-300" href={job.apply_url}>
             Apply
           </a>
         )}
+        <div className="mt-3">
+          <button
+            disabled={busy}
+            onClick={toggleArchive}
+            className="rounded-lg border border-zinc-700 px-3 py-1 text-sm text-zinc-300 disabled:opacity-50"
+          >
+            {job.is_archived ? "Unarchive" : "Archive"}
+          </button>
+        </div>
       </div>
-      {job.salary_raw && <p>Comp: {job.salary_raw}</p>}
+      {match && (
+        <section className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+          <h2 className="text-lg font-medium">
+            Match {Math.round(match.overall * 100)}%
+            {match.is_stale ? " · stale" : ""}
+          </h2>
+          <p className="mt-2 text-sm text-zinc-400">
+            required {pct(match.required_coverage)} · preferred {pct(match.preferred_coverage)} ·
+            seniority {pct(match.seniority_fit)} · comp {pct(match.comp_fit)} · location{" "}
+            {pct(match.location_fit)}
+            {match.blocker_count > 0 ? ` · ${match.blocker_count} blocker(s)` : ""}
+          </p>
+        </section>
+      )}
+      {job.salary_raw && (
+        <p>
+          Comp: {job.salary_raw}
+          {provenanceDot(job, "salary")}
+        </p>
+      )}
       {job.locations.length > 0 && (
         <p className="text-zinc-300">Location: {job.locations.join(" · ")}</p>
       )}
       <section>
         <h2 className="mb-2 text-lg font-medium">Requirements</h2>
-        <ul className="space-y-1 text-sm">
-          {job.requirements.map((r) => (
-            <li key={r.id}>
-              <span className="text-zinc-500">{r.necessity}</span> {r.text}
-              {r.is_blocker ? " · blocker" : ""}
-            </li>
-          ))}
+        <ul className="space-y-2 text-sm">
+          {job.requirements.map((r) => {
+            const verdict = verdictByReq.get(r.id);
+            return (
+              <li key={r.id}>
+                <div>
+                  <span className="text-zinc-500">{r.necessity}</span> {r.text}
+                  {r.is_blocker ? " · blocker" : ""}
+                  {verdict ? (
+                    <span className="ml-2 text-zinc-400">
+                      · {verdict.status} ({Math.round(verdict.score * 100)}%)
+                    </span>
+                  ) : null}
+                </div>
+                {verdict?.rationale && (
+                  <p className="text-zinc-500">{verdict.rationale}</p>
+                )}
+              </li>
+            );
+          })}
         </ul>
       </section>
       <section>
@@ -238,6 +338,10 @@ function JobPage({ id }: { id: string }) {
       </section>
     </article>
   );
+}
+
+function pct(value: number | null) {
+  return value == null ? "—" : `${Math.round(value * 100)}%`;
 }
 
 function TaskPage({ id }: { id: string }) {

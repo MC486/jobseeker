@@ -72,6 +72,7 @@ impl Pipeline {
             db.migrate().await?;
         }
         db.assert_schema_not_newer().await?;
+        jobseeker_db::repo::profile::ensure_default(&db).await?;
         let acquire = Acquire::new(&config.acquire)?;
         let llm = jobseeker_llm::from_config(&config.llm)?;
         Ok(Self {
@@ -315,10 +316,7 @@ impl Pipeline {
             }
             TaskKind::ExtractJob => self.handle_extract(&task.payload).await,
             TaskKind::MaterializeJob => self.handle_materialize(&task.payload).await,
-            TaskKind::ScoreMatch => {
-                tracing::info!("score_match skipped: no profile loaded in M0");
-                Ok(())
-            }
+            TaskKind::ScoreMatch => self.handle_score_match(&task.payload).await,
             other => {
                 tracing::info!(kind = other.as_str(), "no handler yet; marking done");
                 Ok(())
@@ -544,6 +542,55 @@ impl Pipeline {
         persist::set_file_path(&self.db, &job_id, &rel).await?;
         Ok(())
     }
+
+    async fn handle_score_match(&self, payload: &serde_json::Value) -> Result<()> {
+        let p: JobPayload = serde_json::from_value(payload.clone())?;
+        let job_id: jobseeker_core::ids::JobId = p.job_id.parse()?;
+        let Some((job, requirements, locations)) =
+            jobseeker_db::repo::job::scoring_inputs(&self.db, &job_id).await?
+        else {
+            return Err(Error::NotFound("job"));
+        };
+        let Some(profile_row) = jobseeker_db::repo::profile::get(&self.db, None).await? else {
+            tracing::warn!("score_match skipped: no default profile");
+            return Ok(());
+        };
+
+        let snapshot = jobseeker_matching::JobSnapshot {
+            job_id: Some(job.id.clone()),
+            requirements,
+            seniority: job.seniority,
+            work_mode: job.work_mode,
+            salary: job.salary,
+            locations,
+            requires_clearance: job.requires_clearance,
+        };
+        let profile = jobseeker_matching::ProfileSnapshot {
+            profile_id: Some(profile_row.id.clone()),
+            skills: profile_row
+                .skills
+                .into_iter()
+                .map(|s| jobseeker_matching::SkillEvidence {
+                    skill_id: s.skill_id,
+                    slug: s.slug,
+                    years: s.years,
+                    last_used_year: s.last_used_year,
+                    excerpt: None,
+                })
+                .collect(),
+            seniority: Some(jobseeker_core::domain::enums::Seniority::Senior),
+            years_experience: Some(10.0),
+            target_comp_min_cents: profile_row.target_comp_min_cents,
+            accepts_remote: profile_row.accepts_remote,
+            willing_to_relocate: profile_row.willing_to_relocate,
+            target_locations: profile_row.target_locations,
+            clearances: vec![],
+            education: None,
+        };
+        let score = jobseeker_matching::score(&snapshot, &profile, &self.config.matching)?;
+        jobseeker_db::repo::score::upsert(&self.db, &score).await?;
+        Ok(())
+    }
 }
 
 fn relative_path(root: &Path, path: &Path) -> String {
@@ -575,28 +622,8 @@ pub async fn for_test(dir: PathBuf) -> Result<Pipeline> {
 mod tests {
     use super::*;
 
-    const GREENHOUSE_HTML: &str = r#"<!doctype html>
-<html><head>
-<script type="application/ld+json">
-{
-  "@context": "https://schema.org",
-  "@type": "JobPosting",
-  "title": "Senior Platform Engineer",
-  "hiringOrganization": {"@type": "Organization", "name": "Acme Robotics"},
-  "datePosted": "2026-09-02",
-  "employmentType": "FULL_TIME",
-  "jobLocationType": "TELECOMMUTE",
-  "applicantLocationRequirements": {"@type": "Country", "name": "US"},
-  "baseSalary": {
-    "@type": "MonetaryAmount",
-    "currency": "USD",
-    "value": {"@type": "QuantitativeValue", "minValue": 185000, "maxValue": 225000, "unitText": "YEAR"}
-  },
-  "description": "<h2>Requirements</h2><ul><li>5+ years building distributed systems</li><li>3+ years operating Kubernetes</li><li>Production Rust</li></ul>",
-  "url": "https://boards.greenhouse.io/acmerobotics/jobs/5512034"
-}
-</script>
-</head><body><main><h1>Senior Platform Engineer</h1></main></body></html>"#;
+    const GREENHOUSE_HTML: &str =
+        include_str!("../../../fixtures/greenhouse-platform-engineer.html");
 
     #[tokio::test]
     async fn paste_travels_the_spine_to_files_and_a_queryable_row() {
@@ -647,6 +674,26 @@ mod tests {
         let md = std::fs::read_to_string(&job_md).unwrap();
         assert!(md.contains("Senior Platform Engineer"));
         assert!(md.contains("Acme Robotics"));
+
+        let scored = jobseeker_db::repo::score::latest_for_job(&pipe.db, &id, None)
+            .await
+            .unwrap()
+            .expect("score_match must persist a row");
+        assert!(
+            scored.overall > 0.0,
+            "default profile must produce a positive score, got {}",
+            scored.overall
+        );
+        assert!(
+            scored.verdicts.iter().any(|v| {
+                v.score > 0.0
+                    && (v.rationale.to_ascii_lowercase().contains("rust")
+                        || v.rationale.to_ascii_lowercase().contains("kubernetes")
+                        || v.status == "met")
+            }),
+            "rust/k8s evidence must score above 0: {:?}",
+            scored.verdicts
+        );
     }
 
     #[tokio::test]

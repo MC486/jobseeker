@@ -13,6 +13,7 @@ export type JobListRow = {
   posted_at: string | null;
   primary_location: string | null;
   extraction_partial: boolean;
+  match_overall: number | null;
   updated_at: string;
 };
 
@@ -41,7 +42,41 @@ export type JobDetail = {
   extraction_partial: boolean;
   locations: string[];
   requirements: RequirementRow[];
+  user_rating: number | null;
+  user_notes_md: string | null;
+  is_archived: boolean;
+  provenance: { field: string; provenance: string; confidence: number }[];
   updated_at: string;
+};
+
+export type RequirementVerdict = {
+  requirement_id: string;
+  status: string;
+  score: number;
+  rationale: string;
+};
+
+export type MatchSummary = {
+  id: string;
+  profile_id: string;
+  overall: number;
+  required_coverage: number | null;
+  preferred_coverage: number | null;
+  seniority_fit: number | null;
+  comp_fit: number | null;
+  location_fit: number | null;
+  blocker_count: number;
+  is_stale: boolean;
+  computed_at: string;
+  verdicts: RequirementVerdict[];
+};
+
+export type JobPatch = {
+  title?: string;
+  user_rating?: number;
+  user_notes_md?: string;
+  is_archived?: boolean;
+  status?: string;
 };
 
 export type Page<T> = { items: T[]; next_cursor: string | null };
@@ -85,6 +120,9 @@ export const api = {
   jobs: (q?: string) =>
     request<Page<JobListRow>>(`/api/v1/jobs${q ? `?q=${encodeURIComponent(q)}` : ""}`),
   job: (id: string) => request<JobDetail>(`/api/v1/jobs/${id}`),
+  jobMatch: (id: string) => request<MatchSummary>(`/api/v1/jobs/${id}/match`),
+  patchJob: (id: string, body: JobPatch) =>
+    request<JobDetail>(`/api/v1/jobs/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   task: (id: string) => request<TaskView>(`/api/v1/tasks/${id}`),
   ingestUrl: (url: string) =>
     request<Accepted>("/api/v1/ingest/url", { method: "POST", body: JSON.stringify({ url }) }),

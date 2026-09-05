@@ -15,7 +15,8 @@ use jobseeker_core::domain::capture::CaptureSubmission;
 use jobseeker_core::ids::{JobId, TaskId};
 use jobseeker_core::{Error, Result};
 use jobseeker_db::queue::Queue;
-use jobseeker_db::repo::job::{self, JobFilter};
+use jobseeker_db::repo::job::{self, JobFilter, JobPatch};
+use jobseeker_db::repo::score;
 use jobseeker_pipeline::{IngestAccepted, Pipeline};
 use serde::{Deserialize, Serialize};
 use tower_http::cors::CorsLayer;
@@ -134,9 +135,17 @@ pub struct PageDto<T: Serialize> {
         ingest_paste,
         list_jobs,
         get_job,
+        patch_job,
+        get_job_match,
         get_task
     ),
-    components(schemas(IngestUrlRequest, IngestPasteRequest, Accepted, MetaResponse)),
+    components(schemas(
+        IngestUrlRequest,
+        IngestPasteRequest,
+        Accepted,
+        MetaResponse,
+        PatchJobRequest
+    )),
     info(
         title = "jobseeker",
         description = "Self-hosted job-search workbench",
@@ -159,7 +168,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/ingest/paste", post(ingest_paste))
         .route("/api/v1/ingest/capture", post(ingest_capture))
         .route("/api/v1/jobs", get(list_jobs))
-        .route("/api/v1/jobs/{id}", get(get_job))
+        .route("/api/v1/jobs/{id}", get(get_job).patch(patch_job))
+        .route("/api/v1/jobs/{id}/match", get(get_job_match))
         .route("/api/v1/tasks/{id}", get(get_task))
         .route("/openapi.json", get(openapi));
 
@@ -326,6 +336,67 @@ async fn get_job(
         .map_err(ApiError)?
         .ok_or(ApiError(Error::NotFound("job")))?;
     Ok(Json(job))
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct PatchJobRequest {
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub user_rating: Option<i32>,
+    #[serde(default)]
+    pub user_notes_md: Option<String>,
+    #[serde(default)]
+    pub is_archived: Option<bool>,
+    #[serde(default)]
+    pub status: Option<String>,
+}
+
+#[utoipa::path(patch, path = "/api/v1/jobs/{id}", request_body = PatchJobRequest, responses((status = 200), (status = 404)))]
+async fn patch_job(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<PatchJobRequest>,
+) -> ApiResult<Json<jobseeker_db::repo::job::JobDetail>> {
+    let id: JobId = id.parse().map_err(ApiError)?;
+    let n = job::patch(
+        &state.pipeline.db,
+        &id,
+        &JobPatch {
+            title: body.title,
+            user_rating: body.user_rating,
+            user_notes_md: body.user_notes_md,
+            is_archived: body.is_archived,
+            status: body.status,
+        },
+    )
+    .await
+    .map_err(ApiError)?;
+    if n == 0 {
+        return Err(ApiError(Error::NotFound("job")));
+    }
+    let job = job::get(&state.pipeline.db, &id)
+        .await
+        .map_err(ApiError)?
+        .ok_or(ApiError(Error::NotFound("job")))?;
+    Ok(Json(job))
+}
+
+#[utoipa::path(get, path = "/api/v1/jobs/{id}/match", responses((status = 200), (status = 404)))]
+async fn get_job_match(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<jobseeker_db::repo::score::MatchSummary>> {
+    let id: JobId = id.parse().map_err(ApiError)?;
+    job::get(&state.pipeline.db, &id)
+        .await
+        .map_err(ApiError)?
+        .ok_or(ApiError(Error::NotFound("job")))?;
+    let score = score::latest_for_job(&state.pipeline.db, &id, None)
+        .await
+        .map_err(ApiError)?
+        .ok_or(ApiError(Error::NotFound("match")))?;
+    Ok(Json(score))
 }
 
 #[utoipa::path(get, path = "/api/v1/tasks/{id}", responses((status = 200), (status = 404)))]
@@ -520,6 +591,55 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(res.status(), StatusCode::ACCEPTED);
+        std::mem::forget(dir);
+    }
+
+    #[tokio::test]
+    async fn paste_then_drain_exposes_a_match_score() {
+        let dir = tempfile::tempdir().unwrap();
+        let pipe = jobseeker_pipeline::for_test(dir.path().to_path_buf())
+            .await
+            .unwrap();
+        let html = include_str!("../../../fixtures/greenhouse-platform-engineer.html");
+        let accepted = pipe.ingest_paste(html, None).await.unwrap();
+        pipe.drain().await.unwrap();
+        let page =
+            jobseeker_db::repo::job::list(&pipe.db, &jobseeker_db::repo::job::JobFilter::default())
+                .await
+                .unwrap();
+        let job_id = page.items[0].id.clone();
+        assert!(page.items[0].match_overall.is_some());
+
+        let app = router(AppState {
+            pipeline: pipe.clone(),
+        });
+        let res = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/jobs/{job_id}/match"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+
+        let patched = app
+            .oneshot(
+                Request::builder()
+                    .method("PATCH")
+                    .uri(format!("/api/v1/jobs/{job_id}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"title":"Renamed by hand","is_archived":true}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(patched.status(), StatusCode::OK);
+        let _ = accepted;
         std::mem::forget(dir);
     }
 
