@@ -1,0 +1,22 @@
+[package]
+name = "jobseeker-extract"
+description = "Raw captures into structured, provenance-tagged jobs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+jobseeker-core.workspace = true
+jobseeker-normalize.workspace = true
+jobseeker-llm.workspace = true
+scraper.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+url.workspace = true
+regex.workspace = true
+once_cell.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+async-trait = "0.1"

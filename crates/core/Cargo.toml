@@ -1,0 +1,20 @@
+[package]
+name = "jobseeker-core"
+description = "Domain model, typed ids, error taxonomy and configuration for jobseeker"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+blake3.workspace = true
+figment.workspace = true
+
+tracing.workspace = true
+tracing-subscriber.workspace = true
+deunicode.workspace = true
