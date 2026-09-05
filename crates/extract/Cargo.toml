@@ -19,4 +19,8 @@ once_cell.workspace = true
 chrono.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+tokio.workspace = true
 async-trait = "0.1"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
