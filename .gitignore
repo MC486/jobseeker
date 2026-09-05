@@ -1,0 +1,31 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# Node / frontend
+node_modules/
+web/dist/
+web/src/api/schema.d.ts
+*.tsbuildinfo
+
+# Browser extension build output
+extension/dist/
+extension/*.zip
+
+# Local data and config: never commit a job search
+/data/
+*.db
+*.db-wal
+*.db-shm
+jobseeker.toml
+!jobseeker.example.toml
+
+# Generated artifacts
+/openapi.json
+
+# Editors and OS
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp

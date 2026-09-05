@@ -1,0 +1,39 @@
+[package]
+name = "jobseeker-api"
+description = "HTTP API, OpenAPI document and embedded web UI"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+jobseeker-core.workspace = true
+jobseeker-db.workspace = true
+jobseeker-pipeline.workspace = true
+jobseeker-store.workspace = true
+jobseeker-llm.workspace = true
+axum.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+http.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tokio.workspace = true
+utoipa.workspace = true
+utoipa-axum.workspace = true
+futures.workspace = true
+mime_guess.workspace = true
+rust-embed.workspace = true
+
+[features]
+default = []
+# Embed apps/web/dist into the binary. Requires a prior `pnpm build`.
+embed-web = []
+
+[dev-dependencies]
+tempfile.workspace = true
+tower = { workspace = true, features = ["util"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

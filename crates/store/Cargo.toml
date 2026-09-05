@@ -1,0 +1,19 @@
+[package]
+name = "jobseeker-store"
+description = "File materialization and reconciliation of the data directory"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+jobseeker-core.workspace = true
+jobseeker-normalize.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tokio.workspace = true
+zstd.workspace = true
+tempfile.workspace = true

@@ -1,0 +1,64 @@
+# Copy to jobseeker.toml (gitignored) or set JOBSEEKER__* environment variables.
+# Unknown keys are rejected so a typo fails at boot instead of silently defaulting.
+
+[server]
+bind = "127.0.0.1:8787"
+# public_url = "http://127.0.0.1:8787"
+request_timeout_seconds = 60
+
+[data]
+dir = "./data"
+run_migrations_on_start = true
+
+[auth]
+# none is fine on loopback. Binding beyond loopback with none is warned about at boot.
+mode = "none"
+session_ttl_days = 30
+
+[worker]
+# 0 = derive from CPU count, clamped 2..=8
+concurrency = 0
+lease_seconds = 120
+max_attempts = 5
+poll_interval_ms = 1000
+
+[acquire]
+user_agent = "jobseeker/0.1 (+self-hosted personal use)"
+respect_robots = true
+# Floor is 500 ms. Lower values are rejected.
+per_host_delay_ms = 2000
+timeout_seconds = 20
+allow_private_networks = false
+max_body_bytes = 8388608
+browser_enabled = false
+
+[llm]
+# none | ollama | openai | anthropic | mock
+provider = "none"
+model = "qwen2.5:14b-instruct"
+embedding_provider = "none"
+embedding_model = "nomic-embed-text"
+max_input_tokens = 16000
+timeout_seconds = 120
+cache = true
+
+[matching]
+algorithm_version = "1.0.0"
+blocker_cap = 0.45
+recency_decay_after_years = 3.0
+
+[matching.weights]
+required_coverage = 0.45
+preferred_coverage = 0.15
+semantic = 0.15
+seniority = 0.10
+comp = 0.10
+location = 0.05
+
+[resume]
+renderer = "typst"
+default_template = "ats"
+
+[log]
+level = "info"
+format = "pretty"
