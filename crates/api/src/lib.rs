@@ -1564,19 +1564,13 @@ mod tests {
             .unwrap();
         let fuller = r#"<html><head><script type="application/ld+json">{"@type":"JobPosting","title":"Data Scientist","hiringOrganization":{"name":"Zillow"},"description":"<ul><li>5+ years data science</li><li>Python</li><li>SQL</li></ul>"}</script></head></html>"#;
         let thinner = r#"<html><head><script type="application/ld+json">{"@type":"JobPosting","title":"Platform Engineer","hiringOrganization":{"name":"Zillow"},"description":"<ul><li>Python</li></ul>"}</script></head></html>"#;
-        pipe.ingest_paste(
-            fuller,
-            Some("https://boards.greenhouse.io/zillow/jobs/1"),
-        )
-        .await
-        .unwrap();
+        pipe.ingest_paste(fuller, Some("https://boards.greenhouse.io/zillow/jobs/1"))
+            .await
+            .unwrap();
         pipe.drain().await.unwrap();
-        pipe.ingest_paste(
-            thinner,
-            Some("https://boards.greenhouse.io/zillow/jobs/2"),
-        )
-        .await
-        .unwrap();
+        pipe.ingest_paste(thinner, Some("https://boards.greenhouse.io/zillow/jobs/2"))
+            .await
+            .unwrap();
         pipe.drain().await.unwrap();
 
         let page =

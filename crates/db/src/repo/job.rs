@@ -696,13 +696,12 @@ pub async fn merge(db: &Db, from: &JobId, into: &JobId) -> Result<MergeReport> {
         ));
     }
 
-    let listing_ids: Vec<String> = sqlx::query_scalar(
-        "SELECT id FROM job_source_listing WHERE job_id = ?1",
-    )
-    .bind(from.as_str())
-    .fetch_all(db.reader())
-    .await
-    .map_err(db_err)?;
+    let listing_ids: Vec<String> =
+        sqlx::query_scalar("SELECT id FROM job_source_listing WHERE job_id = ?1")
+            .bind(from.as_str())
+            .fetch_all(db.reader())
+            .await
+            .map_err(db_err)?;
 
     let mut listings_moved = 0u64;
     for lid in &listing_ids {
@@ -711,13 +710,12 @@ pub async fn merge(db: &Db, from: &JobId, into: &JobId) -> Result<MergeReport> {
         listings_moved += 1;
     }
 
-    let existing_norm: Vec<String> = sqlx::query_scalar(
-        "SELECT normalized_text FROM requirement WHERE job_id = ?1",
-    )
-    .bind(into.as_str())
-    .fetch_all(db.reader())
-    .await
-    .map_err(db_err)?;
+    let existing_norm: Vec<String> =
+        sqlx::query_scalar("SELECT normalized_text FROM requirement WHERE job_id = ?1")
+            .bind(into.as_str())
+            .fetch_all(db.reader())
+            .await
+            .map_err(db_err)?;
     let existing: std::collections::HashSet<String> = existing_norm.into_iter().collect();
     let donor_reqs = sqlx::query(
         "SELECT text, normalized_text, kind, necessity, min_years, is_blocker, confidence, provenance
@@ -758,7 +756,10 @@ pub async fn merge(db: &Db, from: &JobId, into: &JobId) -> Result<MergeReport> {
         .bind(r.try_get::<i64, _>("is_blocker").map_err(db_err)?)
         .bind(next_ord)
         .bind(r.try_get::<f64, _>("confidence").unwrap_or(0.5))
-        .bind(r.try_get::<String, _>("provenance").unwrap_or_else(|_| "rules".into()))
+        .bind(
+            r.try_get::<String, _>("provenance")
+                .unwrap_or_else(|_| "rules".into()),
+        )
         .bind(&ts)
         .execute(db.writer())
         .await
@@ -807,9 +808,15 @@ pub async fn merge(db: &Db, from: &JobId, into: &JobId) -> Result<MergeReport> {
         .bind(r.try_get::<Option<String>, _>("city").map_err(db_err)?)
         .bind(r.try_get::<Option<String>, _>("region").map_err(db_err)?)
         .bind(r.try_get::<Option<String>, _>("country").map_err(db_err)?)
-        .bind(r.try_get::<Option<String>, _>("postal_code").map_err(db_err)?)
+        .bind(
+            r.try_get::<Option<String>, _>("postal_code")
+                .map_err(db_err)?,
+        )
         .bind(r.try_get::<i64, _>("is_remote_scope").map_err(db_err)?)
-        .bind(r.try_get::<Option<String>, _>("timezone_requirement").map_err(db_err)?)
+        .bind(
+            r.try_get::<Option<String>, _>("timezone_requirement")
+                .map_err(db_err)?,
+        )
         .bind(loc_ord)
         .execute(db.writer())
         .await
