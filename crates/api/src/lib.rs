@@ -8,10 +8,11 @@ mod auth;
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use axum::extract::{Path, Query, State};
-use axum::http::{header, HeaderValue, StatusCode};
+use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::middleware;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{Html, IntoResponse, Response};
@@ -27,7 +28,9 @@ use jobseeker_db::queue::Queue;
 use jobseeker_db::repo::event;
 use jobseeker_db::repo::job::{self, JobFilter, JobPatch};
 use jobseeker_db::repo::score;
+use jobseeker_db::repo::session;
 use jobseeker_db::repo::token;
+use jobseeker_db::repo::user;
 use jobseeker_pipeline::{IngestAccepted, Pipeline};
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
@@ -39,6 +42,17 @@ use utoipa::OpenApi;
 #[derive(Clone)]
 pub struct AppState {
     pub pipeline: Pipeline,
+    pub login_limiter: Arc<auth::LoginLimiter>,
+}
+
+impl AppState {
+    pub fn new(pipeline: Pipeline) -> Self {
+        let limit = pipeline.config.auth.login_rate_limit_per_15min;
+        Self {
+            pipeline,
+            login_limiter: auth::LoginLimiter::new(limit),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -152,6 +166,8 @@ pub struct PageDto<T: Serialize> {
         get_task,
         events,
         auth_me,
+        auth_login,
+        auth_logout,
         auth_pair,
         list_tokens,
         create_token,
@@ -164,6 +180,7 @@ pub struct PageDto<T: Serialize> {
         MetaResponse,
         PatchJobRequest,
         PairRequest,
+        LoginRequest,
         CreateTokenRequest,
         DomainEventDto
     )),
@@ -194,6 +211,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/tasks/{id}", get(get_task))
         .route("/api/v1/events", get(events))
         .route("/api/v1/auth/me", get(auth_me))
+        .route("/api/v1/auth/login", post(auth_login))
+        .route("/api/v1/auth/logout", post(auth_logout))
         .route("/api/v1/auth/pair", post(auth_pair))
         .route("/api/v1/auth/tokens", get(list_tokens).post(create_token))
         .route(
@@ -226,11 +245,20 @@ pub async fn serve(pipeline: Pipeline) -> Result<()> {
             "bound beyond loopback with auth.mode=none; anyone on the network can read your job search"
         );
     }
+    if pipeline.config.auth.mode == AuthMode::Password {
+        match user::count(&pipeline.db).await {
+            Ok(0) => tracing::warn!(
+                "auth.mode=password but no user exists; run `jobseeker user set-password`"
+            ),
+            Ok(_) => {}
+            Err(e) => tracing::warn!(error = %e, "could not count users at boot"),
+        }
+    }
     let listener = tokio::net::TcpListener::bind(bind)
         .await
         .map_err(|e| Error::Network(e.to_string()))?;
     tracing::info!(%bind, "jobseeker listening");
-    axum::serve(listener, router(AppState { pipeline }))
+    axum::serve(listener, router(AppState::new(pipeline)))
         .with_graceful_shutdown(shutdown_signal())
         .await
         .map_err(|e| Error::Network(e.to_string()))
@@ -539,7 +567,7 @@ async fn events(
     ))
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct MeResponse {
     pub auth_mode: String,
     pub authenticated: bool,
@@ -560,14 +588,98 @@ async fn auth_me(
             AuthMode::Password => "password",
         }
         .to_string(),
-        authenticated: identity.token.is_some(),
-        name: identity.token.as_ref().map(|t| t.name.clone()),
-        scopes: identity
-            .token
-            .as_ref()
-            .map(|t| t.scopes.clone())
-            .unwrap_or_default(),
+        authenticated: identity.authenticated(),
+        name: identity.display_name(),
+        scopes: identity.scopes(),
     })
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct LoginRequest {
+    pub username: String,
+    pub password: String,
+}
+
+fn client_ip(headers: &HeaderMap) -> String {
+    headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.split(',').next())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("unknown")
+        .to_string()
+}
+
+#[utoipa::path(post, path = "/api/v1/auth/login", request_body = LoginRequest, responses((status = 200), (status = 401), (status = 429)))]
+async fn auth_login(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<LoginRequest>,
+) -> ApiResult<Response> {
+    if state.pipeline.config.auth.mode != AuthMode::Password {
+        return Err(ApiError(Error::BadRequest(
+            "password login is disabled; set auth.mode = \"password\"".into(),
+        )));
+    }
+    let ip = client_ip(&headers);
+    if let Err(retry_after) = state.login_limiter.check(&ip) {
+        return Err(ApiError(Error::RateLimited(retry_after)));
+    }
+    let user = match user::authenticate(&state.pipeline.db, &body.username, &body.password).await {
+        Ok(u) => u,
+        Err(Error::Unauthorized) => {
+            state.login_limiter.record_failure(&ip);
+            return Err(ApiError(Error::Unauthorized));
+        }
+        Err(e) => return Err(ApiError(e)),
+    };
+    state.login_limiter.clear(&ip);
+    user::record_login(&state.pipeline.db, &user.id)
+        .await
+        .map_err(ApiError)?;
+    let ua = headers
+        .get(header::USER_AGENT)
+        .and_then(|v| v.to_str().ok());
+    let issued = session::issue(
+        &state.pipeline.db,
+        &user,
+        state.pipeline.config.auth.session_ttl_days,
+        ua,
+        Some(&ip),
+    )
+    .await
+    .map_err(ApiError)?;
+    let max_age = i64::from(state.pipeline.config.auth.session_ttl_days) * 24 * 60 * 60;
+    let secure = auth::cookie_secure(state.pipeline.config.server.public_url.as_deref());
+    let cookie = auth::session_cookie_header(&issued.token, max_age, secure);
+    let mut res = (
+        StatusCode::OK,
+        Json(MeResponse {
+            auth_mode: "password".into(),
+            authenticated: true,
+            name: Some(user.username),
+            scopes: vec!["owner".into()],
+        }),
+    )
+        .into_response();
+    if let Ok(value) = HeaderValue::from_str(&cookie) {
+        res.headers_mut().append(header::SET_COOKIE, value);
+    }
+    Ok(res)
+}
+
+#[utoipa::path(post, path = "/api/v1/auth/logout", responses((status = 204)))]
+async fn auth_logout(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    if let Some(token) = auth::cookie_value(&headers, auth::SESSION_COOKIE) {
+        let _ = session::revoke_token(&state.pipeline.db, &token).await;
+    }
+    let secure = auth::cookie_secure(state.pipeline.config.server.public_url.as_deref());
+    let mut res = StatusCode::NO_CONTENT.into_response();
+    if let Ok(value) = HeaderValue::from_str(&auth::clear_session_cookie(secure)) {
+        res.headers_mut().append(header::SET_COOKIE, value);
+    }
+    res
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -762,7 +874,7 @@ mod tests {
             .unwrap();
         // Leak the tempdir so the DB file outlives the router for the duration of the test.
         std::mem::forget(dir);
-        router(AppState { pipeline: pipe })
+        router(AppState::new(pipe))
     }
 
     #[tokio::test]
@@ -805,9 +917,7 @@ mod tests {
         let pipe = jobseeker_pipeline::for_test(dir.path().to_path_buf())
             .await
             .unwrap();
-        let app = router(AppState {
-            pipeline: pipe.clone(),
-        });
+        let app = router(AppState::new(pipe.clone()));
         let html = r#"<html><head><script type="application/ld+json">{"@type":"JobPosting","title":"Engineer","hiringOrganization":{"name":"Acme"},"description":"<p>Hi</p>"}</script></head></html>"#;
         let res = app
             .oneshot(
@@ -840,9 +950,7 @@ mod tests {
         let job_id = page.items[0].id.clone();
         assert!(page.items[0].match_overall.is_some());
 
-        let app = router(AppState {
-            pipeline: pipe.clone(),
-        });
+        let app = router(AppState::new(pipe.clone()));
         let res = app
             .clone()
             .oneshot(
@@ -906,9 +1014,7 @@ mod tests {
         pipe.ingest_paste(html, None).await.unwrap();
         pipe.drain().await.unwrap();
 
-        let app = router(AppState {
-            pipeline: pipe.clone(),
-        });
+        let app = router(AppState::new(pipe.clone()));
         let res = app
             .oneshot(
                 Request::builder()
@@ -961,7 +1067,7 @@ mod tests {
         })
         .await
         .unwrap();
-        let app = router(AppState { pipeline: pipe });
+        let app = router(AppState::new(pipe));
         let res = app
             .oneshot(
                 Request::builder()
@@ -990,7 +1096,7 @@ mod tests {
         })
         .await
         .unwrap();
-        let app = router(AppState { pipeline: pipe });
+        let app = router(AppState::new(pipe));
         let res = app
             .oneshot(
                 Request::builder()
@@ -1015,9 +1121,7 @@ mod tests {
         let code = token::create_pairing_code(&pipe.db, "Firefox on laptop")
             .await
             .unwrap();
-        let app = router(AppState {
-            pipeline: pipe.clone(),
-        });
+        let app = router(AppState::new(pipe.clone()));
 
         let paired = app
             .clone()
@@ -1083,7 +1187,7 @@ mod tests {
         let issued = token::issue_token(&pipe.db, "cli", &["*".into()])
             .await
             .unwrap();
-        let app = router(AppState { pipeline: pipe });
+        let app = router(AppState::new(pipe));
         let res = app
             .oneshot(
                 Request::builder()
@@ -1095,6 +1199,239 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(res.status(), StatusCode::OK);
+        std::mem::forget(dir);
+    }
+
+    async fn password_app() -> (Router, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let pipe = jobseeker_pipeline::for_test_with(dir.path().to_path_buf(), |c| {
+            c.auth.mode = AuthMode::Password;
+            c.auth.login_rate_limit_per_15min = 5;
+        })
+        .await
+        .unwrap();
+        user::upsert_owner(&pipe.db, "owner", "correct-horse")
+            .await
+            .unwrap();
+        (router(AppState::new(pipe)), dir)
+    }
+
+    fn session_cookie(res: &Response) -> String {
+        res.headers()
+            .get_all(header::SET_COOKIE)
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .find(|v| v.starts_with("js_session="))
+            .and_then(|v| v.split(';').next())
+            .expect("js_session cookie")
+            .to_string()
+    }
+
+    #[tokio::test]
+    async fn password_mode_refuses_jobs_without_a_session() {
+        let (app, dir) = password_app().await;
+        let res = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/jobs")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+        std::mem::forget(dir);
+    }
+
+    #[tokio::test]
+    async fn login_sets_a_cookie_that_can_list_jobs() {
+        let (app, dir) = password_app().await;
+        let res = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/auth/login")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"username":"owner","password":"correct-horse"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let cookie = session_cookie(&res);
+        assert!(cookie.contains("jss_"));
+        let me: MeResponse = body_json(res).await;
+        assert!(me.authenticated);
+        assert_eq!(me.name.as_deref(), Some("owner"));
+
+        let listed = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/jobs")
+                    .header(header::COOKIE, cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(listed.status(), StatusCode::OK);
+        std::mem::forget(dir);
+    }
+
+    #[tokio::test]
+    async fn a_wrong_password_is_unauthorized_and_does_not_set_a_cookie() {
+        let (app, dir) = password_app().await;
+        let res = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/auth/login")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"username":"owner","password":"wrong-horse"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+        assert!(res.headers().get(header::SET_COOKIE).is_none());
+        std::mem::forget(dir);
+    }
+
+    #[tokio::test]
+    async fn an_unknown_user_is_indistinguishable_from_a_bad_password() {
+        let (app, dir) = password_app().await;
+        let res = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/auth/login")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"username":"nobody","password":"long-enough"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+        std::mem::forget(dir);
+    }
+
+    #[tokio::test]
+    async fn logout_revokes_the_session() {
+        let (app, dir) = password_app().await;
+        let res = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/auth/login")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"username":"owner","password":"correct-horse"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let cookie = session_cookie(&res);
+        let out = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/auth/logout")
+                    .header(header::COOKIE, &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(out.status(), StatusCode::NO_CONTENT);
+        let listed = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/jobs")
+                    .header(header::COOKIE, cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(listed.status(), StatusCode::UNAUTHORIZED);
+        std::mem::forget(dir);
+    }
+
+    #[tokio::test]
+    async fn owner_bearer_still_works_in_password_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        let pipe = jobseeker_pipeline::for_test_with(dir.path().to_path_buf(), |c| {
+            c.auth.mode = AuthMode::Password;
+        })
+        .await
+        .unwrap();
+        user::upsert_owner(&pipe.db, "owner", "correct-horse")
+            .await
+            .unwrap();
+        let issued = token::issue_token(&pipe.db, "cli", &["*".into()])
+            .await
+            .unwrap();
+        let app = router(AppState::new(pipe));
+        let res = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/jobs")
+                    .header("authorization", format!("Bearer {}", issued.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        std::mem::forget(dir);
+    }
+
+    #[tokio::test]
+    async fn login_is_rate_limited_after_repeated_failures() {
+        let (app, dir) = password_app().await;
+        for _ in 0..5 {
+            let res = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/api/v1/auth/login")
+                        .header("content-type", "application/json")
+                        .header("x-forwarded-for", "203.0.113.9")
+                        .body(Body::from(
+                            r#"{"username":"owner","password":"wrong-horse"}"#,
+                        ))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+        }
+        let blocked = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/auth/login")
+                    .header("content-type", "application/json")
+                    .header("x-forwarded-for", "203.0.113.9")
+                    .body(Body::from(
+                        r#"{"username":"owner","password":"correct-horse"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(blocked.status(), StatusCode::TOO_MANY_REQUESTS);
         std::mem::forget(dir);
     }
 }

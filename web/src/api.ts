@@ -100,8 +100,16 @@ export type TaskView = {
 
 export type ApiError = { error: { code: string; message: string } };
 
+export type Me = {
+  auth_mode: string;
+  authenticated: boolean;
+  name: string | null;
+  scopes: string[];
+};
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
+    credentials: "include",
     ...init,
     headers: { "content-type": "application/json", ...(init?.headers ?? {}) },
   });
@@ -134,8 +142,14 @@ export const api = {
       body: JSON.stringify({ text, url }),
     }),
   meta: () => request<{ version: string; llm_provider: string }>("/api/v1/meta"),
-  me: () =>
-    request<{ auth_mode: string; authenticated: boolean; name: string | null; scopes: string[] }>(
-      "/api/v1/auth/me",
-    ),
+  me: () => request<Me>("/api/v1/auth/me"),
+  login: (username: string, password: string) =>
+    request<Me>("/api/v1/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ username, password }),
+    }),
+  logout: () =>
+    fetch("/api/v1/auth/logout", { method: "POST", credentials: "include" }).then((res) => {
+      if (!res.ok && res.status !== 204) throw new Error(res.statusText);
+    }),
 };

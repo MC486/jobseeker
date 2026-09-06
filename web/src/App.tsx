@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { api, JobDetail, JobListRow, MatchSummary, TaskView } from "./api";
+import { api, JobDetail, JobListRow, MatchSummary, Me, TaskView } from "./api";
 import { isTaskView, subscribeEvents } from "./api/events";
 
 type Route =
@@ -26,7 +26,7 @@ function navigate(path: string) {
 
 export function App() {
   const [route, setRoute] = useState<Route>(parseRoute);
-  const [authMode, setAuthMode] = useState<string | null>(null);
+  const [me, setMe] = useState<Me | null>(null);
   const [live, setLive] = useState(0);
   const [tasks, setTasks] = useState<Record<string, TaskView>>({});
   useEffect(() => {
@@ -35,7 +35,7 @@ export function App() {
     return () => window.removeEventListener("popstate", onPop);
   }, []);
   useEffect(() => {
-    api.me().then((me) => setAuthMode(me.auth_mode)).catch(() => setAuthMode(null));
+    api.me().then(setMe).catch(() => setMe(null));
   }, []);
   useEffect(() => {
     return subscribeEvents((event) => {
@@ -64,17 +64,100 @@ export function App() {
             <a href="/openapi.json" className="hover:text-zinc-100">
               OpenAPI
             </a>
-            {authMode && <span title="auth.mode">auth:{authMode}</span>}
+            {me && <span title="auth.mode">auth:{me.auth_mode}</span>}
+            {me?.auth_mode === "password" && me.authenticated && (
+              <button
+                className="hover:text-zinc-100"
+                onClick={() => {
+                  api.logout().finally(() =>
+                    api.me().then(setMe).catch(() => setMe(null)),
+                  );
+                }}
+              >
+                Log out
+              </button>
+            )}
           </nav>
         </div>
       </header>
       <main className="mx-auto max-w-4xl px-5 py-8">
-        {route.name === "home" && <Home />}
-        {route.name === "jobs" && <JobList live={live} />}
-        {route.name === "job" && <JobPage id={route.id} live={live} />}
-        {route.name === "task" && <TaskPage id={route.id} pushed={tasks[route.id]} />}
+        {me?.auth_mode === "password" && !me.authenticated && (
+          <Login onLoggedIn={setMe} />
+        )}
+        {!(me?.auth_mode === "password" && !me.authenticated) && route.name === "home" && (
+          <Home />
+        )}
+        {!(me?.auth_mode === "password" && !me.authenticated) && route.name === "jobs" && (
+          <JobList live={live} />
+        )}
+        {!(me?.auth_mode === "password" && !me.authenticated) && route.name === "job" && (
+          <JobPage id={route.id} live={live} />
+        )}
+        {!(me?.auth_mode === "password" && !me.authenticated) && route.name === "task" && (
+          <TaskPage id={route.id} pushed={tasks[route.id]} />
+        )}
       </main>
     </div>
+  );
+}
+
+function Login({ onLoggedIn }: { onLoggedIn: (me: Me) => void }) {
+  const [username, setUsername] = useState("owner");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function onSubmit(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      onLoggedIn(await api.login(username, password));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "login failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form onSubmit={onSubmit} className="mx-auto max-w-sm space-y-4">
+      <div>
+        <h1 className="text-2xl font-semibold">Sign in</h1>
+        <p className="mt-2 text-sm text-zinc-400">
+          This instance uses a password. Create one with{" "}
+          <code className="text-zinc-200">jobseeker user set-password</code>.
+        </p>
+      </div>
+      <label className="block text-sm text-zinc-400">
+        Username
+        <input
+          className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-zinc-100"
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          autoComplete="username"
+          required
+        />
+      </label>
+      <label className="block text-sm text-zinc-400">
+        Password
+        <input
+          type="password"
+          className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-zinc-100"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          autoComplete="current-password"
+          required
+        />
+      </label>
+      {error && <p className="text-sm text-red-300">{error}</p>}
+      <button
+        disabled={busy}
+        className="rounded-lg bg-indigo-400 px-4 py-2 text-sm font-semibold text-zinc-950 disabled:opacity-50"
+      >
+        Sign in
+      </button>
+    </form>
   );
 }
 

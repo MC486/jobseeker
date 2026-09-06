@@ -10,6 +10,44 @@
     "version": "0.1.0"
   },
   "paths": {
+    "/api/v1/auth/login": {
+      "post": {
+        "tags": [],
+        "operationId": "auth_login",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "401": {
+            "description": ""
+          },
+          "429": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/api/v1/auth/logout": {
+      "post": {
+        "tags": [],
+        "operationId": "auth_logout",
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        }
+      }
+    },
     "/api/v1/auth/me": {
       "get": {
         "tags": [],
@@ -446,6 +484,21 @@
             ]
           },
           "url": {
+            "type": "string"
+          }
+        }
+      },
+      "LoginRequest": {
+        "type": "object",
+        "required": [
+          "username",
+          "password"
+        ],
+        "properties": {
+          "password": {
+            "type": "string"
+          },
+          "username": {
             "type": "string"
           }
         }

@@ -16,8 +16,10 @@ pub mod job;
 pub mod listing;
 pub mod profile;
 pub mod score;
+pub mod session;
 pub mod skill;
 pub mod token;
+pub mod user;
 
 /// Opaque cursor for keyset pagination: `(sort_key, id)` base64'd so clients cannot build
 /// one by hand and depend on its shape.
