@@ -3,20 +3,25 @@
 //! Domain types stay in `jobseeker-core`. This crate speaks DTOs and the error envelope
 //! from `docs/09-api.md`.
 
+mod auth;
+
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use axum::extract::{Path, Query, State};
 use axum::http::{header, HeaderValue, StatusCode};
+use axum::middleware;
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
-use axum::{Json, Router};
+use axum::{Extension, Json, Router};
+use jobseeker_core::config::AuthMode;
 use jobseeker_core::domain::capture::CaptureSubmission;
 use jobseeker_core::ids::{JobId, TaskId};
 use jobseeker_core::{Error, Result};
 use jobseeker_db::queue::Queue;
 use jobseeker_db::repo::job::{self, JobFilter, JobPatch};
 use jobseeker_db::repo::score;
+use jobseeker_db::repo::token;
 use jobseeker_pipeline::{IngestAccepted, Pipeline};
 use serde::{Deserialize, Serialize};
 use tower_http::cors::CorsLayer;
@@ -137,14 +142,21 @@ pub struct PageDto<T: Serialize> {
         get_job,
         patch_job,
         get_job_match,
-        get_task
+        get_task,
+        auth_me,
+        auth_pair,
+        list_tokens,
+        create_token,
+        revoke_token
     ),
     components(schemas(
         IngestUrlRequest,
         IngestPasteRequest,
         Accepted,
         MetaResponse,
-        PatchJobRequest
+        PatchJobRequest,
+        PairRequest,
+        CreateTokenRequest
     )),
     info(
         title = "jobseeker",
@@ -171,6 +183,13 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/jobs/{id}", get(get_job).patch(patch_job))
         .route("/api/v1/jobs/{id}/match", get(get_job_match))
         .route("/api/v1/tasks/{id}", get(get_task))
+        .route("/api/v1/auth/me", get(auth_me))
+        .route("/api/v1/auth/pair", post(auth_pair))
+        .route("/api/v1/auth/tokens", get(list_tokens).post(create_token))
+        .route(
+            "/api/v1/auth/tokens/{id}",
+            axum::routing::delete(revoke_token),
+        )
         .route("/openapi.json", get(openapi));
 
     Router::new()
@@ -178,6 +197,7 @@ pub fn router(state: AppState) -> Router {
         .route("/readyz", get(readyz))
         .merge(api)
         .fallback(spa_fallback)
+        .layer(middleware::from_fn_with_state(state.clone(), auth::layer))
         .layer(TraceLayer::new_for_http())
         .layer(CorsLayer::very_permissive())
         .with_state(state)
@@ -418,6 +438,115 @@ async fn get_task(
     Ok(Json(task))
 }
 
+#[derive(Debug, Serialize)]
+pub struct MeResponse {
+    pub auth_mode: String,
+    pub authenticated: bool,
+    pub name: Option<String>,
+    pub scopes: Vec<String>,
+}
+
+#[utoipa::path(get, path = "/api/v1/auth/me", responses((status = 200)))]
+async fn auth_me(
+    State(state): State<AppState>,
+    identity: Option<Extension<auth::Identity>>,
+) -> Json<MeResponse> {
+    let identity = identity.map(|Extension(i)| i).unwrap_or_default();
+    Json(MeResponse {
+        auth_mode: match state.pipeline.config.auth.mode {
+            AuthMode::None => "none",
+            AuthMode::Token => "token",
+            AuthMode::Password => "password",
+        }
+        .to_string(),
+        authenticated: identity.token.is_some(),
+        name: identity.token.as_ref().map(|t| t.name.clone()),
+        scopes: identity
+            .token
+            .as_ref()
+            .map(|t| t.scopes.clone())
+            .unwrap_or_default(),
+    })
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct PairRequest {
+    pub code: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct IssuedTokenResponse {
+    pub token: String,
+    pub name: String,
+    pub scopes: Vec<String>,
+}
+
+#[utoipa::path(post, path = "/api/v1/auth/pair", request_body = PairRequest, responses((status = 200)))]
+async fn auth_pair(
+    State(state): State<AppState>,
+    Json(body): Json<PairRequest>,
+) -> ApiResult<Json<IssuedTokenResponse>> {
+    let issued = token::exchange_pairing_code(&state.pipeline.db, &body.code)
+        .await
+        .map_err(ApiError)?;
+    Ok(Json(IssuedTokenResponse {
+        token: issued.token,
+        name: issued.row.name,
+        scopes: issued.row.scopes,
+    }))
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct CreateTokenRequest {
+    pub name: String,
+    #[serde(default)]
+    pub scopes: Vec<String>,
+}
+
+#[utoipa::path(get, path = "/api/v1/auth/tokens", responses((status = 200)))]
+async fn list_tokens(
+    State(state): State<AppState>,
+) -> ApiResult<Json<PageDto<jobseeker_db::repo::token::DeviceTokenRow>>> {
+    let items = token::list(&state.pipeline.db).await.map_err(ApiError)?;
+    Ok(Json(PageDto {
+        items,
+        next_cursor: None,
+    }))
+}
+
+#[utoipa::path(post, path = "/api/v1/auth/tokens", request_body = CreateTokenRequest, responses((status = 201)))]
+async fn create_token(
+    State(state): State<AppState>,
+    Json(body): Json<CreateTokenRequest>,
+) -> ApiResult<Response> {
+    let issued = token::issue_token(&state.pipeline.db, &body.name, &body.scopes)
+        .await
+        .map_err(ApiError)?;
+    Ok((
+        StatusCode::CREATED,
+        Json(IssuedTokenResponse {
+            token: issued.token,
+            name: issued.row.name,
+            scopes: issued.row.scopes,
+        }),
+    )
+        .into_response())
+}
+
+#[utoipa::path(delete, path = "/api/v1/auth/tokens/{id}", responses((status = 204), (status = 404)))]
+async fn revoke_token(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<StatusCode> {
+    let n = token::revoke(&state.pipeline.db, &id)
+        .await
+        .map_err(ApiError)?;
+    if n == 0 {
+        return Err(ApiError(Error::NotFound("token")));
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
 async fn spa_fallback(State(state): State<AppState>, uri: axum::http::Uri) -> Response {
     if uri.path().starts_with("/api/") || uri.path() == "/openapi.json" {
         return ApiError(Error::NotFound("route")).into_response();
@@ -656,5 +785,128 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(res.status(), StatusCode::OK);
+    }
+
+    async fn body_json<T: serde::de::DeserializeOwned>(res: Response) -> T {
+        let bytes = axum::body::to_bytes(res.into_body(), 1_000_000)
+            .await
+            .unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    #[tokio::test]
+    async fn token_mode_refuses_jobs_without_a_bearer() {
+        let dir = tempfile::tempdir().unwrap();
+        let pipe = jobseeker_pipeline::for_test_with(dir.path().to_path_buf(), |c| {
+            c.auth.mode = AuthMode::Token;
+        })
+        .await
+        .unwrap();
+        let app = router(AppState { pipeline: pipe });
+        let res = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/jobs")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+        std::mem::forget(dir);
+    }
+
+    #[tokio::test]
+    async fn pairing_code_mints_an_ingest_token_that_cannot_read_jobs() {
+        let dir = tempfile::tempdir().unwrap();
+        let pipe = jobseeker_pipeline::for_test_with(dir.path().to_path_buf(), |c| {
+            c.auth.mode = AuthMode::Token;
+        })
+        .await
+        .unwrap();
+        let code = token::create_pairing_code(&pipe.db, "Firefox on laptop")
+            .await
+            .unwrap();
+        let app = router(AppState {
+            pipeline: pipe.clone(),
+        });
+
+        let paired = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/auth/pair")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"code": code.code}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(paired.status(), StatusCode::OK);
+        let issued: IssuedTokenResponse = body_json(paired).await;
+        assert!(issued.token.starts_with("jst_"));
+
+        let capture = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/ingest/capture")
+                    .header("content-type", "application/json")
+                    .header("authorization", format!("Bearer {}", issued.token))
+                    .body(Body::from(
+                        serde_json::json!({
+                            "url": "https://www.linkedin.com/jobs/view/1",
+                            "html": "<html><body>Engineer at Acme</body></html>"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(capture.status(), StatusCode::ACCEPTED);
+
+        let jobs = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/jobs")
+                    .header("authorization", format!("Bearer {}", issued.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(jobs.status(), StatusCode::FORBIDDEN);
+        std::mem::forget(dir);
+    }
+
+    #[tokio::test]
+    async fn owner_token_can_list_jobs_in_token_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        let pipe = jobseeker_pipeline::for_test_with(dir.path().to_path_buf(), |c| {
+            c.auth.mode = AuthMode::Token;
+        })
+        .await
+        .unwrap();
+        let issued = token::issue_token(&pipe.db, "cli", &["*".into()])
+            .await
+            .unwrap();
+        let app = router(AppState { pipeline: pipe });
+        let res = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/jobs")
+                    .header("authorization", format!("Bearer {}", issued.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        std::mem::forget(dir);
     }
 }

@@ -25,10 +25,14 @@ function navigate(path: string) {
 
 export function App() {
   const [route, setRoute] = useState<Route>(parseRoute);
+  const [authMode, setAuthMode] = useState<string | null>(null);
   useEffect(() => {
     const onPop = () => setRoute(parseRoute());
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
+  }, []);
+  useEffect(() => {
+    api.me().then((me) => setAuthMode(me.auth_mode)).catch(() => setAuthMode(null));
   }, []);
 
   return (
@@ -43,6 +47,7 @@ export function App() {
             <a href="/openapi.json" className="hover:text-zinc-100">
               OpenAPI
             </a>
+            {authMode && <span title="auth.mode">auth:{authMode}</span>}
           </nav>
         </div>
       </header>
