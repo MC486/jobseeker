@@ -56,4 +56,5 @@ docs/       Product and design docs
 cargo test --workspace
 cargo clippy --workspace --all-targets
 cd web && npm install && npm run build
+just gen-client   # dump OpenAPI → web/src/api/generated.ts
 ```

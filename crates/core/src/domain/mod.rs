@@ -4,6 +4,7 @@
 pub mod capture;
 pub mod company;
 pub mod enums;
+pub mod event;
 pub mod job;
 pub mod location;
 pub mod profile;
@@ -18,6 +19,7 @@ pub use enums::{
     ApplicationStatus, ApplyKind, EducationLevel, EmploymentType, JobStatus, Necessity,
     RequirementKind, Seniority, SkillLevel, SourceKind, Tristate, WorkMode,
 };
+pub use event::DomainEvent;
 pub use job::{ExtractedJob, Job};
 pub use location::{JobLocation, RawLocation};
 pub use profile::{Accomplishment, ExperienceItem, ExperienceKind, Profile, ProfileSkill};

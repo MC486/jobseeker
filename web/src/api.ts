@@ -1,3 +1,5 @@
+// Wire types. The OpenAPI contract lives in `./api/generated.ts` (ADR-0009);
+// this wrapper stays hand-written so error envelopes stay under our control.
 export type JobListRow = {
   id: string;
   title: string;

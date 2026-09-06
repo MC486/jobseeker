@@ -12,12 +12,13 @@ use jobseeker_acquire::Acquire;
 use jobseeker_core::config::Config;
 use jobseeker_core::domain::capture::{CaptureMethod, CaptureSubmission, ExtractStatus};
 use jobseeker_core::domain::enums::SourceKind;
+use jobseeker_core::domain::event::DomainEvent;
 use jobseeker_core::domain::task::TaskKind;
 use jobseeker_core::ids::{CaptureId, ListingId, TaskId};
 use jobseeker_core::{Error, Result};
 use jobseeker_db::persist::{self, PersistExtracted};
 use jobseeker_db::queue::{ClaimedTask, NewTask, Queue};
-use jobseeker_db::repo::{capture, company, listing, listing::UpsertListing};
+use jobseeker_db::repo::{capture, company, event, listing, listing::UpsertListing};
 use jobseeker_db::Db;
 use jobseeker_extract::{extract, ExtractInput};
 use jobseeker_llm::LlmClient;
@@ -26,6 +27,7 @@ use jobseeker_store::jobfile::{self, JobDocument};
 use jobseeker_store::{atomic_write, job_dir, read_blob, to_stable_json, write_blob};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use tokio::sync::broadcast;
 
 /// Runtime the worker and the HTTP handlers share.
 #[derive(Clone)]
@@ -34,6 +36,7 @@ pub struct Pipeline {
     pub config: Arc<Config>,
     pub acquire: Arc<Acquire>,
     pub llm: Option<Arc<dyn LlmClient>>,
+    events: broadcast::Sender<DomainEvent>,
 }
 
 /// What an ingest endpoint returns: the work is queued, not finished.
@@ -75,12 +78,56 @@ impl Pipeline {
         jobseeker_db::repo::profile::ensure_default(&db).await?;
         let acquire = Acquire::new(&config.acquire)?;
         let llm = jobseeker_llm::from_config(&config.llm)?;
+        let (events, _) = broadcast::channel(256);
         Ok(Self {
             db,
             config: Arc::new(config),
             acquire: Arc::new(acquire),
             llm,
+            events,
         })
+    }
+
+    /// Subscribe to live domain events. Lagged receivers skip ahead; the SSE
+    /// endpoint backfills from `event_log` so a dropped frame is not lost work.
+    pub fn subscribe(&self) -> broadcast::Receiver<DomainEvent> {
+        self.events.subscribe()
+    }
+
+    /// Persist an event, then notify live subscribers. Broadcast failure (no
+    /// listeners) is ignored — the log is the source of truth for reconnects.
+    pub async fn emit(
+        &self,
+        kind: &str,
+        entity_kind: &str,
+        entity_id: &str,
+        payload: serde_json::Value,
+    ) -> Result<DomainEvent> {
+        let ev = event::append(&self.db, kind, entity_kind, entity_id, payload).await?;
+        let _ = self.events.send(ev.clone());
+        Ok(ev)
+    }
+
+    async fn emit_task_updated(&self, task_id: &TaskId) {
+        match self.queue().get(task_id).await {
+            Ok(Some(view)) => {
+                let payload = match serde_json::to_value(&view) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "task.updated payload");
+                        return;
+                    }
+                };
+                if let Err(e) = self
+                    .emit(DomainEvent::TASK_UPDATED, "task", task_id.as_str(), payload)
+                    .await
+                {
+                    tracing::warn!(error = %e, "failed to emit task.updated");
+                }
+            }
+            Ok(None) => {}
+            Err(e) => tracing::warn!(error = %e, "task.updated lookup"),
+        }
     }
 
     pub fn queue(&self) -> Queue<'_> {
@@ -275,6 +322,7 @@ impl Pipeline {
                 q.fail(&task, &e).await?;
             }
         }
+        self.emit_task_updated(&task.id).await;
         Ok(true)
     }
 
@@ -446,6 +494,23 @@ impl Pipeline {
                 .dedupe(format!("score:{}", persisted.job_id.as_str())),
             )
             .await?;
+
+        let kind = if persisted.created {
+            DomainEvent::JOB_CREATED
+        } else {
+            DomainEvent::JOB_UPDATED
+        };
+        if let Err(e) = self
+            .emit(
+                kind,
+                "job",
+                persisted.job_id.as_str(),
+                json!({ "job_id": persisted.job_id.as_str() }),
+            )
+            .await
+        {
+            tracing::warn!(error = %e, "failed to emit job event");
+        }
         Ok(())
     }
 
@@ -540,6 +605,17 @@ impl Pipeline {
 
         let rel = relative_path(self.data_dir(), &dir);
         persist::set_file_path(&self.db, &job_id, &rel).await?;
+        if let Err(e) = self
+            .emit(
+                DomainEvent::JOB_UPDATED,
+                "job",
+                job_id.as_str(),
+                json!({ "file_path": rel }),
+            )
+            .await
+        {
+            tracing::warn!(error = %e, "failed to emit job.updated");
+        }
         Ok(())
     }
 
@@ -589,6 +665,22 @@ impl Pipeline {
         };
         let score = jobseeker_matching::score(&snapshot, &profile, &self.config.matching)?;
         jobseeker_db::repo::score::upsert(&self.db, &score).await?;
+        if let Err(e) = self
+            .emit(
+                DomainEvent::MATCH_UPDATED,
+                "job",
+                job_id.as_str(),
+                json!({
+                    "job_id": job_id.as_str(),
+                    "profile_id": profile_row.id.as_str(),
+                    "overall": score.overall,
+                    "blocker_count": score.blockers.len(),
+                }),
+            )
+            .await
+        {
+            tracing::warn!(error = %e, "failed to emit match.updated");
+        }
         Ok(())
     }
 }
@@ -699,6 +791,23 @@ mod tests {
             }),
             "rust/k8s evidence must score above 0: {:?}",
             scored.verdicts
+        );
+
+        let events = jobseeker_db::repo::event::since(&pipe.db, 0, 200)
+            .await
+            .unwrap();
+        let kinds: Vec<&str> = events.iter().map(|e| e.kind.as_str()).collect();
+        assert!(
+            kinds.contains(&DomainEvent::JOB_CREATED),
+            "extract must emit job.created: {kinds:?}"
+        );
+        assert!(
+            kinds.contains(&DomainEvent::MATCH_UPDATED),
+            "score must emit match.updated: {kinds:?}"
+        );
+        assert!(
+            kinds.contains(&DomainEvent::TASK_UPDATED),
+            "drain must emit task.updated: {kinds:?}"
         );
     }
 

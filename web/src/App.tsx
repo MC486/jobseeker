@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { api, JobDetail, JobListRow, MatchSummary, TaskView } from "./api";
+import { isTaskView, subscribeEvents } from "./api/events";
 
 type Route =
   | { name: "home" }
@@ -26,6 +27,8 @@ function navigate(path: string) {
 export function App() {
   const [route, setRoute] = useState<Route>(parseRoute);
   const [authMode, setAuthMode] = useState<string | null>(null);
+  const [live, setLive] = useState(0);
+  const [tasks, setTasks] = useState<Record<string, TaskView>>({});
   useEffect(() => {
     const onPop = () => setRoute(parseRoute());
     window.addEventListener("popstate", onPop);
@@ -33,6 +36,20 @@ export function App() {
   }, []);
   useEffect(() => {
     api.me().then((me) => setAuthMode(me.auth_mode)).catch(() => setAuthMode(null));
+  }, []);
+  useEffect(() => {
+    return subscribeEvents((event) => {
+      if (event.kind === "task.updated" && event.entity_id && isTaskView(event.payload)) {
+        setTasks((prev) => ({ ...prev, [event.entity_id as string]: event.payload as TaskView }));
+      }
+      if (
+        event.kind === "job.created" ||
+        event.kind === "job.updated" ||
+        event.kind === "match.updated"
+      ) {
+        setLive((n) => n + 1);
+      }
+    });
   }, []);
 
   return (
@@ -53,9 +70,9 @@ export function App() {
       </header>
       <main className="mx-auto max-w-4xl px-5 py-8">
         {route.name === "home" && <Home />}
-        {route.name === "jobs" && <JobList />}
-        {route.name === "job" && <JobPage id={route.id} />}
-        {route.name === "task" && <TaskPage id={route.id} />}
+        {route.name === "jobs" && <JobList live={live} />}
+        {route.name === "job" && <JobPage id={route.id} live={live} />}
+        {route.name === "task" && <TaskPage id={route.id} pushed={tasks[route.id]} />}
       </main>
     </div>
   );
@@ -148,7 +165,7 @@ function Home() {
   );
 }
 
-function JobList() {
+function JobList({ live }: { live: number }) {
   const [q, setQ] = useState("");
   const [rows, setRows] = useState<JobListRow[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -166,7 +183,7 @@ function JobList() {
     return () => {
       cancelled = true;
     };
-  }, [q]);
+  }, [q, live]);
 
   return (
     <div className="space-y-4">
@@ -218,7 +235,7 @@ function provenanceDot(job: JobDetail, field: string) {
   );
 }
 
-function JobPage({ id }: { id: string }) {
+function JobPage({ id, live }: { id: string; live: number }) {
   const [job, setJob] = useState<JobDetail | null>(null);
   const [match, setMatch] = useState<MatchSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -244,7 +261,7 @@ function JobPage({ id }: { id: string }) {
     return () => {
       cancelled = true;
     };
-  }, [id]);
+  }, [id, live]);
 
   async function toggleArchive() {
     if (!job) return;
@@ -349,23 +366,25 @@ function pct(value: number | null) {
   return value == null ? "—" : `${Math.round(value * 100)}%`;
 }
 
-function TaskPage({ id }: { id: string }) {
-  const [task, setTask] = useState<TaskView | null>(null);
+function TaskPage({ id, pushed }: { id: string; pushed?: TaskView }) {
+  const [task, setTask] = useState<TaskView | null>(pushed ?? null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
-    let n = 0;
-    const tick = () => {
-      api
-        .task(id)
-        .then(setTask)
-        .catch((err: unknown) => setError(err instanceof Error ? err.message : "failed"));
+    if (pushed && pushed.id === id) setTask(pushed);
+  }, [id, pushed]);
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .task(id)
+      .then((next) => {
+        if (!cancelled) setTask(next);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : "failed");
+      });
+    return () => {
+      cancelled = true;
     };
-    tick();
-    const handle = window.setInterval(() => {
-      n += 1;
-      if (n < 30) tick();
-    }, 1000);
-    return () => window.clearInterval(handle);
   }, [id]);
 
   const done = useMemo(() => task && ["done", "failed", "cancelled"].includes(task.status), [task]);
