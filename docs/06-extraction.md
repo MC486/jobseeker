@@ -103,8 +103,14 @@ Adapter notes worth writing down:
   than the DOM. Salary is often "Estimated $X–$Y a year" → `is_estimate`. `jk` is the id.
 - **Greenhouse / Lever / Ashby** — prefer the API (stage 1). The HTML fallback is simple and
   stable (`#content`, `.posting-description`).
-- **Workday** — an SPA; the extension path is effectively required. Location lives in a
-  `data-automation-id` attribute set; the `reqId` is the durable identifier.
+- **Workday** — prefer the CXS JSON the careers SPA loads
+  (`/wday/cxs/<tenant>/<site>/job/…`). `jobPostingInfo` carries `title`,
+  `jobDescription`, `location`, `additionalLocations`, `jobReqId`, `remoteType`,
+  `timeType`. The HTML fallback reads `data-automation-id`. Requisition ids are
+  not only `R-` / `REQ` / `JR` — Zillow-style `P751219-2` is an identity.
+  Multiple locations on one req become multiple `job_location` rows. LinkedIn
+  still returns `needs_browser`; paste or the extension is the path for that
+  copy of the same posting.
 - **Glassdoor / ZipRecruiter / Dice** — aggregators; fidelity 40. Treat salary as estimate
   unless explicitly labeled by the employer.
 

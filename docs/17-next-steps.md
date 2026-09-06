@@ -26,10 +26,17 @@ pair with a hashed, ingest-scoped device token.
 
 1. **TanStack Router + Query.** The shell still uses a hand-rolled router; SSE
    already invalidates the job list / task / match / profile views.
-2. **Workday adapter.** SPA; extension path. Location lives in
-   `data-automation-id`; `reqId` is the durable identifier.
 
 ## Just shipped
+
+- **Workday adapter.** `ingest_url` on a public `*.myworkdayjobs.com` posting
+  fetches the CXS JSON (`/wday/cxs/{tenant}/{site}/job/…`) instead of the SPA
+  shell. Requisition ids include product-style ids (`P751219-2`), not only
+  `R-` / `REQ` / `JR`. Locale and location slugs collapse to one identity, so
+  Remote-USA and Seattle options of the same req do not fork. HTML fallback
+  reads `data-automation-id`. LinkedIn of the same posting still returns
+  `needs_browser`. Fixtures: `fixtures/workday-cxs-job.json`,
+  `fixtures/workday-job-capture.html`.
 
 - **Experience-bank import.** Markdown (evidence bank or a conventional resume)
   parses deterministically into `experience_item` + `accomplishment` +
@@ -46,7 +53,7 @@ pair with a hashed, ingest-scoped device token.
   rate-limited per IP. Bootstrap: `jobseeker user set-password`. Bearer
   owner tokens still work for the CLI.
 
-- **Site adapters.** LinkedIn / Indeed / Greenhouse / Lever / Ashby fill only
+- **Site adapters.** LinkedIn / Indeed / Greenhouse / Lever / Ashby / Workday fill only
   empty fields (`Provenance::Adapter`, 0.85) after JSON-LD and before rules.
   Selectors are fallback lists; a miss degrades to heuristics. LinkedIn /
   Indeed URLs still return `needs_browser` and are never server-fetched.

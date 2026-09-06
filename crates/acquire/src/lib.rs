@@ -82,11 +82,15 @@ impl Acquire {
     pub async fn fetch_url(&self, input: &str) -> Result<FetchOutcome> {
         let planned = plan(input)?;
         self.guard.check(&planned.fetch_url)?;
-        if !self
-            .robots
-            .allows(&self.fetcher, &planned.fetch_url)
-            .await?
-        {
+        // Workday's CXS lives under `/wday/`, which many tenants disallow in robots.txt.
+        // The user asked for the public job page; evaluate robots against that page and
+        // then fetch the same JSON the careers SPA loads (`docs/05-ingestion.md` §3).
+        let robots_url = if planned.source == SourceKind::Workday {
+            planned.canonical.original.as_str()
+        } else {
+            planned.fetch_url.as_str()
+        };
+        if !self.robots.allows(&self.fetcher, robots_url).await? {
             return Err(Error::RobotsDisallowed(planned.canonical.canonical.clone()));
         }
         self.limiter.wait(&planned.fetch_url).await;
@@ -128,6 +132,21 @@ mod tests {
             let err = plan(url).unwrap_err();
             assert_eq!(err.code(), "needs_browser", "{url}");
         }
+    }
+
+    #[test]
+    fn a_workday_url_is_fetched_from_the_cxs_api() {
+        let p = plan(
+            "https://zillow.wd5.myworkdayjobs.com/en-US/Zillow_Group_External/job/Remote-USA/Data-Scientist_P751219-2",
+        )
+        .unwrap();
+        assert_eq!(p.method, CaptureMethod::Api);
+        assert_eq!(p.source, SourceKind::Workday);
+        assert_eq!(
+            p.fetch_url,
+            "https://zillow.wd5.myworkdayjobs.com/wday/cxs/zillow/Zillow_Group_External/job/Remote-USA/Data-Scientist_P751219-2"
+        );
+        assert_eq!(p.canonical.source_job_id.as_deref(), Some("P751219-2"));
     }
 
     #[test]

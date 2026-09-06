@@ -81,6 +81,9 @@ impl Fetcher {
         for hop in 0..=MAX_REDIRECTS {
             self.guard.check(&current)?;
             let mut request = self.http.get(&current);
+            if current.contains("/wday/cxs/") {
+                request = request.header(reqwest::header::ACCEPT, "application/json");
+            }
             if let Some(etag) = if_none_match {
                 request = request.header("if-none-match", etag);
             }

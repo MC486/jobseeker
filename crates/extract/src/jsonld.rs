@@ -43,6 +43,10 @@ pub fn apply_json_value(job: &mut ExtractedJob, value: &Value, provenance: Prove
             if let Some(graph) = map.get("@graph") {
                 apply_json_value(job, graph, provenance);
             }
+            // Workday CXS wraps the posting under `jobPostingInfo` with non-schema.org keys.
+            if map.get("jobPostingInfo").is_some() {
+                apply_workday_cxs(job, value, provenance);
+            }
             if is_job_posting(value) || looks_like_posting(value) {
                 apply_posting(job, value, provenance);
             }
@@ -73,6 +77,114 @@ fn is_job_posting(value: &Value) -> bool {
 
 fn looks_like_posting(value: &Value) -> bool {
     value.get("hiringOrganization").is_some() && value.get("title").is_some()
+}
+
+/// Workday CXS (`/wday/cxs/{tenant}/{site}/job/...`) is the JSON the careers SPA loads.
+/// Field names are not schema.org; map them once here so stage 1 tags `Provenance::Api`.
+fn apply_workday_cxs(job: &mut ExtractedJob, root: &Value, provenance: Provenance) {
+    let info = root.get("jobPostingInfo").unwrap_or(root);
+    if let Some(title) = text_field(info, &["title"]) {
+        merge_field(&mut job.title, Sourced::new(title, provenance));
+    }
+    if let Some(company) = organization_name(
+        root.get("hiringOrganization")
+            .or_else(|| info.get("hiringOrganization")),
+    ) {
+        merge_field(&mut job.company_name, Sourced::new(company, provenance));
+    }
+    if let Some(html) = text_field(info, &["jobDescription", "description"]) {
+        merge_field(
+            &mut job.description_html,
+            Sourced::new(html.clone(), provenance),
+        );
+        merge_field(
+            &mut job.description_md,
+            Sourced::new(crate::html::to_markdown(&html), provenance),
+        );
+    }
+    if let Some(url) = text_field(info, &["externalUrl", "canonicalUrl", "jobUrl"])
+        .or_else(|| text_field(root, &["externalUrl"]))
+    {
+        merge_field(&mut job.apply_url, Sourced::new(url, provenance));
+    }
+    if let Some(id) = text_field(info, &["jobReqId"]).or_else(|| identifier(info)) {
+        merge_field(&mut job.source_job_id, Sourced::new(id, provenance));
+    }
+    if let Some(mode) = workday_remote(info) {
+        merge_field(&mut job.work_mode, Sourced::new(mode, provenance));
+    }
+    if let Some(kind) = text_field(info, &["timeType"]).and_then(|t| employment_type_from_raw(&t)) {
+        merge_field(&mut job.employment_type, Sourced::new(kind, provenance));
+    }
+    for loc in workday_locations(info) {
+        if !job
+            .locations
+            .iter()
+            .any(|existing| existing.value.text.eq_ignore_ascii_case(&loc.text))
+        {
+            job.locations.push(Sourced::new(loc, provenance));
+        }
+    }
+}
+
+fn workday_remote(info: &Value) -> Option<WorkMode> {
+    let remote = text_field(info, &["remoteType"]).unwrap_or_default();
+    if remote.to_ascii_lowercase().contains("remote") {
+        return Some(WorkMode::Remote);
+    }
+    let location = text_field(info, &["location"]).unwrap_or_default();
+    jobseeker_normalize::infer_work_mode(&location)
+        .or_else(|| jobseeker_normalize::infer_work_mode(&remote))
+}
+
+fn workday_locations(info: &Value) -> Vec<RawLocation> {
+    let mut out = Vec::new();
+    if let Some(text) = text_field(info, &["location"]) {
+        out.push(RawLocation {
+            text,
+            is_remote_hint: info
+                .get("remoteType")
+                .and_then(as_text)
+                .is_some_and(|r| r.to_ascii_lowercase().contains("remote")),
+            country_hint: info
+                .get("country")
+                .and_then(as_text)
+                .and_then(|c| jobseeker_normalize::location::normalize_country(&c)),
+        });
+    }
+    match info.get("additionalLocations") {
+        Some(Value::Array(items)) => {
+            for item in items {
+                if let Some(text) = as_text(item) {
+                    if !out
+                        .iter()
+                        .any(|existing| existing.text.eq_ignore_ascii_case(&text))
+                    {
+                        out.push(RawLocation::new(text));
+                    }
+                }
+            }
+        }
+        Some(Value::String(text)) if !text.trim().is_empty() => {
+            out.push(RawLocation::new(text.clone()));
+        }
+        _ => {}
+    }
+    out
+}
+
+fn employment_type_from_raw(raw: &str) -> Option<EmploymentType> {
+    Some(
+        match raw.to_ascii_uppercase().replace(['-', ' '], "_").as_str() {
+            "FULL_TIME" | "FULLTIME" => EmploymentType::FullTime,
+            "PART_TIME" | "PARTTIME" => EmploymentType::PartTime,
+            "CONTRACTOR" | "CONTRACT" => EmploymentType::Contract,
+            "INTERN" | "INTERNSHIP" => EmploymentType::Internship,
+            "TEMPORARY" | "TEMP" => EmploymentType::Temporary,
+            "VOLUNTEER" => EmploymentType::Volunteer,
+            other => jobseeker_normalize::infer_employment_type(other)?,
+        },
+    )
 }
 
 fn apply_posting(job: &mut ExtractedJob, posting: &Value, provenance: Provenance) {
@@ -155,6 +267,7 @@ fn as_text(value: &Value) -> Option<String> {
             .get("name")
             .or_else(|| map.get("value"))
             .or_else(|| map.get("@value"))
+            .or_else(|| map.get("descriptor"))
             .and_then(as_text),
         Value::Array(items) => items.iter().find_map(as_text),
         _ => None,
@@ -187,15 +300,7 @@ fn work_mode_from(posting: &Value) -> Option<WorkMode> {
 
 fn employment_type_from(posting: &Value) -> Option<EmploymentType> {
     let raw = posting.get("employmentType").and_then(as_text)?;
-    Some(match raw.to_ascii_uppercase().replace('-', "_").as_str() {
-        "FULL_TIME" | "FULLTIME" => EmploymentType::FullTime,
-        "PART_TIME" | "PARTTIME" => EmploymentType::PartTime,
-        "CONTRACTOR" | "CONTRACT" => EmploymentType::Contract,
-        "INTERN" | "INTERNSHIP" => EmploymentType::Internship,
-        "TEMPORARY" | "TEMP" => EmploymentType::Temporary,
-        "VOLUNTEER" => EmploymentType::Volunteer,
-        other => jobseeker_normalize::infer_employment_type(other)?,
-    })
+    employment_type_from_raw(&raw)
 }
 
 fn locations_from(posting: &Value) -> Vec<RawLocation> {
@@ -370,6 +475,34 @@ mod tests {
             r#"{"@type":"JobPosting","title":"E","hiringOrganization":"Acme","description":"d"}"#,
         );
         assert_eq!(job.company_name.unwrap().value, "Acme");
+    }
+
+    #[test]
+    fn a_workday_cxs_payload_unwraps_job_posting_info() {
+        let job = job_from(
+            r#"{
+              "hiringOrganization": {"name": "Acme Robotics"},
+              "jobPostingInfo": {
+                "title": "Data Scientist",
+                "jobDescription": "<h2>Requirements</h2><ul><li>Python</li><li>SQL</li></ul>",
+                "location": "Remote-USA",
+                "additionalLocations": ["Seattle, WA"],
+                "remoteType": "Fully Remote",
+                "timeType": "Full time",
+                "jobReqId": "P751219-2",
+                "country": {"descriptor": "United States of America"}
+              }
+            }"#,
+        );
+        assert_eq!(job.title.unwrap().value, "Data Scientist");
+        assert_eq!(job.company_name.unwrap().value, "Acme Robotics");
+        assert_eq!(job.source_job_id.unwrap().value, "P751219-2");
+        assert_eq!(job.work_mode.unwrap().value, WorkMode::Remote);
+        assert_eq!(job.employment_type.unwrap().value, EmploymentType::FullTime);
+        assert_eq!(job.locations.len(), 2);
+        assert_eq!(job.locations[0].value.text, "Remote-USA");
+        assert_eq!(job.locations[1].value.text, "Seattle, WA");
+        assert!(job.description_md.unwrap().value.contains("Python"));
     }
 
     #[test]
