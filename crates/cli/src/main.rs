@@ -54,6 +54,19 @@ enum Command {
     },
     /// Show one job by id.
     Show { id: String },
+    /// Pair a browser extension: print a one-time code, or emit a device token.
+    Pair {
+        /// Label stored with the token, e.g. "Firefox on laptop".
+        #[arg(long)]
+        name: String,
+        /// Print a `jst_…` token immediately instead of a pairing code.
+        #[arg(long)]
+        emit_token: bool,
+    },
+    /// List device tokens (never the secret).
+    Tokens,
+    /// Revoke a device token by id.
+    Revoke { id: String },
     /// Rebuild files from the database (M1). Currently a status check.
     Reconcile,
 }
@@ -171,6 +184,55 @@ async fn main() -> Result<()> {
                     if score.is_stale { "stale" } else { "fresh" }
                 );
             }
+        }
+        Command::Pair { name, emit_token } => {
+            let pipeline = Pipeline::open(config).await?;
+            let server = pipeline
+                .config
+                .server
+                .public_url
+                .clone()
+                .unwrap_or_else(|| format!("http://{}", pipeline.config.server.bind));
+            if emit_token {
+                let issued =
+                    jobseeker_db::repo::token::issue_token(&pipeline.db, &name, &["ingest".into()])
+                        .await?;
+                println!("Paste this into the extension (shown once; stored hashed):");
+                println!("  server: {server}");
+                println!("  token:  {}", issued.token);
+            } else {
+                let code =
+                    jobseeker_db::repo::token::create_pairing_code(&pipeline.db, &name).await?;
+                println!("Pairing code (expires in 15 minutes):");
+                println!("  {}", code.code);
+                println!();
+                println!("Paste the code into the extension, or re-run with --emit-token.");
+                println!("  server: {server}");
+            }
+        }
+        Command::Tokens => {
+            let pipeline = Pipeline::open(config).await?;
+            for row in jobseeker_db::repo::token::list(&pipeline.db).await? {
+                let state = if row.revoked_at.is_some() {
+                    "revoked"
+                } else {
+                    "active"
+                };
+                println!(
+                    "{}  {}  [{}]  {state}",
+                    row.id,
+                    row.name,
+                    row.scopes.join(",")
+                );
+            }
+        }
+        Command::Revoke { id } => {
+            let pipeline = Pipeline::open(config).await?;
+            let n = jobseeker_db::repo::token::revoke(&pipeline.db, &id).await?;
+            if n == 0 {
+                anyhow::bail!("no token {id}");
+            }
+            println!("revoked {id}");
         }
         Command::Reconcile => {
             anyhow::bail!("reconcile is scheduled for M1; files are written on extract today");

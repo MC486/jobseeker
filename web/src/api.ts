@@ -132,4 +132,8 @@ export const api = {
       body: JSON.stringify({ text, url }),
     }),
   meta: () => request<{ version: string; llm_provider: string }>("/api/v1/meta"),
+  me: () =>
+    request<{ auth_mode: string; authenticated: boolean; name: string | null; scopes: string[] }>(
+      "/api/v1/auth/me",
+    ),
 };

@@ -611,10 +611,16 @@ fn content_ext(content_type: Option<&str>) -> &'static str {
 /// Used by tests that want a pipeline against a temp directory without opening a file DB
 /// twice.
 pub async fn for_test(dir: PathBuf) -> Result<Pipeline> {
+    for_test_with(dir, |_| {}).await
+}
+
+/// Build a test pipeline after tweaking config (auth mode, bind, …).
+pub async fn for_test_with(dir: PathBuf, tweak: impl FnOnce(&mut Config)) -> Result<Pipeline> {
     let mut config = Config::default();
     config.data.dir = dir;
     config.data.run_migrations_on_start = true;
     config.worker.poll_interval_ms = 50;
+    tweak(&mut config);
     Pipeline::open(config).await
 }
 

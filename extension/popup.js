@@ -1,10 +1,39 @@
 const serverEl = document.getElementById("server");
 const tokenEl = document.getElementById("token");
+const codeEl = document.getElementById("code");
 const statusEl = document.getElementById("status");
 
 chrome.storage.local.get(["server", "token"], (stored) => {
   serverEl.value = stored.server || "http://127.0.0.1:8787";
   tokenEl.value = stored.token || "";
+});
+
+document.getElementById("pair").addEventListener("click", async () => {
+  const server = serverEl.value.replace(/\/+$/, "");
+  const code = codeEl.value.trim();
+  if (!code) {
+    statusEl.textContent = "Paste a pairing code from `jobseeker pair`.";
+    return;
+  }
+  statusEl.textContent = "Pairing…";
+  try {
+    const res = await fetch(`${server}/api/v1/auth/pair`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ code }),
+    });
+    const body = await res.json();
+    if (!res.ok) {
+      statusEl.textContent = body.error?.message || res.statusText;
+      return;
+    }
+    tokenEl.value = body.token;
+    await chrome.storage.local.set({ server, token: body.token });
+    codeEl.value = "";
+    statusEl.textContent = `Paired as ${body.name}. Token stored on this device.`;
+  } catch (err) {
+    statusEl.textContent = err.message || String(err);
+  }
 });
 
 document.getElementById("capture").addEventListener("click", async () => {
