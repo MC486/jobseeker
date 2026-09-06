@@ -69,7 +69,8 @@ year haircut in (a 2-year bank against a 5-year ask scores `2/5` on that bar).
 `skills_coverage` treats "we have this skill" as a hit and leaves tenure to
 `years_fit`. Postings often mean year counts as a wishlist; some recruiters
 overfit them. Showing both lets you decide which reading matters for this
-role.
+role. `GET /api/v1/jobs` repeats `skills_coverage` and `years_fit` on each
+list row so the table can compare them without a second request.
 
 **`required_coverage`** — weighted coverage of `necessity = required`:
 

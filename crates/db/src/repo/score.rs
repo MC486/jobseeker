@@ -1,5 +1,7 @@
 //! Persist and read explainable match scores.
 
+use std::collections::HashMap;
+
 use jobseeker_core::domain::scoring::{weighted_mean, MatchScore, VerdictStatus};
 use jobseeker_core::ids::{JobId, MatchScoreId, ProfileId};
 use jobseeker_core::time::{now, to_rfc3339};
@@ -211,6 +213,58 @@ pub async fn latest_for_job(
     }))
 }
 
+/// Latest skills/years split for each listed job, in one pair of queries.
+///
+/// List rows already carry `match_overall` from a subquery. These two numbers are
+/// derived from verdicts (or `explanation_json` when verdict rows are missing), so
+/// they cannot live in that same subquery without a migration. Overall is never
+/// recomputed here.
+pub async fn breakdowns_for_jobs(
+    db: &Db,
+    job_ids: &[String],
+) -> Result<HashMap<String, (Option<f64>, Option<f64>)>> {
+    if job_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let placeholders = job_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+    let sql = format!(
+        "SELECT m.job_id, m.id, m.explanation_json, m.computed_at
+           FROM match_score m
+          WHERE m.job_id IN ({placeholders})
+          ORDER BY m.computed_at DESC, m.id DESC"
+    );
+    let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
+    for id in job_ids {
+        q = q.bind(id);
+    }
+    let rows = q.fetch_all(db.reader()).await.map_err(db_err)?;
+
+    let mut latest: HashMap<String, (String, Option<String>)> = HashMap::new();
+    let mut match_ids = Vec::new();
+    for row in rows {
+        let job_id: String = row.try_get("job_id").map_err(db_err)?;
+        if latest.contains_key(&job_id) {
+            continue;
+        }
+        let match_id: String = row.try_get("id").map_err(db_err)?;
+        let explanation: Option<String> = row.try_get("explanation_json").map_err(db_err)?;
+        match_ids.push(match_id.clone());
+        latest.insert(job_id, (match_id, explanation));
+    }
+
+    let mut verdicts_by_match = load_verdicts_for_matches(db, &match_ids).await?;
+    let mut out = HashMap::with_capacity(latest.len());
+    for (job_id, (match_id, explanation)) in latest {
+        let mut verdicts = verdicts_by_match.remove(&match_id).unwrap_or_default();
+        if verdicts.is_empty() {
+            verdicts = verdicts_from_explanation(explanation.as_deref());
+        }
+        out.insert(job_id, breakdown_from_verdicts(&verdicts));
+    }
+    Ok(out)
+}
+
 pub async fn mark_stale_for_profile(db: &Db, profile_id: &ProfileId) -> Result<u64> {
     let res = sqlx::query("UPDATE match_score SET is_stale = 1 WHERE profile_id = ?1")
         .bind(profile_id.as_str())
@@ -221,26 +275,40 @@ pub async fn mark_stale_for_profile(db: &Db, profile_id: &ProfileId) -> Result<u
 }
 
 async fn load_verdicts(db: &Db, match_id: &str) -> Result<Vec<RequirementVerdict>> {
-    let rows = sqlx::query(
-        "SELECT rm.requirement_id, rm.status, rm.score, rm.rationale,
+    let mut map = load_verdicts_for_matches(db, &[match_id.to_string()]).await?;
+    Ok(map.remove(match_id).unwrap_or_default())
+}
+
+async fn load_verdicts_for_matches(
+    db: &Db,
+    match_ids: &[String],
+) -> Result<HashMap<String, Vec<RequirementVerdict>>> {
+    let mut out: HashMap<String, Vec<RequirementVerdict>> = HashMap::new();
+    if match_ids.is_empty() {
+        return Ok(out);
+    }
+    let placeholders = match_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+    let sql = format!(
+        "SELECT rm.match_score_id, rm.requirement_id, rm.status, rm.score, rm.rationale,
                 rm.years_have, rm.years_needed, rm.weight, r.necessity
            FROM requirement_match rm
            LEFT JOIN requirement r ON r.id = rm.requirement_id
-          WHERE rm.match_score_id = ?1",
-    )
-    .bind(match_id)
-    .fetch_all(db.reader())
-    .await
-    .map_err(db_err)?;
-    let mut out = Vec::with_capacity(rows.len());
+          WHERE rm.match_score_id IN ({placeholders})"
+    );
+    let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
+    for id in match_ids {
+        q = q.bind(id);
+    }
+    let rows = q.fetch_all(db.reader()).await.map_err(db_err)?;
     for r in rows {
+        let match_id: String = r.try_get("match_score_id").map_err(db_err)?;
         let necessity: Option<String> = r.try_get("necessity").map_err(db_err)?;
         let required = matches!(
             necessity.as_deref(),
             Some("required") | Some("implied") | None
         );
         let weight: f64 = r.try_get("weight").unwrap_or(1.0);
-        out.push(RequirementVerdict {
+        out.entry(match_id).or_default().push(RequirementVerdict {
             requirement_id: r.try_get("requirement_id").map_err(db_err)?,
             status: r.try_get("status").map_err(db_err)?,
             score: r.try_get("score").map_err(db_err)?,

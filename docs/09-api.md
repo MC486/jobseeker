@@ -64,7 +64,9 @@ GET  /api/v1/events?since=<event_id>   → SSE stream of DomainEvent (backfills 
 ### Jobs
 
 ```
-GET  /api/v1/jobs
+GET  /api/v1/jobs                 → {items: JobListRow[], next_cursor}
+     each item includes match_overall plus diagnostic skills_coverage / years_fit
+     (same split as GET /api/v1/jobs/:id/match; they do not change overall)
      ?q=                          full-text (FTS5, supports quoted phrases and OR)
      &status=open|closed|…        &work_mode=remote|hybrid|onsite
      &company_id=  &seniority=    &employment_type=

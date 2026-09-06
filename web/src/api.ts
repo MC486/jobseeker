@@ -16,6 +16,8 @@ export type JobListRow = {
   primary_location: string | null;
   extraction_partial: boolean;
   match_overall: number | null;
+  skills_coverage: number | null;
+  years_fit: number | null;
   updated_at: string;
 };
 

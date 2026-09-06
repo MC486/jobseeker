@@ -994,6 +994,10 @@ mod tests {
                 .unwrap();
         let job_id = page.items[0].id.clone();
         assert!(page.items[0].match_overall.is_some());
+        assert!(
+            page.items[0].skills_coverage.is_some(),
+            "list rows carry the skills split so the table can show it"
+        );
 
         let app = router(AppState::new(pipe.clone()));
         let res = app

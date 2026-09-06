@@ -84,8 +84,10 @@ bars, top strengths, top gaps, and the actions (Tailor resume · Draft cover let
 application · Refresh · Archive).
 
 **Job list** is a dense virtualized table: title, company, comp, location/mode, posted age,
-close-date urgency, match score, status. Facet rail on the left with counts. Column set and
-saved views are user-configurable. Bulk select for tag/archive/rescore.
+close-date urgency, match overall plus the diagnostic Skills / Years split, status. Facet
+rail on the left with counts. Column set and saved views are user-configurable. Bulk select
+for tag/archive/rescore. Skills and Years do not change overall; they exist so a 5-year
+wishlist can be compared across rows without opening each job.
 
 **Experience bank editor** is a two-pane outline: roles on the left, accomplishments on the
 right with inline metric fields, skill chips with autocomplete, strength stars, and a

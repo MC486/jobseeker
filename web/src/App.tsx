@@ -293,10 +293,22 @@ function JobList({ live }: { live: number }) {
               <div className="text-sm text-zinc-400">
                 {row.company_name} · {row.work_mode} · {row.status}
                 {row.primary_location ? ` · ${row.primary_location}` : ""}
-                {row.match_overall != null
-                  ? ` · ${Math.round(row.match_overall * 100)}% match`
-                  : ""}
               </div>
+              {row.match_overall != null ? (
+                <div className="mt-1 flex flex-wrap gap-x-3 text-xs text-zinc-400">
+                  <span className="text-zinc-200">{pct(row.match_overall)} match</span>
+                  {row.skills_coverage != null ? (
+                    <span title="Required bars with tenure stripped. Does not change overall.">
+                      skills {pct(row.skills_coverage)}
+                    </span>
+                  ) : null}
+                  {row.years_fit != null ? (
+                    <span title="Required year-count asks. Recruiters overfit this; postings often mean a wishlist.">
+                      years {pct(row.years_fit)}
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
             </button>
           </li>
         ))}
