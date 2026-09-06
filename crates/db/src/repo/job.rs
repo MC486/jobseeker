@@ -561,6 +561,13 @@ pub struct MergeReport {
     pub requirements_added: u64,
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SplitReport {
+    pub from_id: String,
+    pub new_id: String,
+    pub listing_id: String,
+}
+
 pub async fn get(db: &Db, id: &JobId) -> Result<Option<JobDetail>> {
     let row = sqlx::query(
         "SELECT j.id, j.company_id, c.name AS company_name, c.slug AS company_slug,
@@ -895,6 +902,73 @@ pub async fn merge(db: &Db, from: &JobId, into: &JobId) -> Result<MergeReport> {
         listings_moved,
         requirements_added,
     })
+}
+
+/// Peel `listing_id` off `from` into a new stub job at the same company.
+/// The keeper keeps its title, description, and unioned requirements.
+/// A later extract on the listing's capture fills the stub.
+pub async fn split(db: &Db, from: &JobId, listing_id: &ListingId) -> Result<SplitReport> {
+    let from_row = get(db, from)
+        .await?
+        .ok_or(jobseeker_core::Error::NotFound("job"))?;
+    let listing = crate::repo::listing::get(db, listing_id)
+        .await?
+        .ok_or(jobseeker_core::Error::NotFound("listing"))?;
+    if listing.job_id.as_ref() != Some(from) {
+        return Err(jobseeker_core::Error::BadRequest(
+            "listing is not attached to this job".into(),
+        ));
+    }
+    if from_row.listings.len() < 2 {
+        return Err(jobseeker_core::Error::BadRequest(
+            "cannot split the only listing".into(),
+        ));
+    }
+
+    crate::repo::listing::detach(db, listing_id).await?;
+
+    let title_at_source: Option<String> =
+        sqlx::query_scalar("SELECT title_at_source FROM job_source_listing WHERE id = ?1")
+            .bind(listing_id.as_str())
+            .fetch_optional(db.reader())
+            .await
+            .map_err(db_err)?
+            .flatten();
+    let title = title_at_source
+        .filter(|t| !t.trim().is_empty())
+        .unwrap_or_else(|| from_row.title.clone());
+    let new_id = insert_stub(db, &from_row.company_id, &title).await?;
+    crate::repo::listing::attach_to_job(db, listing_id, &new_id).await?;
+    reindex_fts(db, from).await?;
+    reindex_fts(db, &new_id).await?;
+    Ok(SplitReport {
+        from_id: from.as_str().to_string(),
+        new_id: new_id.as_str().to_string(),
+        listing_id: listing_id.as_str().to_string(),
+    })
+}
+
+async fn insert_stub(db: &Db, company_id: &str, title: &str) -> Result<JobId> {
+    let id = JobId::new();
+    let ts = jobseeker_core::time::to_rfc3339(&jobseeker_core::time::now());
+    let slug = jobseeker_core::slug::slugify(title);
+    let title_normalized = jobseeker_core::slug::normalize_job_title(title);
+    sqlx::query(
+        "INSERT INTO job (id, company_id, slug, title, title_normalized, status, work_mode,
+                          description_text, content_hash, first_seen_at, last_seen_at,
+                          created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, 'open', 'unknown', '', 'split', ?6, ?6, ?6, ?6)",
+    )
+    .bind(id.as_str())
+    .bind(company_id)
+    .bind(&slug)
+    .bind(title)
+    .bind(&title_normalized)
+    .bind(&ts)
+    .execute(db.writer())
+    .await
+    .map_err(db_err)?;
+    Ok(id)
 }
 
 async fn load_provenance(db: &Db, id: &JobId) -> Result<Vec<FieldProvenanceRow>> {
@@ -1795,5 +1869,115 @@ mod tests {
         )
         .await;
         assert!(merge(&db, &a, &b).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn split_peels_a_listing_into_a_new_job() {
+        let db = Db::open_in_memory().await.unwrap();
+        let keeper = insert_job(
+            &db,
+            "Zillow",
+            "Data Scientist",
+            JobStatus::Open,
+            WorkMode::Remote,
+            None,
+            SalaryPeriod::Year,
+            "2026-09-01T00:00:00Z",
+        )
+        .await;
+        let donor = insert_job(
+            &db,
+            "Zillow",
+            "Data Scientist",
+            JobStatus::Open,
+            WorkMode::Remote,
+            None,
+            SalaryPeriod::Year,
+            "2026-09-02T00:00:00Z",
+        )
+        .await;
+        let keep_listing = crate::repo::listing::upsert_by_url(
+            &db,
+            &crate::repo::listing::UpsertListing {
+                source: jobseeker_core::domain::enums::SourceKind::Workday,
+                url: "https://zillow.wd5.example/job/P1".into(),
+                url_canonical: "https://zillow.wd5.example/job/P1".into(),
+                source_job_id: Some("P1".into()),
+                title_at_source: Some("Data Scientist".into()),
+                company_name_at_source: Some("Zillow".into()),
+            },
+        )
+        .await
+        .unwrap()
+        .0;
+        let donor_listing = crate::repo::listing::upsert_by_url(
+            &db,
+            &crate::repo::listing::UpsertListing {
+                source: jobseeker_core::domain::enums::SourceKind::LinkedIn,
+                url: "https://www.linkedin.com/jobs/view/1".into(),
+                url_canonical: "https://www.linkedin.com/jobs/view/1".into(),
+                source_job_id: Some("1".into()),
+                title_at_source: Some("Data Scientist".into()),
+                company_name_at_source: Some("Zillow".into()),
+            },
+        )
+        .await
+        .unwrap()
+        .0;
+        crate::repo::listing::attach_to_job(&db, &keep_listing, &keeper)
+            .await
+            .unwrap();
+        crate::repo::listing::attach_to_job(&db, &donor_listing, &donor)
+            .await
+            .unwrap();
+        merge(&db, &donor, &keeper).await.unwrap();
+
+        let report = split(&db, &keeper, &donor_listing).await.unwrap();
+        let new_id: JobId = report.new_id.parse().unwrap();
+        let original = get(&db, &keeper).await.unwrap().unwrap();
+        let peeled = get(&db, &new_id).await.unwrap().unwrap();
+        assert_eq!(original.listings.len(), 1);
+        assert_eq!(original.listings[0].source, "workday");
+        assert!(original.listings[0].is_canonical);
+        assert_eq!(peeled.listings.len(), 1);
+        assert_eq!(peeled.listings[0].source, "linkedin");
+        assert!(peeled.listings[0].is_canonical);
+        assert_eq!(peeled.company_id, original.company_id);
+        let page = list(&db, &JobFilter::default()).await.unwrap();
+        assert_eq!(page.items.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn split_refuses_the_only_listing() {
+        let db = Db::open_in_memory().await.unwrap();
+        let job = insert_job(
+            &db,
+            "Zillow",
+            "Data Scientist",
+            JobStatus::Open,
+            WorkMode::Remote,
+            None,
+            SalaryPeriod::Year,
+            "2026-09-01T00:00:00Z",
+        )
+        .await;
+        let listing = crate::repo::listing::upsert_by_url(
+            &db,
+            &crate::repo::listing::UpsertListing {
+                source: jobseeker_core::domain::enums::SourceKind::Workday,
+                url: "https://zillow.wd5.example/job/P1".into(),
+                url_canonical: "https://zillow.wd5.example/job/P1".into(),
+                source_job_id: Some("P1".into()),
+                title_at_source: Some("Data Scientist".into()),
+                company_name_at_source: Some("Zillow".into()),
+            },
+        )
+        .await
+        .unwrap()
+        .0;
+        crate::repo::listing::attach_to_job(&db, &listing, &job)
+            .await
+            .unwrap();
+        assert!(split(&db, &job, &listing).await.is_err());
     }
 }

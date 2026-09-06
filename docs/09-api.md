@@ -95,7 +95,13 @@ POST /api/v1/jobs/:id/merge      {into_job_id}
                                       Listings move; requirements union by
                                       `normalized_text`. Returns
                                       `{from_id, into_id, listings_moved, requirements_added}`.
-POST /api/v1/jobs/:id/split      {listing_id}   (not implemented; FR-A-11)
+POST /api/v1/jobs/:id/split      {listing_id}
+                                    → peel that listing into a new job (FR-A-11).
+                                      `:id` must currently hold the listing and
+                                      must have at least one other listing (400
+                                      otherwise). Original keeps title /
+                                      description. Returns
+                                      `{from_id, new_id, listing_id}`.
 GET  /api/v1/jobs/:id/similar    → nearest neighbours by embedding
 ```
 

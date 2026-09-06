@@ -768,7 +768,9 @@ function provenanceDot(job: JobDetail, field: string) {
 
 export function JobPage() {
   const { jobId } = useParams({ from: "/jobs/$jobId" });
+  const navigate = useNavigate();
   const qc = useQueryClient();
+  const [splitError, setSplitError] = useState<string | null>(null);
   const job = useQuery({ queryKey: keys.job(jobId), queryFn: () => fetchers.job(jobId) });
   const match = useQuery({
     queryKey: keys.match(jobId),
@@ -780,6 +782,17 @@ export function JobPage() {
     onSuccess: (detail) => {
       qc.setQueryData(keys.job(jobId), detail);
       qc.invalidateQueries({ queryKey: ["jobs"] });
+    },
+  });
+  const split = useMutation({
+    mutationFn: (listingId: string) => api.splitJob(jobId, listingId),
+    onSuccess: async (report) => {
+      await qc.invalidateQueries({ queryKey: ["jobs"] });
+      await qc.invalidateQueries({ queryKey: keys.job(jobId) });
+      await navigate({ to: "/jobs/$jobId", params: { jobId: report.new_id } });
+    },
+    onError: (err) => {
+      setSplitError(err instanceof Error ? err.message : String(err));
     },
   });
 
@@ -873,17 +886,34 @@ export function JobPage() {
       {(detail.listings ?? []).length > 0 && (
         <section>
           <h2 className="mb-2 text-lg font-medium">Listings</h2>
-          <ul className="space-y-1 text-sm text-zinc-300">
+          <p className="mb-2 text-xs text-zinc-500">
+            {(detail.listings ?? []).length >= 2
+              ? "Split off a listing to undo a merge. The original keeps its title and description."
+              : "This job has one source URL."}
+          </p>
+          {splitError && <p className="mb-2 text-sm text-red-300">{splitError}</p>}
+          <ul className="space-y-2 text-sm text-zinc-300">
             {(detail.listings ?? []).map((listing) => (
-              <li key={listing.id}>
+              <li key={listing.id} className="flex flex-wrap items-baseline gap-x-2">
                 <span className="text-zinc-500">{listing.source}</span>
                 {listing.is_canonical ? (
-                  <span className="ml-2 text-xs text-emerald-400">canonical</span>
+                  <span className="text-xs text-emerald-400">canonical</span>
                 ) : null}
-                <span className="mx-2 text-zinc-600">·</span>
                 <a className="break-all text-indigo-300" href={listing.url}>
                   {listing.url}
                 </a>
+                {(detail.listings ?? []).length >= 2 ? (
+                  <button
+                    type="button"
+                    disabled={split.isPending}
+                    onClick={() => split.mutate(listing.id)}
+                    className="text-xs text-zinc-500 hover:text-zinc-200 disabled:opacity-50"
+                  >
+                    {split.isPending && split.variables === listing.id
+                      ? "Splitting…"
+                      : "Split off"}
+                  </button>
+                ) : null}
               </li>
             ))}
           </ul>

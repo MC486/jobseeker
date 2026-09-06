@@ -197,6 +197,11 @@ export const api = {
       `/api/v1/jobs/${from}/merge`,
       { method: "POST", body: JSON.stringify({ into_job_id: into }) },
     ),
+  splitJob: (from: string, listingId: string) =>
+    request<{ from_id: string; new_id: string; listing_id: string }>(
+      `/api/v1/jobs/${from}/split`,
+      { method: "POST", body: JSON.stringify({ listing_id: listingId }) },
+    ),
   task: (id: string) => request<TaskView>(`/api/v1/tasks/${id}`),
   ingestUrl: (url: string) =>
     request<Accepted>("/api/v1/ingest/url", { method: "POST", body: JSON.stringify({ url }) }),
