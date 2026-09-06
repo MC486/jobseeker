@@ -35,6 +35,9 @@ serve:
 add url:
     cargo run -p jobseeker-cli -- add {{url}}
 
+reconcile:
+    cargo run -p jobseeker-cli -- reconcile --check
+
 # Dump OpenAPI (no server) and regenerate web/src/api/generated.ts.
 # The generated file is committed (ADR-0009); CI typechecks it via `npm run build`.
 gen-client:

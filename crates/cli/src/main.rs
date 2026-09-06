@@ -1,4 +1,4 @@
-//! Process entrypoint: `jobseeker serve`, `add`, `list`, `show`, `migrate`, `openapi`.
+//! Process entrypoint: `jobseeker serve`, `add`, `list`, `show`, `migrate`, `openapi`, `reconcile`.
 
 use std::io::{self, Read};
 use std::path::PathBuf;
@@ -67,8 +67,18 @@ enum Command {
     Tokens,
     /// Revoke a device token by id.
     Revoke { id: String },
-    /// Rebuild files from the database (M1). Currently a status check.
-    Reconcile,
+    /// Keep SQLite and `jobs/**` in sync (ADR-0003).
+    Reconcile {
+        /// Rewrite `job.md` / `job.json` / `requirements.json` from the database.
+        #[arg(long)]
+        to_files: bool,
+        /// Rebuild job rows from `jobs/**/job.json` (skips tombstones).
+        #[arg(long)]
+        from_files: bool,
+        /// Report db_only / file_only / divergent and change nothing.
+        #[arg(long)]
+        check: bool,
+    },
     /// Dump the OpenAPI document (no database, no server).
     Openapi {
         /// Write JSON to this path instead of stdout.
@@ -240,8 +250,44 @@ async fn main() -> Result<()> {
             }
             println!("revoked {id}");
         }
-        Command::Reconcile => {
-            anyhow::bail!("reconcile is scheduled for M1; files are written on extract today");
+        Command::Reconcile {
+            to_files,
+            from_files,
+            check,
+        } => {
+            if to_files && from_files {
+                anyhow::bail!("choose one of --to-files or --from-files");
+            }
+            let pipeline = Pipeline::open(config).await?;
+            let report = if to_files {
+                pipeline.reconcile_to_files().await?
+            } else if from_files {
+                pipeline.reconcile_from_files().await?
+            } else {
+                pipeline.reconcile_check().await?
+            };
+            println!(
+                "jobs db={} files={} written={} restored={} skipped_tombstone={}",
+                report.db_jobs,
+                report.file_jobs,
+                report.written,
+                report.restored,
+                report.skipped_tombstone
+            );
+            if !report.db_only.is_empty() {
+                println!("db_only: {}", report.db_only.join(" "));
+            }
+            if !report.file_only.is_empty() {
+                println!("file_only: {}", report.file_only.join(" "));
+            }
+            if !report.divergent.is_empty() {
+                println!("divergent: {}", report.divergent.join(" "));
+            }
+            if report.is_clean() {
+                println!("drift: none");
+            } else if check || (!to_files && !from_files) {
+                std::process::exit(1);
+            }
         }
         Command::Openapi { out } => {
             let spec = jobseeker_api::openapi_spec();

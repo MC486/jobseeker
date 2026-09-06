@@ -15,21 +15,24 @@ pair with a hashed, ingest-scoped device token.
 - Field provenance rows; PATCH `/api/v1/jobs/{id}` is sticky `manual`
 - HTTP API: health, ready, meta, ingest, jobs, match, tasks, OpenAPI, SPA fallback
 - Auth: `POST /api/v1/auth/pair`, hashed `device_token`, `jobseeker pair` / `tokens` / `revoke`
-- CLI: `serve`, `migrate`, `add`, `list`, `show`, `pair`
+- CLI: `serve`, `migrate`, `add`, `list`, `show`, `pair`, `reconcile`, `openapi`
 - React/Vite/Tailwind shell in `web/` (score + confidence dots)
 - MV3 extension with pairing in `extension/`
 - Paste fixture: `fixtures/greenhouse-platform-engineer.html`
 
 ## Do next (M0 remaining → M1)
 
-1. **Reconcile.** `jobseeker reconcile --from-files` / `--to-files` / `--check`.
-2. **Site adapters.** LinkedIn / Indeed (from extension HTML), Greenhouse /
+1. **Site adapters.** LinkedIn / Indeed (from extension HTML), Greenhouse /
    Lever / Ashby JSON already partially works via `acquire::plan`.
-3. **Password auth.** Session cookie + Argon2id when `auth.mode = password`.
-4. **TanStack Router + Query.** The shell still uses a hand-rolled router; SSE
+2. **Password auth.** Session cookie + Argon2id when `auth.mode = password`.
+3. **TanStack Router + Query.** The shell still uses a hand-rolled router; SSE
    already invalidates the job list / task / match views.
 
 ## Just shipped
+
+- **Reconcile.** `jobseeker reconcile --check` / `--to-files` / `--from-files`.
+  `--from-files` rebuilds jobs from `jobs/**/job.json` and skips tombstones
+  (AS-06 / FR-S-04 / FR-S-07). `--rebuild-derived` is still just FTS on write.
 
 - **SSE `GET /api/v1/events?since=`** — `event_log` + in-process broadcast;
   TaskPage no longer polls.
@@ -41,6 +44,7 @@ pair with a hashed, ingest-scoped device token.
 ```
 cargo test -p jobseeker-pipeline -p jobseeker-api -p jobseeker-db
 # pairing_code_mints_an_ingest_token_that_cannot_read_jobs must stay green
+# reconcile_from_files_rebuilds_after_the_db_is_deleted must stay green
 
 cargo run -p jobseeker-cli -- pair --name "Firefox on laptop"
 # paste the code into the extension, or:

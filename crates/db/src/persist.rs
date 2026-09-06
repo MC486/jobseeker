@@ -586,6 +586,292 @@ pub async fn write_job_provenance(
     Ok(())
 }
 
+/// A job reconstructed from `job.json` + `requirements.json`.
+#[derive(Debug, Clone)]
+pub struct FileJobWrite {
+    pub job_id: JobId,
+    pub company_name: String,
+    pub title: String,
+    pub status: String,
+    pub work_mode: String,
+    pub seniority: String,
+    pub employment_type: String,
+    pub salary_raw: Option<String>,
+    pub apply_url: Option<String>,
+    pub posted_at: Option<String>,
+    pub closes_at: Option<String>,
+    pub locations: Vec<String>,
+    pub extraction_partial: bool,
+    pub content_hash: String,
+    pub description_md: String,
+    pub user_rating: Option<i64>,
+    pub user_notes_md: Option<String>,
+    pub is_archived: bool,
+    pub file_path: String,
+    pub requirements: Vec<FileReqWrite>,
+}
+
+#[derive(Debug, Clone)]
+pub struct FileReqWrite {
+    pub id: Option<RequirementId>,
+    pub text: String,
+    pub normalized_text: String,
+    pub kind: String,
+    pub necessity: String,
+    pub min_years: Option<f64>,
+    pub is_blocker: bool,
+}
+
+/// Record a deletion so `--from-files` cannot resurrect the entity (FR-S-07).
+pub async fn record_tombstone(db: &Db, entity_kind: &str, entity_id: &str) -> Result<()> {
+    sqlx::query(
+        "INSERT OR IGNORE INTO tombstone (entity_kind, entity_id, deleted_at)
+         VALUES (?1, ?2, ?3)",
+    )
+    .bind(entity_kind)
+    .bind(entity_id)
+    .bind(to_rfc3339(&now()))
+    .execute(db.writer())
+    .await
+    .map(|_| ())
+    .map_err(db_err)
+}
+
+/// True when a prior delete was recorded so `--from-files` must not resurrect it.
+pub async fn is_tombstoned(db: &Db, entity_kind: &str, entity_id: &str) -> Result<bool> {
+    let hit: Option<String> = sqlx::query_scalar(
+        "SELECT entity_id FROM tombstone WHERE entity_kind = ?1 AND entity_id = ?2",
+    )
+    .bind(entity_kind)
+    .bind(entity_id)
+    .fetch_optional(db.reader())
+    .await
+    .map_err(db_err)?;
+    Ok(hit.is_some())
+}
+
+/// Insert or replace a job from its on-disk files. Returns `(id, created)`.
+pub async fn upsert_from_file(db: &Db, input: &FileJobWrite) -> Result<(JobId, bool)> {
+    let company_id = company::resolve_or_create(db, &input.company_name, None).await?;
+    let exists: Option<String> = sqlx::query_scalar("SELECT id FROM job WHERE id = ?1")
+        .bind(input.job_id.as_str())
+        .fetch_optional(db.reader())
+        .await
+        .map_err(db_err)?;
+    let created = exists.is_none();
+    let ts = to_rfc3339(&now());
+    let title_normalized = normalize_job_title(&input.title);
+    let slug = slugify(&input.title);
+    let description_text = input.description_md.clone();
+    let status = input.status.parse().unwrap_or(JobStatus::Open);
+    let work_mode = input.work_mode.parse().unwrap_or(WorkMode::Unknown);
+    let seniority = input.seniority.parse().unwrap_or(Seniority::Unknown);
+    let employment = input
+        .employment_type
+        .parse()
+        .unwrap_or(EmploymentType::Unknown);
+    let parsed = input
+        .salary_raw
+        .as_deref()
+        .and_then(|raw| parse_salary(raw, None, None));
+
+    let mut tx = db.writer().begin().await.map_err(db_err)?;
+    if created {
+        sqlx::query(
+            r#"INSERT INTO job (
+                id, company_id, slug, title, title_normalized,
+                seniority, employment_type, work_mode,
+                description_md, description_text,
+                salary_min_cents, salary_max_cents, salary_currency, salary_period,
+                salary_is_estimate, salary_raw,
+                posted_at, closes_at, apply_url, status, content_hash,
+                extraction_partial, user_rating, user_notes_md, is_archived, file_path,
+                first_seen_at, last_seen_at, created_at, updated_at
+            ) VALUES (
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
+                ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21,
+                ?22, ?23, ?24, ?25, ?26, ?27, ?27, ?27, ?27
+            )"#,
+        )
+        .bind(input.job_id.as_str())
+        .bind(company_id.as_str())
+        .bind(&slug)
+        .bind(&input.title)
+        .bind(&title_normalized)
+        .bind(seniority.as_str())
+        .bind(employment.as_str())
+        .bind(work_mode.as_str())
+        .bind(&input.description_md)
+        .bind(&description_text)
+        .bind(parsed.as_ref().and_then(|s| s.min_cents))
+        .bind(parsed.as_ref().and_then(|s| s.max_cents))
+        .bind(parsed.as_ref().map(|s| s.currency.clone()))
+        .bind(
+            parsed
+                .as_ref()
+                .map(|s| s.period.as_str())
+                .unwrap_or("unknown"),
+        )
+        .bind(i64::from(parsed.as_ref().is_some_and(|s| s.is_estimate)))
+        .bind(input.salary_raw.as_deref())
+        .bind(input.posted_at.as_deref())
+        .bind(input.closes_at.as_deref())
+        .bind(input.apply_url.as_deref())
+        .bind(status.as_str())
+        .bind(&input.content_hash)
+        .bind(i64::from(input.extraction_partial))
+        .bind(input.user_rating)
+        .bind(input.user_notes_md.as_deref())
+        .bind(i64::from(input.is_archived))
+        .bind(&input.file_path)
+        .bind(&ts)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?;
+    } else {
+        sqlx::query(
+            r#"UPDATE job SET
+                company_id = ?2, slug = ?3, title = ?4, title_normalized = ?5,
+                seniority = ?6, employment_type = ?7, work_mode = ?8,
+                description_md = ?9, description_text = ?10,
+                salary_min_cents = ?11, salary_max_cents = ?12, salary_currency = ?13,
+                salary_period = ?14, salary_is_estimate = ?15, salary_raw = ?16,
+                posted_at = ?17, closes_at = ?18, apply_url = ?19, status = ?20,
+                content_hash = ?21, extraction_partial = ?22,
+                user_rating = ?23, user_notes_md = ?24, is_archived = ?25,
+                file_path = ?26, last_seen_at = ?27, updated_at = ?27, deleted_at = NULL
+              WHERE id = ?1"#,
+        )
+        .bind(input.job_id.as_str())
+        .bind(company_id.as_str())
+        .bind(&slug)
+        .bind(&input.title)
+        .bind(&title_normalized)
+        .bind(seniority.as_str())
+        .bind(employment.as_str())
+        .bind(work_mode.as_str())
+        .bind(&input.description_md)
+        .bind(&description_text)
+        .bind(parsed.as_ref().and_then(|s| s.min_cents))
+        .bind(parsed.as_ref().and_then(|s| s.max_cents))
+        .bind(parsed.as_ref().map(|s| s.currency.clone()))
+        .bind(
+            parsed
+                .as_ref()
+                .map(|s| s.period.as_str())
+                .unwrap_or("unknown"),
+        )
+        .bind(i64::from(parsed.as_ref().is_some_and(|s| s.is_estimate)))
+        .bind(input.salary_raw.as_deref())
+        .bind(input.posted_at.as_deref())
+        .bind(input.closes_at.as_deref())
+        .bind(input.apply_url.as_deref())
+        .bind(status.as_str())
+        .bind(&input.content_hash)
+        .bind(i64::from(input.extraction_partial))
+        .bind(input.user_rating)
+        .bind(input.user_notes_md.as_deref())
+        .bind(i64::from(input.is_archived))
+        .bind(&input.file_path)
+        .bind(&ts)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?;
+    }
+
+    replace_locations_from_raw(&mut tx, &input.job_id, &input.locations).await?;
+    replace_requirements_from_file(&mut tx, &input.job_id, &input.requirements).await?;
+    tx.commit().await.map_err(db_err)?;
+    crate::repo::job::reindex_fts(db, &input.job_id).await?;
+    Ok((input.job_id.clone(), created))
+}
+
+async fn replace_locations_from_raw(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    job_id: &JobId,
+    locations: &[String],
+) -> Result<()> {
+    sqlx::query("DELETE FROM job_location WHERE job_id = ?1")
+        .bind(job_id.as_str())
+        .execute(&mut **tx)
+        .await
+        .map_err(db_err)?;
+    for (ordinal, raw) in locations.iter().enumerate() {
+        if raw.trim().is_empty() {
+            continue;
+        }
+        let parsed = parse_location(&jobseeker_core::domain::location::RawLocation::new(
+            raw.as_str(),
+        ));
+        let (city, region, country, remote) = match parsed {
+            Some(p) => (p.city, p.region, p.country, p.is_remote_scope),
+            None => (None, None, None, false),
+        };
+        let id = uuid::Uuid::now_v7().to_string();
+        sqlx::query(
+            r#"INSERT INTO job_location
+                (id, job_id, raw, city, region, country, is_primary, is_remote_scope, ordinal)
+               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"#,
+        )
+        .bind(&id)
+        .bind(job_id.as_str())
+        .bind(raw)
+        .bind(city)
+        .bind(region)
+        .bind(country)
+        .bind(i64::from(ordinal == 0))
+        .bind(i64::from(remote))
+        .bind(ordinal as i64)
+        .execute(&mut **tx)
+        .await
+        .map_err(db_err)?;
+    }
+    Ok(())
+}
+
+async fn replace_requirements_from_file(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    job_id: &JobId,
+    requirements: &[FileReqWrite],
+) -> Result<()> {
+    sqlx::query("DELETE FROM requirement WHERE job_id = ?1")
+        .bind(job_id.as_str())
+        .execute(&mut **tx)
+        .await
+        .map_err(db_err)?;
+    let ts = to_rfc3339(&now());
+    let mut seen = std::collections::HashSet::new();
+    for (ordinal, req) in requirements.iter().enumerate() {
+        if req.normalized_text.is_empty() || !seen.insert(req.normalized_text.clone()) {
+            continue;
+        }
+        let id = match &req.id {
+            Some(id) => id.clone(),
+            None => RequirementId::new(),
+        };
+        sqlx::query(
+            r#"INSERT INTO requirement (
+                id, job_id, ordinal, text, normalized_text, kind, necessity,
+                min_years, is_blocker, confidence, provenance, created_at, updated_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0.6, 'rules', ?10, ?10)"#,
+        )
+        .bind(id.as_str())
+        .bind(job_id.as_str())
+        .bind(ordinal as i64)
+        .bind(&req.text)
+        .bind(&req.normalized_text)
+        .bind(&req.kind)
+        .bind(&req.necessity)
+        .bind(req.min_years)
+        .bind(i64::from(req.is_blocker))
+        .bind(&ts)
+        .execute(&mut **tx)
+        .await
+        .map_err(db_err)?;
+    }
+    Ok(())
+}
+
 /// Record the materialized file directory on the job row.
 pub async fn set_file_path(db: &Db, job_id: &JobId, file_path: &str) -> Result<()> {
     sqlx::query("UPDATE job SET file_path = ?1, updated_at = ?2 WHERE id = ?3")
