@@ -275,6 +275,15 @@ pub struct ReconcileRow {
     pub file_path: Option<String>,
 }
 
+pub async fn list_ids(db: &Db) -> Result<Vec<jobseeker_core::ids::JobId>> {
+    let rows: Vec<String> =
+        sqlx::query_scalar("SELECT id FROM job WHERE deleted_at IS NULL ORDER BY id")
+            .fetch_all(db.reader())
+            .await
+            .map_err(db_err)?;
+    rows.into_iter().map(|s| s.parse()).collect()
+}
+
 pub async fn list_reconcile_rows(db: &Db) -> Result<Vec<ReconcileRow>> {
     let rows = sqlx::query(
         "SELECT id, title, content_hash, file_path FROM job WHERE deleted_at IS NULL ORDER BY id",

@@ -4,6 +4,8 @@
 //! deterministic. The model may rephrase; it may not invent. A bullet that introduces a
 //! fact the original did not contain is rejected (`docs/08-resume.md`).
 
+pub mod import;
+
 use jobseeker_core::domain::profile::Accomplishment;
 use jobseeker_core::domain::requirement::Requirement;
 use jobseeker_normalize::skill::extract_all;

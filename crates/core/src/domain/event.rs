@@ -23,4 +23,5 @@ impl DomainEvent {
     pub const JOB_UPDATED: &'static str = "job.updated";
     pub const MATCH_UPDATED: &'static str = "match.updated";
     pub const TASK_UPDATED: &'static str = "task.updated";
+    pub const PROFILE_UPDATED: &'static str = "profile.updated";
 }

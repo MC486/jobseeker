@@ -1,17 +1,19 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { api, JobDetail, JobListRow, MatchSummary, Me, TaskView } from "./api";
+import { api, JobDetail, JobListRow, MatchSummary, Me, Profile, TaskView } from "./api";
 import { isTaskView, subscribeEvents } from "./api/events";
 
 type Route =
   | { name: "home" }
   | { name: "jobs" }
   | { name: "job"; id: string }
-  | { name: "task"; id: string };
+  | { name: "task"; id: string }
+  | { name: "profile" };
 
 function parseRoute(): Route {
   const path = window.location.pathname.replace(/\/+$/, "") || "/";
   if (path === "/") return { name: "home" };
   if (path === "/jobs") return { name: "jobs" };
+  if (path === "/profile") return { name: "profile" };
   const job = path.match(/^\/jobs\/([^/]+)$/);
   if (job) return { name: "job", id: job[1] };
   const task = path.match(/^\/tasks\/([^/]+)$/);
@@ -45,7 +47,8 @@ export function App() {
       if (
         event.kind === "job.created" ||
         event.kind === "job.updated" ||
-        event.kind === "match.updated"
+        event.kind === "match.updated" ||
+        event.kind === "profile.updated"
       ) {
         setLive((n) => n + 1);
       }
@@ -61,6 +64,7 @@ export function App() {
           </button>
           <nav className="flex gap-4 text-sm text-zinc-400">
             <button onClick={() => navigate("/jobs")}>Jobs</button>
+            <button onClick={() => navigate("/profile")}>Profile</button>
             <a href="/openapi.json" className="hover:text-zinc-100">
               OpenAPI
             </a>
@@ -86,6 +90,9 @@ export function App() {
         )}
         {!(me?.auth_mode === "password" && !me.authenticated) && route.name === "home" && (
           <Home />
+        )}
+        {!(me?.auth_mode === "password" && !me.authenticated) && route.name === "profile" && (
+          <ProfilePage live={live} />
         )}
         {!(me?.auth_mode === "password" && !me.authenticated) && route.name === "jobs" && (
           <JobList live={live} />
@@ -486,6 +493,137 @@ function TaskPage({ id, pushed }: { id: string; pushed?: TaskView }) {
         <button className="text-indigo-300" onClick={() => navigate("/jobs")}>
           View jobs
         </button>
+      )}
+    </div>
+  );
+}
+
+function ProfilePage({ live }: { live: number }) {
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [text, setText] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .profile()
+      .then((row) => {
+        if (!cancelled) setProfile(row);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : "failed");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [live]);
+
+  async function onImport(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const report = await api.importResume(text);
+      setMessage(
+        `Imported ${report.items} items, ${report.accomplishments} accomplishments, ${report.skills} skills. Jobs are rescoring.`,
+      );
+      setProfile(await api.profile());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "import failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="space-y-8">
+      <div>
+        <h1 className="text-2xl font-semibold">Experience bank</h1>
+        <p className="mt-2 text-sm text-zinc-400">
+          Paste a Markdown evidence bank. Import replaces the default profile and rescores every
+          saved job. Nothing here is invented — only what the file already says.
+        </p>
+      </div>
+      <form onSubmit={onImport} className="space-y-3">
+        <textarea
+          className="min-h-40 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm"
+          placeholder="Paste # Name — Career Evidence Bank …"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          required
+        />
+        <button
+          disabled={busy}
+          className="rounded-lg bg-indigo-400 px-4 py-2 text-sm font-semibold text-zinc-950 disabled:opacity-50"
+        >
+          {busy ? "Importing…" : "Import Markdown"}
+        </button>
+      </form>
+      {error && <p className="text-sm text-red-300">{error}</p>}
+      {message && <p className="text-sm text-emerald-300">{message}</p>}
+      {profile && (
+        <section className="space-y-4">
+          <div>
+            <h2 className="text-xl font-semibold">{profile.full_name ?? profile.name}</h2>
+            <p className="text-sm text-zinc-400">
+              {profile.headline ?? "Default profile"}
+              {profile.location ? ` · ${profile.location}` : ""}
+              {profile.accepts_remote ? " · remote" : ""}
+              {profile.years_experience != null
+                ? ` · ${profile.years_experience.toFixed(1)}y`
+                : ""}
+              {profile.target_comp_min_cents != null
+                ? ` · ≥$${(profile.target_comp_min_cents / 100).toLocaleString()}`
+                : ""}
+            </p>
+            {profile.target_titles.length > 0 && (
+              <p className="mt-1 text-sm text-zinc-500">{profile.target_titles.join(" · ")}</p>
+            )}
+            {profile.summary_md && (
+              <p className="mt-3 text-sm text-zinc-300">{profile.summary_md}</p>
+            )}
+          </div>
+          {profile.skills.filter((s) => s.is_primary).length > 0 && (
+            <div>
+              <h3 className="text-sm font-medium text-zinc-400">Primary skills</h3>
+              <p className="mt-1 text-sm text-zinc-200">
+                {profile.skills
+                  .filter((s) => s.is_primary)
+                  .map((s) =>
+                    s.years != null ? `${s.slug} ${s.years.toFixed(1)}y` : s.slug,
+                  )
+                  .join(" · ")}
+              </p>
+            </div>
+          )}
+          <div className="space-y-5">
+            {profile.experience.map((item) => (
+              <article key={item.id}>
+                <h3 className="font-medium">
+                  {item.title ?? item.kind} — {item.org}
+                </h3>
+                <p className="text-sm text-zinc-500">
+                  {item.start_date ?? "?"}
+                  {" → "}
+                  {item.is_current ? "present" : (item.end_date ?? "?")}
+                </p>
+                <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-zinc-300">
+                  {item.accomplishments.map((acc) => (
+                    <li key={acc.id}>
+                      {acc.text}
+                      {acc.verified ? (
+                        <span className="ml-2 text-xs text-emerald-400">verified</span>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              </article>
+            ))}
+          </div>
+        </section>
       )}
     </div>
   );

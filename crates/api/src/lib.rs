@@ -163,6 +163,8 @@ pub struct PageDto<T: Serialize> {
         get_job,
         patch_job,
         get_job_match,
+        get_profile,
+        import_resume,
         get_task,
         events,
         auth_me,
@@ -176,6 +178,7 @@ pub struct PageDto<T: Serialize> {
     components(schemas(
         IngestUrlRequest,
         IngestPasteRequest,
+        ImportResumeRequest,
         Accepted,
         MetaResponse,
         PatchJobRequest,
@@ -208,6 +211,11 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/jobs", get(list_jobs))
         .route("/api/v1/jobs/{id}", get(get_job).patch(patch_job))
         .route("/api/v1/jobs/{id}/match", get(get_job_match))
+        .route("/api/v1/profiles/default", get(get_profile))
+        .route(
+            "/api/v1/profiles/default/import-resume",
+            post(import_resume),
+        )
         .route("/api/v1/tasks/{id}", get(get_task))
         .route("/api/v1/events", get(events))
         .route("/api/v1/auth/me", get(auth_me))
@@ -470,6 +478,43 @@ async fn get_job_match(
         .map_err(ApiError)?
         .ok_or(ApiError(Error::NotFound("match")))?;
     Ok(Json(score))
+}
+
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct ImportResumeRequest {
+    pub text: String,
+}
+
+#[utoipa::path(get, path = "/api/v1/profiles/default", responses((status = 200), (status = 404)))]
+async fn get_profile(
+    State(state): State<AppState>,
+) -> ApiResult<Json<jobseeker_db::repo::experience::ProfileView>> {
+    let id = jobseeker_db::repo::profile::ensure_default(&state.pipeline.db)
+        .await
+        .map_err(ApiError)?;
+    let view = jobseeker_db::repo::experience::get_view(&state.pipeline.db, &id)
+        .await
+        .map_err(ApiError)?
+        .ok_or(ApiError(Error::NotFound("profile")))?;
+    Ok(Json(view))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/profiles/default/import-resume",
+    request_body = ImportResumeRequest,
+    responses((status = 200), (status = 400))
+)]
+async fn import_resume(
+    State(state): State<AppState>,
+    Json(body): Json<ImportResumeRequest>,
+) -> ApiResult<Json<jobseeker_db::repo::experience::ImportReport>> {
+    let report = state
+        .pipeline
+        .import_resume(&body.text)
+        .await
+        .map_err(ApiError)?;
+    Ok(Json(report))
 }
 
 #[utoipa::path(get, path = "/api/v1/tasks/{id}", responses((status = 200), (status = 404)))]
@@ -1432,6 +1477,50 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(blocked.status(), StatusCode::TOO_MANY_REQUESTS);
+        std::mem::forget(dir);
+    }
+
+    #[tokio::test]
+    async fn import_resume_replaces_the_default_profile() {
+        let dir = tempfile::tempdir().unwrap();
+        let pipe = jobseeker_pipeline::for_test(dir.path().to_path_buf())
+            .await
+            .unwrap();
+        let app = router(AppState::new(pipe));
+        let md = include_str!("../../../fixtures/evidence-bank.md");
+        let res = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/profiles/default/import-resume")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::json!({ "text": md }).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let report: serde_json::Value = body_json(res).await;
+        assert!(report["accomplishments"].as_u64().unwrap() >= 5);
+
+        let got = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/profiles/default")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(got.status(), StatusCode::OK);
+        let profile: serde_json::Value = body_json(got).await;
+        assert_eq!(profile["full_name"], "Alex Rivera");
+        assert!(profile["skills"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["slug"] == "python"));
         std::mem::forget(dir);
     }
 }
