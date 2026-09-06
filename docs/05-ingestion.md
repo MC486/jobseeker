@@ -178,6 +178,12 @@ by `normalized_text`; salary conflicts create an `extraction_conflict` row (you 
 that the aggregator's "estimate" was $20k below the ATS's real band). Merges record enough
 information to be reversible (FR-A-11).
 
+**User-initiated merge (implemented).** Stages 1–3 above are still design; the server does
+not silently fold two jobs. `POST /api/v1/jobs/:id/merge {into_job_id}` and
+`jobseeker merge <from> <into>` do the union described above, require the same
+`company_id`, keep the keeper's title and description, soft-delete the donor, and write a
+tombstone `reason = merged_into:{into}`. Split is not in this slice.
+
 ## 7. Error taxonomy
 
 | Code | HTTP | Meaning | Retry |
