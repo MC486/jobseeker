@@ -7,10 +7,58 @@
 use jobseeker_core::domain::job::ExtractedJob;
 use jobseeker_normalize::requirement::AtomizedRequirement;
 use jobseeker_normalize::text::tidy_markdown;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::to_stable_json;
 use jobseeker_core::Result;
+
+/// The lossless-enough `job.json` written by materialize and read by reconcile.
+/// Extra fields are ignored so older files still load.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FileJob {
+    pub id: String,
+    pub title: String,
+    pub company: String,
+    pub status: String,
+    pub work_mode: String,
+    pub seniority: String,
+    pub employment_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub salary_raw: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub apply_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub posted_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub closes_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub locations: Vec<String>,
+    #[serde(default)]
+    pub extraction_partial: bool,
+    pub content_hash: String,
+    #[serde(default)]
+    pub description_md: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_rating: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_notes_md: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub is_archived: bool,
+}
+
+/// One row of `requirements.json`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FileRequirement {
+    pub id: String,
+    pub text: String,
+    pub normalized_text: String,
+    pub kind: String,
+    pub necessity: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_years: Option<f64>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub is_blocker: bool,
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct JobDocument {

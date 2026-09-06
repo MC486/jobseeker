@@ -266,6 +266,62 @@ enum Bind {
     Int(i64),
 }
 
+/// Identity + hash of every live job, for `reconcile --check`.
+#[derive(Debug, Clone)]
+pub struct ReconcileRow {
+    pub id: String,
+    pub title: String,
+    pub content_hash: String,
+    pub file_path: Option<String>,
+}
+
+pub async fn list_reconcile_rows(db: &Db) -> Result<Vec<ReconcileRow>> {
+    let rows = sqlx::query(
+        "SELECT id, title, content_hash, file_path FROM job WHERE deleted_at IS NULL ORDER BY id",
+    )
+    .fetch_all(db.reader())
+    .await
+    .map_err(db_err)?;
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        out.push(ReconcileRow {
+            id: row.try_get("id").map_err(db_err)?,
+            title: row.try_get("title").map_err(db_err)?,
+            content_hash: row.try_get("content_hash").map_err(db_err)?,
+            file_path: row.try_get("file_path").map_err(db_err)?,
+        });
+    }
+    Ok(out)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EntityCounts {
+    pub jobs: i64,
+    pub companies: i64,
+    pub requirements: i64,
+}
+
+pub async fn entity_counts(db: &Db) -> Result<EntityCounts> {
+    let jobs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM job WHERE deleted_at IS NULL")
+        .fetch_one(db.reader())
+        .await
+        .map_err(db_err)?;
+    let companies: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM company WHERE deleted_at IS NULL")
+            .fetch_one(db.reader())
+            .await
+            .map_err(db_err)?;
+    let requirements: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM requirement")
+        .fetch_one(db.reader())
+        .await
+        .map_err(db_err)?;
+    Ok(EntityCounts {
+        jobs,
+        companies,
+        requirements,
+    })
+}
+
 /// Count of jobs matching a status, for the dashboard facets.
 pub async fn count_by_status(db: &Db) -> Result<Vec<(String, i64)>> {
     sqlx::query_as(

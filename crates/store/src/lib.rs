@@ -14,6 +14,7 @@ use jobseeker_core::slug::slugify_max;
 use jobseeker_core::{Error, Result};
 use serde::Serialize;
 
+pub mod discover;
 pub mod jobfile;
 
 /// Atomically replace `path` with `bytes`.

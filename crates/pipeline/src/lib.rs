@@ -23,7 +23,8 @@ use jobseeker_db::Db;
 use jobseeker_extract::{extract, ExtractInput};
 use jobseeker_llm::LlmClient;
 use jobseeker_normalize::canonicalize;
-use jobseeker_store::jobfile::{self, JobDocument};
+use jobseeker_store::discover::{self, DiscoveredJob};
+use jobseeker_store::jobfile::{self, FileJob, FileRequirement, JobDocument};
 use jobseeker_store::{atomic_write, job_dir, read_blob, to_stable_json, write_blob};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -363,7 +364,23 @@ impl Pipeline {
                 Ok(())
             }
             TaskKind::ExtractJob => self.handle_extract(&task.payload).await,
-            TaskKind::MaterializeJob => self.handle_materialize(&task.payload).await,
+            TaskKind::MaterializeJob => {
+                let p: JobPayload = serde_json::from_value(task.payload.clone())?;
+                let job_id: jobseeker_core::ids::JobId = p.job_id.parse()?;
+                let rel = self.materialize_job(&job_id).await?;
+                if let Err(e) = self
+                    .emit(
+                        DomainEvent::JOB_UPDATED,
+                        "job",
+                        job_id.as_str(),
+                        json!({ "file_path": rel }),
+                    )
+                    .await
+                {
+                    tracing::warn!(error = %e, "failed to emit job.updated");
+                }
+                Ok(())
+            }
             TaskKind::ScoreMatch => self.handle_score_match(&task.payload).await,
             other => {
                 tracing::info!(kind = other.as_str(), "no handler yet; marking done");
@@ -514,10 +531,9 @@ impl Pipeline {
         Ok(())
     }
 
-    async fn handle_materialize(&self, payload: &serde_json::Value) -> Result<()> {
-        let p: JobPayload = serde_json::from_value(payload.clone())?;
-        let job_id: jobseeker_core::ids::JobId = p.job_id.parse()?;
-        let detail = jobseeker_db::repo::job::get(&self.db, &job_id)
+    /// Write `job.md` / `job.json` / `requirements.json` for one job.
+    pub async fn materialize_job(&self, job_id: &jobseeker_core::ids::JobId) -> Result<String> {
+        let detail = jobseeker_db::repo::job::get(&self.db, job_id)
             .await?
             .ok_or(Error::NotFound("job"))?;
         let company = company::get(&self.db, &detail.company_id.parse()?)
@@ -533,7 +549,7 @@ impl Pipeline {
             &company.slug,
             posted.as_deref(),
             &detail.title,
-            &job_id,
+            job_id,
         );
 
         let salary = match (
@@ -582,41 +598,45 @@ impl Pipeline {
         let md = jobfile::render_markdown(&doc, &detail.description_md, &atoms);
         atomic_write(&dir.join("job.md"), md.as_bytes())?;
 
-        let job_json = json!({
-            "id": detail.id,
-            "title": detail.title,
-            "company": company.name,
-            "status": detail.status,
-            "work_mode": detail.work_mode,
-            "seniority": detail.seniority,
-            "employment_type": detail.employment_type,
-            "salary_raw": detail.salary_raw,
-            "apply_url": detail.apply_url,
-            "posted_at": detail.posted_at,
-            "locations": detail.locations,
-            "extraction_partial": detail.extraction_partial,
-            "content_hash": detail.content_hash,
-        });
-        atomic_write(&dir.join("job.json"), &to_stable_json(&job_json)?)?;
-        atomic_write(
-            &dir.join("requirements.json"),
-            &to_stable_json(&detail.requirements)?,
-        )?;
+        let file_job = FileJob {
+            id: detail.id.clone(),
+            title: detail.title.clone(),
+            company: company.name.clone(),
+            status: detail.status.clone(),
+            work_mode: detail.work_mode.clone(),
+            seniority: detail.seniority.clone(),
+            employment_type: detail.employment_type.clone(),
+            salary_raw: detail.salary_raw.clone(),
+            apply_url: detail.apply_url.clone(),
+            posted_at: detail.posted_at.clone(),
+            closes_at: detail.closes_at.clone(),
+            locations: detail.locations.clone(),
+            extraction_partial: detail.extraction_partial,
+            content_hash: detail.content_hash.clone(),
+            description_md: detail.description_md.clone(),
+            user_rating: detail.user_rating,
+            user_notes_md: detail.user_notes_md.clone(),
+            is_archived: detail.is_archived,
+        };
+        atomic_write(&dir.join("job.json"), &to_stable_json(&file_job)?)?;
+        let reqs: Vec<FileRequirement> = detail
+            .requirements
+            .iter()
+            .map(|r| FileRequirement {
+                id: r.id.clone(),
+                text: r.text.clone(),
+                normalized_text: r.normalized_text.clone(),
+                kind: r.kind.clone(),
+                necessity: r.necessity.clone(),
+                min_years: r.min_years,
+                is_blocker: r.is_blocker,
+            })
+            .collect();
+        atomic_write(&dir.join("requirements.json"), &to_stable_json(&reqs)?)?;
 
         let rel = relative_path(self.data_dir(), &dir);
-        persist::set_file_path(&self.db, &job_id, &rel).await?;
-        if let Err(e) = self
-            .emit(
-                DomainEvent::JOB_UPDATED,
-                "job",
-                job_id.as_str(),
-                json!({ "file_path": rel }),
-            )
-            .await
-        {
-            tracing::warn!(error = %e, "failed to emit job.updated");
-        }
-        Ok(())
+        persist::set_file_path(&self.db, job_id, &rel).await?;
+        Ok(rel)
     }
 
     async fn handle_score_match(&self, payload: &serde_json::Value) -> Result<()> {
@@ -683,6 +703,139 @@ impl Pipeline {
         }
         Ok(())
     }
+
+    /// Compare the database to `jobs/**/job.json`. Changes nothing.
+    pub async fn reconcile_check(&self) -> Result<ReconcileReport> {
+        let files = discover::discover_jobs(self.data_dir())?;
+        let db_rows = jobseeker_db::repo::job::list_reconcile_rows(&self.db).await?;
+        Ok(diff_reconcile(&db_rows, &files))
+    }
+
+    /// Rewrite every job's files from the database.
+    pub async fn reconcile_to_files(&self) -> Result<ReconcileReport> {
+        let db_rows = jobseeker_db::repo::job::list_reconcile_rows(&self.db).await?;
+        let mut written = 0u32;
+        for row in &db_rows {
+            let id: jobseeker_core::ids::JobId = row.id.parse()?;
+            self.materialize_job(&id).await?;
+            written += 1;
+        }
+        let mut report = self.reconcile_check().await?;
+        report.written = written;
+        Ok(report)
+    }
+
+    /// Upsert jobs from `jobs/**/job.json`. Tombstoned ids are skipped (FR-S-07).
+    pub async fn reconcile_from_files(&self) -> Result<ReconcileReport> {
+        let files = discover::discover_jobs(self.data_dir())?;
+        let mut restored = 0u32;
+        let mut skipped_tombstone = 0u32;
+        for discovered in &files {
+            if persist::is_tombstoned(&self.db, "job", &discovered.job.id).await? {
+                skipped_tombstone += 1;
+                continue;
+            }
+            let write = file_job_write(discovered)?;
+            persist::upsert_from_file(&self.db, &write).await?;
+            restored += 1;
+        }
+        let mut report = self.reconcile_check().await?;
+        report.restored = restored;
+        report.skipped_tombstone = skipped_tombstone;
+        Ok(report)
+    }
+}
+
+/// What `reconcile --check` prints: which side is missing a job, and whose hash drifted.
+#[derive(Debug, Clone, Default)]
+pub struct ReconcileReport {
+    pub db_jobs: u32,
+    pub file_jobs: u32,
+    pub written: u32,
+    pub restored: u32,
+    pub skipped_tombstone: u32,
+    pub db_only: Vec<String>,
+    pub file_only: Vec<String>,
+    pub divergent: Vec<String>,
+}
+
+impl ReconcileReport {
+    pub fn is_clean(&self) -> bool {
+        self.db_only.is_empty() && self.file_only.is_empty() && self.divergent.is_empty()
+    }
+}
+
+fn diff_reconcile(
+    db_rows: &[jobseeker_db::repo::job::ReconcileRow],
+    files: &[DiscoveredJob],
+) -> ReconcileReport {
+    use std::collections::BTreeMap;
+    let db_map: BTreeMap<&str, &jobseeker_db::repo::job::ReconcileRow> =
+        db_rows.iter().map(|r| (r.id.as_str(), r)).collect();
+    let file_map: BTreeMap<&str, &DiscoveredJob> =
+        files.iter().map(|f| (f.job.id.as_str(), f)).collect();
+    let mut report = ReconcileReport {
+        db_jobs: db_rows.len() as u32,
+        file_jobs: files.len() as u32,
+        ..Default::default()
+    };
+    for (id, row) in &db_map {
+        match file_map.get(id) {
+            None => report.db_only.push((*id).to_string()),
+            Some(file) => {
+                let hash_drift = file.job.content_hash != row.content_hash;
+                let title_drift = file.job.title != row.title;
+                if hash_drift || title_drift {
+                    report.divergent.push((*id).to_string());
+                }
+            }
+        }
+    }
+    for id in file_map.keys() {
+        if !db_map.contains_key(id) {
+            report.file_only.push((*id).to_string());
+        }
+    }
+    report
+}
+
+fn file_job_write(discovered: &DiscoveredJob) -> Result<persist::FileJobWrite> {
+    let job_id: jobseeker_core::ids::JobId = discovered.job.id.parse()?;
+    let requirements = discovered
+        .requirements
+        .iter()
+        .map(|r| persist::FileReqWrite {
+            id: r.id.parse().ok(),
+            text: r.text.clone(),
+            normalized_text: r.normalized_text.clone(),
+            kind: r.kind.clone(),
+            necessity: r.necessity.clone(),
+            min_years: r.min_years,
+            is_blocker: r.is_blocker,
+        })
+        .collect();
+    Ok(persist::FileJobWrite {
+        job_id,
+        company_name: discovered.job.company.clone(),
+        title: discovered.job.title.clone(),
+        status: discovered.job.status.clone(),
+        work_mode: discovered.job.work_mode.clone(),
+        seniority: discovered.job.seniority.clone(),
+        employment_type: discovered.job.employment_type.clone(),
+        salary_raw: discovered.job.salary_raw.clone(),
+        apply_url: discovered.job.apply_url.clone(),
+        posted_at: discovered.job.posted_at.clone(),
+        closes_at: discovered.job.closes_at.clone(),
+        locations: discovered.job.locations.clone(),
+        extraction_partial: discovered.job.extraction_partial,
+        content_hash: discovered.job.content_hash.clone(),
+        description_md: discovered.job.description_md.clone(),
+        user_rating: discovered.job.user_rating,
+        user_notes_md: discovered.job.user_notes_md.clone(),
+        is_archived: discovered.job.is_archived,
+        file_path: discovered.rel_dir.clone(),
+        requirements,
+    })
 }
 
 fn relative_path(root: &Path, path: &Path) -> String {
@@ -834,5 +987,122 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(page.items.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn reconcile_check_is_clean_after_the_spine() {
+        let dir = tempfile::tempdir().unwrap();
+        let pipe = for_test(dir.path().to_path_buf()).await.unwrap();
+        pipe.ingest_paste(GREENHOUSE_HTML, None).await.unwrap();
+        pipe.drain().await.unwrap();
+        let report = pipe.reconcile_check().await.unwrap();
+        assert!(
+            report.is_clean(),
+            "fresh materialize must not drift: db_only={:?} file_only={:?} divergent={:?}",
+            report.db_only,
+            report.file_only,
+            report.divergent
+        );
+        assert_eq!(report.db_jobs, 1);
+        assert_eq!(report.file_jobs, 1);
+    }
+
+    #[tokio::test]
+    async fn reconcile_from_files_rebuilds_after_the_db_is_deleted() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().to_path_buf();
+        let pipe = for_test(data.clone()).await.unwrap();
+        pipe.ingest_paste(GREENHOUSE_HTML, None).await.unwrap();
+        pipe.drain().await.unwrap();
+        let before = jobseeker_db::repo::job::entity_counts(&pipe.db)
+            .await
+            .unwrap();
+        let before_hash = jobseeker_db::repo::job::list_reconcile_rows(&pipe.db)
+            .await
+            .unwrap()[0]
+            .content_hash
+            .clone();
+        pipe.db.close().await;
+        drop(pipe);
+
+        for name in ["jobseeker.db", "jobseeker.db-wal", "jobseeker.db-shm"] {
+            let _ = std::fs::remove_file(data.join(name));
+        }
+        assert!(
+            discover::discover_jobs(&data).unwrap().len() == 1,
+            "files must survive deleting the database"
+        );
+
+        let pipe = for_test(data).await.unwrap();
+        let report = pipe.reconcile_from_files().await.unwrap();
+        assert!(
+            report.is_clean(),
+            "rebuild must match files: db_only={:?} file_only={:?} divergent={:?}",
+            report.db_only,
+            report.file_only,
+            report.divergent
+        );
+        assert_eq!(report.restored, 1);
+        let after = jobseeker_db::repo::job::entity_counts(&pipe.db)
+            .await
+            .unwrap();
+        assert_eq!(after.jobs, before.jobs);
+        assert_eq!(after.requirements, before.requirements);
+        assert!(after.companies >= 1);
+        let after_hash = jobseeker_db::repo::job::list_reconcile_rows(&pipe.db)
+            .await
+            .unwrap()[0]
+            .content_hash
+            .clone();
+        assert_eq!(after_hash, before_hash);
+    }
+
+    #[tokio::test]
+    async fn reconcile_check_reports_a_divergent_hash() {
+        let dir = tempfile::tempdir().unwrap();
+        let pipe = for_test(dir.path().to_path_buf()).await.unwrap();
+        pipe.ingest_paste(GREENHOUSE_HTML, None).await.unwrap();
+        pipe.drain().await.unwrap();
+        let files = discover::discover_jobs(dir.path()).unwrap();
+        let json_path = files[0].abs_dir.join("job.json");
+        let mut job: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&json_path).unwrap()).unwrap();
+        job["content_hash"] = serde_json::json!("b3:drifted");
+        std::fs::write(&json_path, serde_json::to_string_pretty(&job).unwrap()).unwrap();
+        let report = pipe.reconcile_check().await.unwrap();
+        assert_eq!(report.divergent.len(), 1, "{report:?}");
+        assert!(!report.is_clean());
+    }
+
+    #[tokio::test]
+    async fn reconcile_from_files_skips_tombstoned_jobs() {
+        let dir = tempfile::tempdir().unwrap();
+        let pipe = for_test(dir.path().to_path_buf()).await.unwrap();
+        pipe.ingest_paste(GREENHOUSE_HTML, None).await.unwrap();
+        pipe.drain().await.unwrap();
+        let id = jobseeker_db::repo::job::list_reconcile_rows(&pipe.db)
+            .await
+            .unwrap()[0]
+            .id
+            .clone();
+        persist::record_tombstone(&pipe.db, "job", &id)
+            .await
+            .unwrap();
+
+        let files = discover::discover_jobs(dir.path()).unwrap();
+        let json_path = files[0].abs_dir.join("job.json");
+        let mut job: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&json_path).unwrap()).unwrap();
+        job["content_hash"] = serde_json::json!("b3:should-not-apply");
+        std::fs::write(&json_path, serde_json::to_string_pretty(&job).unwrap()).unwrap();
+
+        let report = pipe.reconcile_from_files().await.unwrap();
+        assert_eq!(report.skipped_tombstone, 1);
+        assert_eq!(report.restored, 0);
+        assert_eq!(
+            report.divergent.len(),
+            1,
+            "tombstoned files must not overwrite the database"
+        );
     }
 }
