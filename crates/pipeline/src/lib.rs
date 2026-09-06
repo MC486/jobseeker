@@ -760,6 +760,44 @@ impl Pipeline {
         Ok(report)
     }
 
+    /// User-initiated cross-post merge. `from` is soft-deleted; `into` keeps its
+    /// title and description. Same company required. Then rescore the keeper.
+    pub async fn merge_jobs(
+        &self,
+        from: &jobseeker_core::ids::JobId,
+        into: &jobseeker_core::ids::JobId,
+    ) -> Result<jobseeker_db::repo::job::MergeReport> {
+        let report = jobseeker_db::repo::job::merge(&self.db, from, into).await?;
+        if let Err(e) = self
+            .handle_score_match(&json!({ "job_id": into.as_str() }))
+            .await
+        {
+            tracing::warn!(error = %e, "rescore after merge failed");
+        }
+        let _ = self
+            .emit(
+                DomainEvent::JOB_UPDATED,
+                "job",
+                into.as_str(),
+                json!({
+                    "source": "merge",
+                    "merged_from": from.as_str(),
+                    "listings_moved": report.listings_moved,
+                    "requirements_added": report.requirements_added,
+                }),
+            )
+            .await;
+        let _ = self
+            .emit(
+                DomainEvent::JOB_UPDATED,
+                "job",
+                from.as_str(),
+                json!({ "source": "merge", "merged_into": into.as_str() }),
+            )
+            .await;
+        Ok(report)
+    }
+
     async fn materialize_profile(&self, profile_id: &jobseeker_core::ids::ProfileId) -> Result<()> {
         let Some(view) = experience::get_view(&self.db, profile_id).await? else {
             return Ok(());

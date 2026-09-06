@@ -163,6 +163,7 @@ pub struct PageDto<T: Serialize> {
         get_job,
         patch_job,
         get_job_match,
+        merge_job,
         get_profile,
         import_resume,
         get_task,
@@ -182,6 +183,7 @@ pub struct PageDto<T: Serialize> {
         Accepted,
         MetaResponse,
         PatchJobRequest,
+        MergeJobRequest,
         PairRequest,
         LoginRequest,
         CreateTokenRequest,
@@ -211,6 +213,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/jobs", get(list_jobs))
         .route("/api/v1/jobs/{id}", get(get_job).patch(patch_job))
         .route("/api/v1/jobs/{id}/match", get(get_job_match))
+        .route("/api/v1/jobs/{id}/merge", post(merge_job))
         .route("/api/v1/profiles/default", get(get_profile))
         .route(
             "/api/v1/profiles/default/import-resume",
@@ -478,6 +481,27 @@ async fn get_job_match(
         .map_err(ApiError)?
         .ok_or(ApiError(Error::NotFound("match")))?;
     Ok(Json(score))
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct MergeJobRequest {
+    pub into_job_id: String,
+}
+
+#[utoipa::path(post, path = "/api/v1/jobs/{id}/merge", request_body = MergeJobRequest, responses((status = 200), (status = 400), (status = 404)))]
+async fn merge_job(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<MergeJobRequest>,
+) -> ApiResult<Json<jobseeker_db::repo::job::MergeReport>> {
+    let from: JobId = id.parse().map_err(ApiError)?;
+    let into: JobId = body.into_job_id.parse().map_err(ApiError)?;
+    let report = state
+        .pipeline
+        .merge_jobs(&from, &into)
+        .await
+        .map_err(ApiError)?;
+    Ok(Json(report))
 }
 
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
@@ -1048,6 +1072,10 @@ mod tests {
             spec["paths"]["/api/v1/events"].is_object(),
             "OpenAPI must document GET /api/v1/events"
         );
+        assert!(
+            spec["paths"]["/api/v1/jobs/{id}/merge"].is_object(),
+            "OpenAPI must document POST /api/v1/jobs/{{id}}/merge"
+        );
     }
 
     #[tokio::test]
@@ -1525,6 +1553,134 @@ mod tests {
             .unwrap()
             .iter()
             .any(|s| s["slug"] == "python"));
+        std::mem::forget(dir);
+    }
+
+    #[tokio::test]
+    async fn merge_same_company_jobs_via_api() {
+        let dir = tempfile::tempdir().unwrap();
+        let pipe = jobseeker_pipeline::for_test(dir.path().to_path_buf())
+            .await
+            .unwrap();
+        let fuller = r#"<html><head><script type="application/ld+json">{"@type":"JobPosting","title":"Data Scientist","hiringOrganization":{"name":"Zillow"},"description":"<ul><li>5+ years data science</li><li>Python</li><li>SQL</li></ul>"}</script></head></html>"#;
+        let thinner = r#"<html><head><script type="application/ld+json">{"@type":"JobPosting","title":"Platform Engineer","hiringOrganization":{"name":"Zillow"},"description":"<ul><li>Python</li></ul>"}</script></head></html>"#;
+        pipe.ingest_paste(
+            fuller,
+            Some("https://boards.greenhouse.io/zillow/jobs/1"),
+        )
+        .await
+        .unwrap();
+        pipe.drain().await.unwrap();
+        pipe.ingest_paste(
+            thinner,
+            Some("https://boards.greenhouse.io/zillow/jobs/2"),
+        )
+        .await
+        .unwrap();
+        pipe.drain().await.unwrap();
+
+        let page =
+            jobseeker_db::repo::job::list(&pipe.db, &jobseeker_db::repo::job::JobFilter::default())
+                .await
+                .unwrap();
+        assert_eq!(page.items.len(), 2, "cross-posts stay visible until merge");
+        let into = page
+            .items
+            .iter()
+            .find(|row| row.title == "Data Scientist")
+            .expect("fuller posting")
+            .id
+            .clone();
+        let from = page
+            .items
+            .iter()
+            .find(|row| row.title == "Platform Engineer")
+            .expect("thinner posting")
+            .id
+            .clone();
+
+        let app = router(AppState::new(pipe.clone()));
+        let res = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/v1/jobs/{from}/merge"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "into_job_id": into }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let report: serde_json::Value = body_json(res).await;
+        assert_eq!(report["into_id"], into);
+        assert!(report["listings_moved"].as_u64().unwrap() >= 1);
+
+        let after =
+            jobseeker_db::repo::job::list(&pipe.db, &jobseeker_db::repo::job::JobFilter::default())
+                .await
+                .unwrap();
+        assert_eq!(after.items.len(), 1);
+        assert_eq!(after.items[0].id, into);
+
+        let kept = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/jobs/{into}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(kept.status(), StatusCode::OK);
+        let detail: serde_json::Value = body_json(kept).await;
+        assert!(detail["listings"].as_array().unwrap().len() >= 2);
+        std::mem::forget(dir);
+    }
+
+    #[tokio::test]
+    async fn merge_refuses_different_companies_via_api() {
+        let dir = tempfile::tempdir().unwrap();
+        let pipe = jobseeker_pipeline::for_test(dir.path().to_path_buf())
+            .await
+            .unwrap();
+        let zillow = r#"<html><head><script type="application/ld+json">{"@type":"JobPosting","title":"Data Scientist","hiringOrganization":{"name":"Zillow"},"description":"<p>Python</p>"}</script></head></html>"#;
+        let harbor = r#"<html><head><script type="application/ld+json">{"@type":"JobPosting","title":"Applied Scientist","hiringOrganization":{"name":"Harbor"},"description":"<p>Python</p>"}</script></head></html>"#;
+        pipe.ingest_paste(zillow, Some("https://boards.greenhouse.io/zillow/jobs/1"))
+            .await
+            .unwrap();
+        pipe.drain().await.unwrap();
+        pipe.ingest_paste(harbor, Some("https://boards.greenhouse.io/harbor/jobs/1"))
+            .await
+            .unwrap();
+        pipe.drain().await.unwrap();
+
+        let page =
+            jobseeker_db::repo::job::list(&pipe.db, &jobseeker_db::repo::job::JobFilter::default())
+                .await
+                .unwrap();
+        assert_eq!(page.items.len(), 2);
+        let from = page.items[0].id.clone();
+        let into = page.items[1].id.clone();
+
+        let app = router(AppState::new(pipe));
+        let res = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/v1/jobs/{from}/merge"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "into_job_id": into }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
         std::mem::forget(dir);
     }
 }

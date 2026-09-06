@@ -1,4 +1,4 @@
-//! Process entrypoint: `jobseeker serve`, `add`, `list`, `show`, `migrate`, `openapi`, `reconcile`, `profile`.
+//! Process entrypoint: `jobseeker serve`, `add`, `list`, `show`, `merge`, `migrate`, `openapi`, `reconcile`, `profile`.
 
 use std::io::{self, Read};
 use std::path::PathBuf;
@@ -54,6 +54,13 @@ enum Command {
     },
     /// Show one job by id.
     Show { id: String },
+    /// Merge a cross-post into another job of the same company.
+    Merge {
+        /// Job to absorb (soft-deleted).
+        from: String,
+        /// Job that keeps its title and description.
+        into: String,
+    },
     /// Pair a browser extension: print a one-time code, or emit a device token.
     Pair {
         /// Label stored with the token, e.g. "Firefox on laptop".
@@ -230,6 +237,16 @@ async fn main() -> Result<()> {
             if let Some(c) = page.next_cursor {
                 println!("next_cursor={c}");
             }
+        }
+        Command::Merge { from, into } => {
+            let pipeline = Pipeline::open(config).await?;
+            let from: jobseeker_core::ids::JobId = from.parse()?;
+            let into: jobseeker_core::ids::JobId = into.parse()?;
+            let report = pipeline.merge_jobs(&from, &into).await?;
+            println!(
+                "merged {} into {}  listings_moved={}  requirements_added={}",
+                report.from_id, report.into_id, report.listings_moved, report.requirements_added
+            );
         }
         Command::Show { id } => {
             let pipeline = Pipeline::open(config).await?;

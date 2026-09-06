@@ -46,6 +46,7 @@ export type JobDetail = {
   extraction_partial: boolean;
   locations: string[];
   requirements: RequirementRow[];
+  listings?: { id: string; url: string; source: string; is_canonical: boolean }[];
   user_rating: number | null;
   user_notes_md: string | null;
   is_archived: boolean;
@@ -191,6 +192,11 @@ export const api = {
   jobMatch: (id: string) => request<MatchSummary>(`/api/v1/jobs/${id}/match`),
   patchJob: (id: string, body: JobPatch) =>
     request<JobDetail>(`/api/v1/jobs/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  mergeJob: (from: string, into: string) =>
+    request<{ from_id: string; into_id: string; listings_moved: number; requirements_added: number }>(
+      `/api/v1/jobs/${from}/merge`,
+      { method: "POST", body: JSON.stringify({ into_job_id: into }) },
+    ),
   task: (id: string) => request<TaskView>(`/api/v1/tasks/${id}`),
   ingestUrl: (url: string) =>
     request<Accepted>("/api/v1/ingest/url", { method: "POST", body: JSON.stringify({ url }) }),

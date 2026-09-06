@@ -16,7 +16,7 @@ pair with a hashed, ingest-scoped device token.
 - Field provenance rows; PATCH `/api/v1/jobs/{id}` is sticky `manual`
 - HTTP API: health, ready, meta, ingest, jobs, match, tasks, OpenAPI, SPA fallback
 - Auth: pairing tokens, plus password sessions (`jobseeker user set-password`)
-- CLI: `serve`, `migrate`, `add`, `list`, `show`, `pair`, `user set-password`,
+- CLI: `serve`, `migrate`, `add`, `list`, `show`, `merge`, `pair`, `user set-password`,
   `profile import|show`, `reconcile`, `openapi`
 - React/Vite/Tailwind shell in `web/` (score + confidence dots)
 - MV3 extension with pairing in `extension/`
@@ -24,10 +24,22 @@ pair with a hashed, ingest-scoped device token.
 
 ## Do next (M0 remaining → M1)
 
-1. **File-based routes + virtualized job table.** Compare is in. Next is
+1. **File-based routes + virtualized job table.** Merge is in. Next is
    file-based routes and TanStack Table.
 
 ## Just shipped
+
+- **Merge.** User-initiated only. `POST /api/v1/jobs/:id/merge {into_job_id}`
+  (`:id` is the donor) and `jobseeker merge <from> <into>` absorb a cross-post
+  into another job of the **same company**. Listings move onto the keeper;
+  `attach_to_job` re-picks the highest-fidelity source as canonical (Workday
+  beats LinkedIn). Requirements union by `normalized_text`; locations union by
+  `raw`; empty `apply_url` / salary copy onto the keeper; conflicting salary
+  bands become an unresolved `extraction_conflict`. The donor is soft-deleted
+  and tombstoned `merged_into:{into}`. The keeper is rescored in-process.
+  Compare shows merge actions when two columns share a company — keep the
+  fuller ATS posting. Split is still later (FR-A-11). Silent auto-merge is
+  not this slice.
 
 - **Compare.** `/jobs/compare?ids=` lines 2–4 jobs up: location, mode, comp,
   Overall / Skills / Years / Required / Preferred / Seniority / Comp /

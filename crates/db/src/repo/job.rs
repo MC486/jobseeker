@@ -4,7 +4,7 @@
 //! pagination is keyset-based, and the projection is only what a table row renders.
 
 use jobseeker_core::domain::enums::{JobStatus, Seniority, WorkMode};
-use jobseeker_core::ids::{CompanyId, JobId};
+use jobseeker_core::ids::{CompanyId, JobId, ListingId};
 use jobseeker_core::Result;
 use sqlx::Row;
 
@@ -539,8 +539,26 @@ pub struct JobDetail {
     pub user_rating: Option<i64>,
     pub user_notes_md: Option<String>,
     pub is_archived: bool,
+    #[serde(default)]
+    pub listings: Vec<ListingBrief>,
     pub provenance: Vec<FieldProvenanceRow>,
     pub updated_at: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ListingBrief {
+    pub id: String,
+    pub url: String,
+    pub source: String,
+    pub is_canonical: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct MergeReport {
+    pub from_id: String,
+    pub into_id: String,
+    pub listings_moved: u64,
+    pub requirements_added: u64,
 }
 
 pub async fn get(db: &Db, id: &JobId) -> Result<Option<JobDetail>> {
@@ -623,6 +641,7 @@ pub async fn get(db: &Db, id: &JobId) -> Result<Option<JobDetail>> {
         extraction_model: row.try_get("extraction_model").map_err(db_err)?,
         locations,
         requirements,
+        listings: load_listings(db, id).await?,
         requires_clearance: row.try_get("requires_clearance").map_err(db_err)?,
         user_rating: row.try_get("user_rating").map_err(db_err)?,
         user_notes_md: row.try_get("user_notes_md").map_err(db_err)?,
@@ -630,6 +649,245 @@ pub async fn get(db: &Db, id: &JobId) -> Result<Option<JobDetail>> {
         provenance: load_provenance(db, id).await?,
         updated_at: row.try_get("updated_at").map_err(db_err)?,
     }))
+}
+
+async fn load_listings(db: &Db, id: &JobId) -> Result<Vec<ListingBrief>> {
+    let rows = sqlx::query(
+        "SELECT l.id, l.url, l.is_canonical, s.kind
+           FROM job_source_listing l
+           JOIN source s ON s.id = l.source_id
+          WHERE l.job_id = ?1
+          ORDER BY l.is_canonical DESC, s.fidelity DESC, l.first_seen_at ASC",
+    )
+    .bind(id.as_str())
+    .fetch_all(db.reader())
+    .await
+    .map_err(db_err)?;
+    let mut out = Vec::with_capacity(rows.len());
+    for r in rows {
+        out.push(ListingBrief {
+            id: r.try_get("id").map_err(db_err)?,
+            url: r.try_get("url").map_err(db_err)?,
+            source: r.try_get("kind").map_err(db_err)?,
+            is_canonical: r.try_get::<i64, _>("is_canonical").map_err(db_err)? != 0,
+        });
+    }
+    Ok(out)
+}
+
+/// Attach `from`'s listings onto `into`, union requirements by normalized text,
+/// then soft-delete `from`. The keeper (`into`) keeps its title and description.
+/// User-initiated — never silent. Same company required.
+pub async fn merge(db: &Db, from: &JobId, into: &JobId) -> Result<MergeReport> {
+    if from == into {
+        return Err(jobseeker_core::Error::BadRequest(
+            "cannot merge a job into itself".into(),
+        ));
+    }
+    let from_row = get(db, from)
+        .await?
+        .ok_or(jobseeker_core::Error::NotFound("job"))?;
+    let into_row = get(db, into)
+        .await?
+        .ok_or(jobseeker_core::Error::NotFound("job"))?;
+    if from_row.company_id != into_row.company_id {
+        return Err(jobseeker_core::Error::BadRequest(
+            "merge requires the same company".into(),
+        ));
+    }
+
+    let listing_ids: Vec<String> = sqlx::query_scalar(
+        "SELECT id FROM job_source_listing WHERE job_id = ?1",
+    )
+    .bind(from.as_str())
+    .fetch_all(db.reader())
+    .await
+    .map_err(db_err)?;
+
+    let mut listings_moved = 0u64;
+    for lid in &listing_ids {
+        let listing_id: ListingId = lid.parse()?;
+        crate::repo::listing::attach_to_job(db, &listing_id, into).await?;
+        listings_moved += 1;
+    }
+
+    let existing_norm: Vec<String> = sqlx::query_scalar(
+        "SELECT normalized_text FROM requirement WHERE job_id = ?1",
+    )
+    .bind(into.as_str())
+    .fetch_all(db.reader())
+    .await
+    .map_err(db_err)?;
+    let existing: std::collections::HashSet<String> = existing_norm.into_iter().collect();
+    let donor_reqs = sqlx::query(
+        "SELECT text, normalized_text, kind, necessity, min_years, is_blocker, confidence, provenance
+           FROM requirement WHERE job_id = ?1 ORDER BY ordinal ASC",
+    )
+    .bind(from.as_str())
+    .fetch_all(db.reader())
+    .await
+    .map_err(db_err)?;
+    let mut next_ord: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(MAX(ordinal), -1) + 1 FROM requirement WHERE job_id = ?1",
+    )
+    .bind(into.as_str())
+    .fetch_one(db.reader())
+    .await
+    .map_err(db_err)?;
+    let ts = jobseeker_core::time::to_rfc3339(&jobseeker_core::time::now());
+    let mut requirements_added = 0u64;
+    for r in donor_reqs {
+        let norm: String = r.try_get("normalized_text").map_err(db_err)?;
+        if existing.contains(&norm) {
+            continue;
+        }
+        let rid = uuid::Uuid::now_v7().to_string();
+        sqlx::query(
+            "INSERT INTO requirement (id, job_id, text, normalized_text, kind, necessity,
+                                      min_years, is_blocker, ordinal, confidence, provenance,
+                                      created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12)",
+        )
+        .bind(&rid)
+        .bind(into.as_str())
+        .bind(r.try_get::<String, _>("text").map_err(db_err)?)
+        .bind(&norm)
+        .bind(r.try_get::<String, _>("kind").map_err(db_err)?)
+        .bind(r.try_get::<String, _>("necessity").map_err(db_err)?)
+        .bind(r.try_get::<Option<f64>, _>("min_years").map_err(db_err)?)
+        .bind(r.try_get::<i64, _>("is_blocker").map_err(db_err)?)
+        .bind(next_ord)
+        .bind(r.try_get::<f64, _>("confidence").unwrap_or(0.5))
+        .bind(r.try_get::<String, _>("provenance").unwrap_or_else(|_| "rules".into()))
+        .bind(&ts)
+        .execute(db.writer())
+        .await
+        .map_err(db_err)?;
+        next_ord += 1;
+        requirements_added += 1;
+    }
+
+    let into_locs: Vec<String> =
+        sqlx::query_scalar("SELECT raw FROM job_location WHERE job_id = ?1")
+            .bind(into.as_str())
+            .fetch_all(db.reader())
+            .await
+            .map_err(db_err)?;
+    let into_loc_set: std::collections::HashSet<String> = into_locs.into_iter().collect();
+    let donor_locs = sqlx::query(
+        "SELECT raw, city, region, country, postal_code, is_primary, is_remote_scope,
+                timezone_requirement
+           FROM job_location WHERE job_id = ?1 ORDER BY ordinal ASC",
+    )
+    .bind(from.as_str())
+    .fetch_all(db.reader())
+    .await
+    .map_err(db_err)?;
+    let mut loc_ord: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(MAX(ordinal), -1) + 1 FROM job_location WHERE job_id = ?1",
+    )
+    .bind(into.as_str())
+    .fetch_one(db.reader())
+    .await
+    .map_err(db_err)?;
+    for r in donor_locs {
+        let raw: String = r.try_get("raw").map_err(db_err)?;
+        if into_loc_set.contains(&raw) {
+            continue;
+        }
+        let lid = uuid::Uuid::now_v7().to_string();
+        sqlx::query(
+            "INSERT INTO job_location (id, job_id, raw, city, region, country, postal_code,
+                                       is_primary, is_remote_scope, timezone_requirement, ordinal)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, ?8, ?9, ?10)",
+        )
+        .bind(&lid)
+        .bind(into.as_str())
+        .bind(&raw)
+        .bind(r.try_get::<Option<String>, _>("city").map_err(db_err)?)
+        .bind(r.try_get::<Option<String>, _>("region").map_err(db_err)?)
+        .bind(r.try_get::<Option<String>, _>("country").map_err(db_err)?)
+        .bind(r.try_get::<Option<String>, _>("postal_code").map_err(db_err)?)
+        .bind(r.try_get::<i64, _>("is_remote_scope").map_err(db_err)?)
+        .bind(r.try_get::<Option<String>, _>("timezone_requirement").map_err(db_err)?)
+        .bind(loc_ord)
+        .execute(db.writer())
+        .await
+        .map_err(db_err)?;
+        loc_ord += 1;
+    }
+
+    if into_row.apply_url.is_none() && from_row.apply_url.is_some() {
+        sqlx::query("UPDATE job SET apply_url = ?1, updated_at = ?2 WHERE id = ?3")
+            .bind(from_row.apply_url.as_deref())
+            .bind(&ts)
+            .bind(into.as_str())
+            .execute(db.writer())
+            .await
+            .map_err(db_err)?;
+    }
+    if into_row.salary_raw.is_none() && from_row.salary_raw.is_some() {
+        sqlx::query(
+            "UPDATE job SET salary_raw = ?1, salary_min_cents = ?2, salary_max_cents = ?3,
+                            salary_currency = ?4, salary_period = ?5, salary_is_estimate = ?6,
+                            updated_at = ?7
+              WHERE id = ?8",
+        )
+        .bind(&from_row.salary_raw)
+        .bind(from_row.salary_min_cents)
+        .bind(from_row.salary_max_cents)
+        .bind(&from_row.salary_currency)
+        .bind(&from_row.salary_period)
+        .bind(i64::from(from_row.salary_is_estimate))
+        .bind(&ts)
+        .bind(into.as_str())
+        .execute(db.writer())
+        .await
+        .map_err(db_err)?;
+    } else if let (Some(a), Some(b)) = (&into_row.salary_raw, &from_row.salary_raw) {
+        if a != b {
+            let cid = uuid::Uuid::now_v7().to_string();
+            sqlx::query(
+                "INSERT INTO extraction_conflict
+                    (id, job_id, field, value_a, provenance_a, value_b, provenance_b,
+                     resolution, created_at)
+                 VALUES (?1, ?2, 'salary', ?3, 'keeper', ?4, 'merged', 'unresolved', ?5)",
+            )
+            .bind(&cid)
+            .bind(into.as_str())
+            .bind(a)
+            .bind(b)
+            .bind(&ts)
+            .execute(db.writer())
+            .await
+            .map_err(db_err)?;
+        }
+    }
+
+    sqlx::query("UPDATE job SET deleted_at = ?1, updated_at = ?1 WHERE id = ?2")
+        .bind(&ts)
+        .bind(from.as_str())
+        .execute(db.writer())
+        .await
+        .map_err(db_err)?;
+    sqlx::query(
+        "INSERT OR IGNORE INTO tombstone (entity_kind, entity_id, deleted_at, reason)
+         VALUES ('job', ?1, ?2, ?3)",
+    )
+    .bind(from.as_str())
+    .bind(&ts)
+    .bind(format!("merged_into:{into}"))
+    .execute(db.writer())
+    .await
+    .map_err(db_err)?;
+
+    reindex_fts(db, into).await?;
+    Ok(MergeReport {
+        from_id: from.as_str().to_string(),
+        into_id: into.as_str().to_string(),
+        listings_moved,
+        requirements_added,
+    })
 }
 
 async fn load_provenance(db: &Db, id: &JobId) -> Result<Vec<FieldProvenanceRow>> {
@@ -1412,5 +1670,123 @@ mod tests {
         assert!((page.items[0].match_overall.unwrap() - 0.74).abs() < 1e-6);
         assert!((page.items[0].skills_coverage.unwrap() - 1.0).abs() < 1e-6);
         assert!((page.items[0].years_fit.unwrap() - 0.2).abs() < 1e-6);
+    }
+
+    #[tokio::test]
+    async fn merge_moves_listings_and_unions_requirements() {
+        let db = Db::open_in_memory().await.unwrap();
+        let keeper = insert_job(
+            &db,
+            "Zillow",
+            "Data Scientist",
+            JobStatus::Open,
+            WorkMode::Remote,
+            None,
+            SalaryPeriod::Year,
+            "2026-09-01T00:00:00Z",
+        )
+        .await;
+        let donor = insert_job(
+            &db,
+            "Zillow",
+            "Data Scientist",
+            JobStatus::Open,
+            WorkMode::Remote,
+            None,
+            SalaryPeriod::Year,
+            "2026-09-02T00:00:00Z",
+        )
+        .await;
+        sqlx::query(
+            "INSERT INTO requirement (id, job_id, text, normalized_text, kind, necessity,
+                                      created_at, updated_at)
+             VALUES ('rk', ?1, '5+ years data science', 'years data science',
+                     'skill', 'required', 'now', 'now'),
+                    ('rd1', ?2, '5+ years data science', 'years data science',
+                     'skill', 'required', 'now', 'now'),
+                    ('rd2', ?2, 'Python', 'python',
+                     'skill', 'required', 'now', 'now')",
+        )
+        .bind(keeper.as_str())
+        .bind(donor.as_str())
+        .execute(db.writer())
+        .await
+        .unwrap();
+        let keep_listing = crate::repo::listing::upsert_by_url(
+            &db,
+            &crate::repo::listing::UpsertListing {
+                source: jobseeker_core::domain::enums::SourceKind::Workday,
+                url: "https://zillow.wd5.example/job/P1".into(),
+                url_canonical: "https://zillow.wd5.example/job/P1".into(),
+                source_job_id: Some("P1".into()),
+                title_at_source: Some("Data Scientist".into()),
+                company_name_at_source: Some("Zillow".into()),
+            },
+        )
+        .await
+        .unwrap()
+        .0;
+        let donor_listing = crate::repo::listing::upsert_by_url(
+            &db,
+            &crate::repo::listing::UpsertListing {
+                source: jobseeker_core::domain::enums::SourceKind::LinkedIn,
+                url: "https://www.linkedin.com/jobs/view/1".into(),
+                url_canonical: "https://www.linkedin.com/jobs/view/1".into(),
+                source_job_id: Some("1".into()),
+                title_at_source: Some("Data Scientist".into()),
+                company_name_at_source: Some("Zillow".into()),
+            },
+        )
+        .await
+        .unwrap()
+        .0;
+        crate::repo::listing::attach_to_job(&db, &keep_listing, &keeper)
+            .await
+            .unwrap();
+        crate::repo::listing::attach_to_job(&db, &donor_listing, &donor)
+            .await
+            .unwrap();
+
+        let report = merge(&db, &donor, &keeper).await.unwrap();
+        assert_eq!(report.listings_moved, 1);
+        assert_eq!(report.requirements_added, 1);
+
+        assert!(get(&db, &donor).await.unwrap().is_none());
+        let kept = get(&db, &keeper).await.unwrap().unwrap();
+        assert_eq!(kept.listings.len(), 2);
+        assert!(kept.listings.iter().any(|l| l.source == "workday"));
+        assert!(kept.listings.iter().any(|l| l.source == "linkedin"));
+        assert_eq!(kept.requirements.len(), 2);
+        let page = list(&db, &JobFilter::default()).await.unwrap();
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].id, keeper.as_str());
+    }
+
+    #[tokio::test]
+    async fn merge_refuses_a_different_company() {
+        let db = Db::open_in_memory().await.unwrap();
+        let a = insert_job(
+            &db,
+            "Zillow",
+            "Data Scientist",
+            JobStatus::Open,
+            WorkMode::Remote,
+            None,
+            SalaryPeriod::Year,
+            "2026-09-01T00:00:00Z",
+        )
+        .await;
+        let b = insert_job(
+            &db,
+            "Harbor",
+            "Data Scientist",
+            JobStatus::Open,
+            WorkMode::Remote,
+            None,
+            SalaryPeriod::Year,
+            "2026-09-02T00:00:00Z",
+        )
+        .await;
+        assert!(merge(&db, &a, &b).await.is_err());
     }
 }

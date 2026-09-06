@@ -89,7 +89,13 @@ GET  /api/v1/jobs/:id/raw/:capture_id       sanitized original capture (restrict
 GET  /api/v1/jobs/:id/revisions             change history
 GET  /api/v1/jobs/:id/conflicts             cross-source disagreements
 POST /api/v1/jobs/:id/merge      {into_job_id}
-POST /api/v1/jobs/:id/split      {listing_id}
+                                    → `:id` is the donor (soft-deleted + tombstoned
+                                      `merged_into:{into}`). `into` keeps title and
+                                      description. Same company required (400 otherwise).
+                                      Listings move; requirements union by
+                                      `normalized_text`. Returns
+                                      `{from_id, into_id, listings_moved, requirements_added}`.
+POST /api/v1/jobs/:id/split      {listing_id}   (not implemented; FR-A-11)
 GET  /api/v1/jobs/:id/similar    → nearest neighbours by embedding
 ```
 

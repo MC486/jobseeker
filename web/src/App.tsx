@@ -442,10 +442,25 @@ function bestIndexes(values: Array<number | null>): Set<number> {
   return winners.size === values.filter((v) => v != null).length ? new Set() : winners;
 }
 
+function sameCompany(a: JobDetail, b: JobDetail): boolean {
+  const left = a.company_name.trim().toLowerCase();
+  const right = b.company_name.trim().toLowerCase();
+  return left.length > 0 && left === right;
+}
+
+function listingHint(job: JobDetail): string {
+  const sources = [...new Set((job.listings ?? []).map((l) => l.source))];
+  const src = sources.length ? sources.join("+") : "posting";
+  return `${src} · ${job.requirements.length} reqs`;
+}
+
 export function ComparePage() {
   const navigate = useNavigate({ from: "/jobs/compare" });
   const search = useSearch({ from: "/jobs/compare" });
+  const qc = useQueryClient();
   const ids = parseCompareIds(search.ids);
+  const [merging, setMerging] = useState<string | null>(null);
+  const [mergeError, setMergeError] = useState<string | null>(null);
   const details = useQueries({
     queries: ids.map((id) => ({
       queryKey: keys.job(id),
@@ -459,6 +474,21 @@ export function ComparePage() {
       retry: false,
     })),
   });
+
+  async function mergeInto(fromId: string, intoId: string) {
+    setMerging(`${fromId}-${intoId}`);
+    setMergeError(null);
+    try {
+      await api.mergeJob(fromId, intoId);
+      await qc.invalidateQueries({ queryKey: ["jobs"] });
+      await qc.invalidateQueries({ queryKey: keys.job(intoId) });
+      await navigate({ to: "/jobs/$jobId", params: { jobId: intoId } });
+    } catch (err) {
+      setMergeError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setMerging(null);
+    }
+  }
 
   function drop(id: string) {
     const next = ids.filter((item) => item !== id);
@@ -490,6 +520,19 @@ export function ComparePage() {
     match: matches[i]?.data,
     error: details[i]?.error,
   }));
+  const loaded = columns
+    .map((col) => col.job)
+    .filter((job): job is JobDetail => job != null);
+  const mergePairs = loaded.flatMap((from) =>
+    loaded
+      .filter((into) => into.id !== from.id && sameCompany(from, into))
+      .map((into) => ({
+        from,
+        into,
+        recommended: into.requirements.length >= from.requirements.length,
+      })),
+  );
+  mergePairs.sort((a, b) => Number(b.recommended) - Number(a.recommended));
 
   return (
     <div className="space-y-4">
@@ -505,6 +548,38 @@ export function ComparePage() {
           Back to jobs
         </Link>
       </div>
+      {mergePairs.length > 0 && (
+        <div className="space-y-2 rounded-xl border border-zinc-800 bg-zinc-900/40 p-3">
+          <p className="text-xs text-zinc-500">
+            Same company — merge the thinner capture into the fuller one. The
+            keeper keeps its title and description; the donor is tombstoned.
+            Prefer the ATS posting when one side is an aggregator.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {mergePairs.map(({ from, into, recommended }) => {
+              const key = `${from.id}-${into.id}`;
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  disabled={merging != null}
+                  onClick={() => void mergeInto(from.id, into.id)}
+                  className={
+                    recommended
+                      ? "rounded-lg bg-indigo-400 px-3 py-1.5 text-sm font-semibold text-zinc-950 disabled:opacity-50"
+                      : "rounded-lg border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 disabled:opacity-50"
+                  }
+                >
+                  {merging === key
+                    ? "Merging…"
+                    : `Merge ${listingHint(from)} into ${listingHint(into)}`}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+      {mergeError && <p className="text-sm text-red-300">{mergeError}</p>}
       {loading && <p className="text-sm text-zinc-500">Loading…</p>}
       <div className="overflow-x-auto">
         <table className="w-full min-w-[40rem] border-collapse text-sm">
@@ -545,6 +620,20 @@ export function ComparePage() {
             </tr>
           </thead>
           <tbody>
+            <tr className="border-b border-zinc-800/80">
+              <th className="py-2 text-left text-xs font-normal text-zinc-500">Sources</th>
+              {columns.map((col) => (
+                <td key={col.id} className="px-3 py-2 text-zinc-300">
+                  {(col.job?.listings ?? []).length
+                    ? (col.job?.listings ?? [])
+                        .map((l) =>
+                          l.is_canonical ? `${l.source} (canonical)` : l.source,
+                        )
+                        .join(" · ")
+                    : "—"}
+                </td>
+              ))}
+            </tr>
             <tr className="border-b border-zinc-800/80">
               <th className="py-2 text-left text-xs font-normal text-zinc-500">Location</th>
               {columns.map((col) => (
@@ -765,6 +854,25 @@ export function JobPage() {
       )}
       {detail.locations.length > 0 && (
         <p className="text-zinc-300">Location: {detail.locations.join(" · ")}</p>
+      )}
+      {(detail.listings ?? []).length > 0 && (
+        <section>
+          <h2 className="mb-2 text-lg font-medium">Listings</h2>
+          <ul className="space-y-1 text-sm text-zinc-300">
+            {(detail.listings ?? []).map((listing) => (
+              <li key={listing.id}>
+                <span className="text-zinc-500">{listing.source}</span>
+                {listing.is_canonical ? (
+                  <span className="ml-2 text-xs text-emerald-400">canonical</span>
+                ) : null}
+                <span className="mx-2 text-zinc-600">·</span>
+                <a className="break-all text-indigo-300" href={listing.url}>
+                  {listing.url}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
       <section>
         <h2 className="mb-2 text-lg font-medium">Requirements</h2>
