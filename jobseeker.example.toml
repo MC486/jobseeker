@@ -12,6 +12,7 @@ run_migrations_on_start = true
 
 [auth]
 # none is fine on loopback. Binding beyond loopback with none is warned about at boot.
+# password: run `jobseeker user set-password` then POST /api/v1/auth/login.
 mode = "none"
 session_ttl_days = 30
 
