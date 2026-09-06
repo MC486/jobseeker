@@ -24,11 +24,16 @@ pair with a hashed, ingest-scoped device token.
 
 ## Do next (M0 remaining → M1)
 
-1. **File-based routes + virtualized job table.** The shell now uses a
-   code-based TanStack route tree and Query. Next is file-based routes,
-   TanStack Table, and a compare view (`/jobs/compare?ids=`).
+1. **File-based routes + virtualized job table.** Compare is in. Next is
+   file-based routes and TanStack Table.
 
 ## Just shipped
+
+- **Compare.** `/jobs/compare?ids=` lines 2–4 jobs up: location, mode, comp,
+  Overall / Skills / Years / Required / Preferred / Seniority / Comp /
+  Location, plus each posting's required bars. Highest value in a score
+  row is highlighted. Overall is unchanged. The list checkboxes feed the
+  URL so a compare is shareable and the back button works.
 
 - **TanStack Router + Query.** `/`, `/jobs`, `/jobs/$jobId`, `/profile`,
   `/tasks/$taskId` are a code-based route tree. Search `?q=` and sort
@@ -104,5 +109,5 @@ A LinkedIn URL must still fail with `needs_browser` and must not be fetched.
 
 - `crates/api/src/lib.rs` — SSE events, password login
 - `crates/pipeline/src/lib.rs` — `refresh_listing`, reconcile handlers
-- `web/src/router.tsx` — TanStack route tree; `web/src/query.ts` — Query keys
+- `web/src/router.tsx` — TanStack route tree; `web/src/compare.ts` — compare ids
 - `extension/popup.js` — capture polish / origin allowlist

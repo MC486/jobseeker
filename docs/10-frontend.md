@@ -75,6 +75,11 @@ single poll.
 
 ## Key screens
 
+**Compare** (`/jobs/compare?ids=`) is a shareable side-by-side of 2–4 jobs: the
+same Overall / Skills / Years split plus Required / Preferred / Seniority / Comp /
+Location, then each posting's requirement verdicts. Highest value in a score row
+is highlighted. Numbers are not recomputed.
+
 **Job detail** is the center of the product. Left: structured facts (comp, location, mode,
 dates, seniority, blockers) each with a subtle provenance dot — hover shows "from Greenhouse
 API, 0.98" or "edited by you". Center: requirement table, one row per requirement, with
@@ -89,6 +94,7 @@ rail on the left with counts. Column set and saved views are user-configurable. 
 for tag/archive/rescore. Skills and Years do not change overall; they exist so a 5-year
 wishlist can be compared across rows without opening each job. Search (`?q=`) and sort
 (`?sort=overall|skills|years`) live in the URL; sort reorders the loaded page only.
+Checkboxes select 2–4 rows for `/jobs/compare?ids=`.
 
 **Experience bank editor** is a two-pane outline: roles on the left, accomplishments on the
 right with inline metric fields, skill chips with autocomplete, strength stars, and a

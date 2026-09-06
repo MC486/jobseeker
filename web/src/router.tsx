@@ -5,6 +5,7 @@ import {
   createRouter,
 } from "@tanstack/react-router";
 import {
+  ComparePage,
   Home,
   JobList,
   JobPage,
@@ -13,10 +14,15 @@ import {
   TaskPage,
   type JobSort,
 } from "./App";
+import { parseCompareIds } from "./compare";
 
 export type JobsSearch = {
   q?: string;
   sort?: JobSort;
+};
+
+export type CompareSearch = {
+  ids?: string;
 };
 
 function parseJobsSearch(search: Record<string, unknown>): JobsSearch {
@@ -46,6 +52,15 @@ const jobsRoute = createRoute({
   component: JobList,
 });
 
+const compareRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/jobs/compare",
+  validateSearch: (search: Record<string, unknown>): CompareSearch => ({
+    ids: parseCompareIds(search.ids).join(",") || undefined,
+  }),
+  component: ComparePage,
+});
+
 const jobRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/jobs/$jobId",
@@ -67,6 +82,7 @@ const taskRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   indexRoute,
   jobsRoute,
+  compareRoute,
   jobRoute,
   profileRoute,
   taskRoute,
