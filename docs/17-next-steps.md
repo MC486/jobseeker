@@ -22,13 +22,20 @@ pair with a hashed, ingest-scoped device token.
 
 ## Do next (M0 remaining → M1)
 
-1. **Site adapters.** LinkedIn / Indeed (from extension HTML), Greenhouse /
-   Lever / Ashby JSON already partially works via `acquire::plan`.
-2. **Password auth.** Session cookie + Argon2id when `auth.mode = password`.
-3. **TanStack Router + Query.** The shell still uses a hand-rolled router; SSE
+1. **Password auth.** Session cookie + Argon2id when `auth.mode = password`.
+2. **TanStack Router + Query.** The shell still uses a hand-rolled router; SSE
    already invalidates the job list / task / match views.
+3. **Workday adapter.** SPA; extension path. Location lives in
+   `data-automation-id`; `reqId` is the durable identifier.
 
 ## Just shipped
+
+- **Site adapters.** LinkedIn / Indeed / Greenhouse / Lever / Ashby fill only
+  empty fields (`Provenance::Adapter`, 0.85) after JSON-LD and before rules.
+  Selectors are fallback lists; a miss degrades to heuristics. LinkedIn /
+  Indeed URLs still return `needs_browser` and are never server-fetched.
+  Fixtures: `fixtures/linkedin-job-capture.html`,
+  `fixtures/greenhouse-board-job.html`.
 
 - **Reconcile.** `jobseeker reconcile --check` / `--to-files` / `--from-files`.
   `--from-files` rebuilds jobs from `jobs/**/job.json` and skips tombstones
