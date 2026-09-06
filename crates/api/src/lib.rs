@@ -25,6 +25,7 @@ use jobseeker_core::domain::event::DomainEvent;
 use jobseeker_core::ids::{JobId, TaskId};
 use jobseeker_core::{Error, Result};
 use jobseeker_db::queue::Queue;
+use jobseeker_db::repo::conflict;
 use jobseeker_db::repo::event;
 use jobseeker_db::repo::job::{self, JobFilter, JobPatch};
 use jobseeker_db::repo::score;
@@ -166,6 +167,8 @@ pub struct PageDto<T: Serialize> {
         merge_job,
         split_job,
         list_duplicates,
+        list_conflicts,
+        resolve_conflict,
         get_profile,
         import_resume,
         get_task,
@@ -187,6 +190,7 @@ pub struct PageDto<T: Serialize> {
         PatchJobRequest,
         MergeJobRequest,
         SplitJobRequest,
+        ResolveConflictRequest,
         PairRequest,
         LoginRequest,
         CreateTokenRequest,
@@ -219,6 +223,11 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/jobs/{id}/merge", post(merge_job))
         .route("/api/v1/jobs/{id}/split", post(split_job))
         .route("/api/v1/jobs/{id}/duplicates", get(list_duplicates))
+        .route("/api/v1/jobs/{id}/conflicts", get(list_conflicts))
+        .route(
+            "/api/v1/jobs/{id}/conflicts/{conflict_id}/resolve",
+            post(resolve_conflict),
+        )
         .route("/api/v1/profiles/default", get(get_profile))
         .route(
             "/api/v1/profiles/default/import-resume",
@@ -540,6 +549,45 @@ async fn list_duplicates(
         .await
         .map_err(ApiError)?;
     Ok(Json(found))
+}
+
+#[utoipa::path(get, path = "/api/v1/jobs/{id}/conflicts", responses((status = 200), (status = 404)))]
+async fn list_conflicts(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Vec<conflict::ExtractionConflict>>> {
+    let id: JobId = id.parse().map_err(ApiError)?;
+    let found = conflict::list_for_job(&state.pipeline.db, &id)
+        .await
+        .map_err(ApiError)?;
+    Ok(Json(found))
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct ResolveConflictRequest {
+    /// `a`, `b`, or `keep`. Never inferred.
+    pub choice: String,
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/jobs/{id}/conflicts/{conflict_id}/resolve",
+    request_body = ResolveConflictRequest,
+    responses((status = 200), (status = 400), (status = 404), (status = 409))
+)]
+async fn resolve_conflict(
+    State(state): State<AppState>,
+    Path((id, conflict_id)): Path<(String, String)>,
+    Json(body): Json<ResolveConflictRequest>,
+) -> ApiResult<Json<conflict::ExtractionConflict>> {
+    let id: JobId = id.parse().map_err(ApiError)?;
+    let choice: conflict::ResolveChoice = body.choice.parse().map_err(ApiError)?;
+    let row = state
+        .pipeline
+        .resolve_conflict(&id, &conflict_id, choice)
+        .await
+        .map_err(ApiError)?;
+    Ok(Json(row))
 }
 
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
@@ -1121,6 +1169,14 @@ mod tests {
         assert!(
             spec["paths"]["/api/v1/jobs/{id}/duplicates"].is_object(),
             "OpenAPI must document GET /api/v1/jobs/{{id}}/duplicates"
+        );
+        assert!(
+            spec["paths"]["/api/v1/jobs/{id}/conflicts"].is_object(),
+            "OpenAPI must document GET /api/v1/jobs/{{id}}/conflicts"
+        );
+        assert!(
+            spec["paths"]["/api/v1/jobs/{id}/conflicts/{conflict_id}/resolve"].is_object(),
+            "OpenAPI must document POST /api/v1/jobs/{{id}}/conflicts/{{conflict_id}}/resolve"
         );
     }
 
@@ -1886,6 +1942,167 @@ mod tests {
         assert_eq!(none.status(), StatusCode::OK);
         let empty: Vec<serde_json::Value> = body_json(none).await;
         assert!(empty.is_empty());
+        std::mem::forget(dir);
+    }
+
+    #[tokio::test]
+    async fn merge_salary_conflict_is_listed_and_resolved_by_hand() {
+        let dir = tempfile::tempdir().unwrap();
+        let pipe = jobseeker_pipeline::for_test(dir.path().to_path_buf())
+            .await
+            .unwrap();
+        let keeper_html = r#"<html><head><script type="application/ld+json">{"@type":"JobPosting","title":"Data Scientist","hiringOrganization":{"name":"Zillow"},"description":"<p>Python</p>","baseSalary":{"currency":"USD","value":{"minValue":100000,"maxValue":120000,"unitText":"YEAR"}}}</script></head></html>"#;
+        let donor_html = r#"<html><head><script type="application/ld+json">{"@type":"JobPosting","title":"Data Scientist","hiringOrganization":{"name":"Zillow"},"description":"<p>SQL</p>","baseSalary":{"currency":"USD","value":{"minValue":150000,"maxValue":180000,"unitText":"YEAR"}}}</script></head></html>"#;
+        let harbor = r#"<html><head><script type="application/ld+json">{"@type":"JobPosting","title":"Applied Scientist","hiringOrganization":{"name":"Harbor"},"description":"<p>Python</p>","baseSalary":{"currency":"USD","value":{"minValue":145000,"maxValue":145000,"unitText":"YEAR"}}}</script></head></html>"#;
+        pipe.ingest_paste(
+            keeper_html,
+            Some("https://zillow.wd5.myworkdayjobs.com/zillow/job/P1"),
+        )
+        .await
+        .unwrap();
+        pipe.drain().await.unwrap();
+        pipe.ingest_paste(donor_html, Some("https://www.linkedin.com/jobs/view/1"))
+            .await
+            .unwrap();
+        pipe.drain().await.unwrap();
+        pipe.ingest_paste(harbor, Some("https://boards.greenhouse.io/harbor/jobs/1"))
+            .await
+            .unwrap();
+        pipe.drain().await.unwrap();
+
+        let page =
+            jobseeker_db::repo::job::list(&pipe.db, &jobseeker_db::repo::job::JobFilter::default())
+                .await
+                .unwrap();
+        let zillow: Vec<_> = page
+            .items
+            .iter()
+            .filter(|row| row.company_name == "Zillow")
+            .collect();
+        assert_eq!(zillow.len(), 2);
+        let mut keeper_id = None;
+        let mut donor_id = None;
+        for row in &zillow {
+            let id: JobId = row.id.parse().unwrap();
+            let d = jobseeker_db::repo::job::get(&pipe.db, &id)
+                .await
+                .unwrap()
+                .unwrap();
+            let raw = d.salary_raw.unwrap_or_default();
+            if raw.contains("100000") {
+                keeper_id = Some(row.id.clone());
+            }
+            if raw.contains("150000") {
+                donor_id = Some(row.id.clone());
+            }
+        }
+        let into = keeper_id.expect("keeper salary raw");
+        let from = donor_id.expect("donor salary raw");
+        let harbor_id = page
+            .items
+            .iter()
+            .find(|row| row.company_name == "Harbor")
+            .unwrap()
+            .id
+            .clone();
+
+        let app = router(AppState::new(pipe));
+        let merged = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/v1/jobs/{from}/merge"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "into_job_id": into }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(merged.status(), StatusCode::OK);
+
+        let listed = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/jobs/{into}/conflicts"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(listed.status(), StatusCode::OK);
+        let conflicts: Vec<serde_json::Value> = body_json(listed).await;
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0]["field"], "salary");
+        assert_eq!(conflicts[0]["resolution"], "unresolved");
+        let conflict_id = conflicts[0]["id"].as_str().unwrap().to_string();
+
+        let none = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/jobs/{harbor_id}/conflicts"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(none.status(), StatusCode::OK);
+        let empty: Vec<serde_json::Value> = body_json(none).await;
+        assert!(empty.is_empty());
+
+        let resolved = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!(
+                        "/api/v1/jobs/{into}/conflicts/{conflict_id}/resolve"
+                    ))
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::json!({ "choice": "b" }).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resolved.status(), StatusCode::OK);
+        let row: serde_json::Value = body_json(resolved).await;
+        assert_eq!(row["resolution"], "manual");
+        assert!(row["resolved_value"].as_str().unwrap().contains("150000"));
+
+        let job = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/jobs/{into}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let detail: serde_json::Value = body_json(job).await;
+        assert!(
+            detail["salary_raw"].as_str().unwrap().contains("150000"),
+            "{detail:?}"
+        );
+
+        let again = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!(
+                        "/api/v1/jobs/{into}/conflicts/{conflict_id}/resolve"
+                    ))
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::json!({ "choice": "a" }).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(again.status(), StatusCode::CONFLICT);
         std::mem::forget(dir);
     }
 }

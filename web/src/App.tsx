@@ -14,7 +14,15 @@ import {
   useRouterState,
   useSearch,
 } from "@tanstack/react-router";
-import { api, DuplicateCandidate, JobDetail, JobListRow, MatchSummary, Me } from "./api";
+import {
+  api,
+  DuplicateCandidate,
+  ExtractionConflict,
+  JobDetail,
+  JobListRow,
+  MatchSummary,
+  Me,
+} from "./api";
 import { MAX_COMPARE, parseCompareIds } from "./compare";
 import { fetchers, keys, subscribeQueryEvents } from "./query";
 
@@ -832,6 +840,74 @@ function DuplicateRow({
   );
 }
 
+function ConflictRow({
+  currentSalary,
+  conflict,
+}: {
+  currentSalary: string | null;
+  conflict: ExtractionConflict;
+}) {
+  const qc = useQueryClient();
+  const [error, setError] = useState<string | null>(null);
+  const resolve = useMutation({
+    mutationFn: (choice: "a" | "b" | "keep") =>
+      api.resolveConflict(conflict.job_id, conflict.id, choice),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["conflicts"] });
+      await qc.invalidateQueries({ queryKey: keys.job(conflict.job_id) });
+      await qc.invalidateQueries({ queryKey: ["jobs"] });
+      await qc.invalidateQueries({ queryKey: keys.match(conflict.job_id) });
+    },
+    onError: (err) => {
+      setError(err instanceof Error ? err.message : String(err));
+    },
+  });
+  const labelA = conflict.provenance_a ?? "A";
+  const labelB = conflict.provenance_b ?? "B";
+
+  return (
+    <div className="space-y-2 rounded-lg border border-zinc-800 bg-zinc-950/40 p-3">
+      <p className="text-xs uppercase tracking-wide text-zinc-500">{conflict.field}</p>
+      <p className="text-sm text-zinc-200">
+        <span className="text-zinc-500">{labelA}:</span> {conflict.value_a ?? "—"}
+      </p>
+      <p className="text-sm text-zinc-200">
+        <span className="text-zinc-500">{labelB}:</span> {conflict.value_b ?? "—"}
+      </p>
+      {currentSalary ? (
+        <p className="text-xs text-zinc-500">Current: {currentSalary}</p>
+      ) : null}
+      {error && <p className="text-sm text-red-300">{error}</p>}
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          disabled={resolve.isPending}
+          onClick={() => resolve.mutate("a")}
+          className="rounded-lg bg-indigo-400 px-3 py-1.5 text-sm font-semibold text-zinc-950 disabled:opacity-50"
+        >
+          Use {labelA}
+        </button>
+        <button
+          type="button"
+          disabled={resolve.isPending}
+          onClick={() => resolve.mutate("b")}
+          className="rounded-lg border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 disabled:opacity-50"
+        >
+          Use {labelB}
+        </button>
+        <button
+          type="button"
+          disabled={resolve.isPending}
+          onClick={() => resolve.mutate("keep")}
+          className="rounded-lg border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 disabled:opacity-50"
+        >
+          Keep current
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function provenanceDot(job: JobDetail, field: string) {
   const row = job.provenance.find((p) => p.field === field);
   if (!row) return null;
@@ -865,6 +941,10 @@ export function JobPage() {
   const dups = useQuery({
     queryKey: keys.duplicates(jobId),
     queryFn: () => fetchers.duplicates(jobId),
+  });
+  const conflicts = useQuery({
+    queryKey: keys.conflicts(jobId),
+    queryFn: () => fetchers.conflicts(jobId),
   });
   const archive = useMutation({
     mutationFn: (next: boolean) => api.patchJob(jobId, { is_archived: next }),
@@ -924,6 +1004,20 @@ export function JobPage() {
           </button>
         </div>
       </div>
+      {(conflicts.data ?? []).some((c) => c.resolution === "unresolved") && (
+        <section className="space-y-2 rounded-xl border border-sky-900/60 bg-sky-950/20 p-4">
+          <h2 className="text-lg font-medium text-sky-100">Extraction conflicts</h2>
+          <p className="text-xs text-zinc-500">
+            Sources disagreed. Nothing is picked until you say so — the ATS wording is
+            usually the one you want.
+          </p>
+          {(conflicts.data ?? [])
+            .filter((c) => c.resolution === "unresolved")
+            .map((c) => (
+              <ConflictRow key={c.id} currentSalary={detail.salary_raw} conflict={c} />
+            ))}
+        </section>
+      )}
       {(dups.data ?? []).length > 0 && (
         <section className="space-y-2 rounded-xl border border-amber-900/60 bg-amber-950/20 p-4">
           <h2 className="text-lg font-medium text-amber-100">Possible duplicates</h2>

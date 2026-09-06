@@ -1,4 +1,4 @@
-//! Process entrypoint: `jobseeker serve`, `add`, `list`, `show`, `merge`, `split`, `duplicates`, `migrate`, `openapi`, `reconcile`, `profile`.
+//! Process entrypoint: `jobseeker serve`, `add`, `list`, `show`, `merge`, `split`, `duplicates`, `conflicts`, `migrate`, `openapi`, `reconcile`, `profile`.
 
 use std::io::{self, Read};
 use std::path::PathBuf;
@@ -70,6 +70,18 @@ enum Command {
     },
     /// Flag same-company title matches. Never merges.
     Duplicates { id: String },
+    /// List extraction conflicts for a job (salary disagreements after merge).
+    Conflicts { id: String },
+    /// Resolve one conflict by picking A, B, or the current value.
+    ResolveConflict {
+        /// Job that owns the conflict.
+        job: String,
+        /// Conflict id from `conflicts`.
+        conflict: String,
+        /// `a`, `b`, or `keep`.
+        #[arg(long)]
+        pick: String,
+    },
     /// Pair a browser extension: print a one-time code, or emit a device token.
     Pair {
         /// Label stored with the token, e.g. "Firefox on laptop".
@@ -267,6 +279,47 @@ async fn main() -> Result<()> {
                     if c.keep_this { "  keep this" } else { "" }
                 );
             }
+        }
+        Command::Conflicts { id } => {
+            let pipeline = Pipeline::open(config).await?;
+            let id: jobseeker_core::ids::JobId = id.parse()?;
+            let found = jobseeker_db::repo::conflict::list_for_job(&pipeline.db, &id).await?;
+            if found.is_empty() {
+                println!("no extraction conflicts");
+            }
+            for c in found {
+                let sides = format!(
+                    "{}/{}",
+                    c.provenance_a.as_deref().unwrap_or("a"),
+                    c.provenance_b.as_deref().unwrap_or("b")
+                );
+                println!(
+                    "{}  {}  {}  a={}  b={}  resolved={}  {sides}",
+                    c.id,
+                    c.field,
+                    c.resolution,
+                    c.value_a.as_deref().unwrap_or("-"),
+                    c.value_b.as_deref().unwrap_or("-"),
+                    c.resolved_value.as_deref().unwrap_or("-")
+                );
+            }
+        }
+        Command::ResolveConflict {
+            job,
+            conflict,
+            pick,
+        } => {
+            let pipeline = Pipeline::open(config).await?;
+            let job: jobseeker_core::ids::JobId = job.parse()?;
+            let choice: jobseeker_db::repo::conflict::ResolveChoice = pick.parse()?;
+            let row = pipeline.resolve_conflict(&job, &conflict, choice).await?;
+            println!(
+                "resolved {}  {}  {}  value={}",
+                row.id,
+                row.field,
+                row.resolution,
+                row.resolved_value.as_deref().unwrap_or("-")
+            );
         }
         Command::Split { from, listing } => {
             let pipeline = Pipeline::open(config).await?;

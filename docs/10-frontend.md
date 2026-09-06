@@ -83,7 +83,9 @@ merge actions absorb the thinner capture into the keeper (same-company API
 guard). The job detail page lists attached source URLs and which listing is
 canonical, and offers **Split off** when there are two or more listings.
 Same-company title matches appear as **Possible duplicates** with Compare and
-a recommended Merge — nothing is folded automatically.
+a recommended Merge — nothing is folded automatically. After a merge whose
+salary strings disagreed, **Extraction conflicts** offers Use A / Use B /
+Keep current; the chosen wording becomes provenance `manual`.
 
 **Job detail** is the center of the product. Left: structured facts (comp, location, mode,
 dates, seniority, blockers) each with a subtle provenance dot — hover shows "from Greenhouse

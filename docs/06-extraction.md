@@ -257,7 +257,9 @@ Wrong company merges are user-visible and annoying, so the threshold is delibera
 - Material disagreements between sources create `extraction_conflict` rows, rendered in the
   UI as "LinkedIn: $150–170k (estimate) · Greenhouse: $185–225k". This is a *feature*: the
   discrepancy between an aggregator's estimate and the ATS's posted band is genuinely useful
-  information.
+  information. Same-company merge writes an unresolved salary row when the raw strings
+  differ; `GET /api/v1/jobs/:id/conflicts` and the job-page banner surface it. The user
+  picks A, B, or keep-current — nothing is auto-resolved.
 - Editing a field in the UI writes provenance `manual`, confidence `1.0`, and appends to the
   eval corpus as a labeled example — your corrections become the regression suite.
 

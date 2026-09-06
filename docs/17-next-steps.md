@@ -16,7 +16,8 @@ pair with a hashed, ingest-scoped device token.
 - Field provenance rows; PATCH `/api/v1/jobs/{id}` is sticky `manual`
 - HTTP API: health, ready, meta, ingest, jobs, match, tasks, OpenAPI, SPA fallback
 - Auth: pairing tokens, plus password sessions (`jobseeker user set-password`)
-- CLI: `serve`, `migrate`, `add`, `list`, `show`, `merge`, `split`, `duplicates`, `pair`,
+- CLI: `serve`, `migrate`, `add`, `list`, `show`, `merge`, `split`, `duplicates`,
+  `conflicts`, `resolve-conflict`, `pair`,
   `user set-password`, `profile import|show`, `reconcile`, `openapi`
 - React/Vite/Tailwind shell in `web/` (score + confidence dots)
 - MV3 extension with pairing in `extension/`
@@ -24,10 +25,20 @@ pair with a hashed, ingest-scoped device token.
 
 ## Do next (M0 remaining → M1)
 
-1. **File-based routes + virtualized job table.** Duplicate flags are in. Next is
+1. **File-based routes + virtualized job table.** Conflicts are in. Next is
    file-based routes and TanStack Table.
 
 ## Just shipped
+
+- **Extraction conflicts.** Merge already wrote an unresolved
+  `extraction_conflict` when salary raw strings differed. `GET
+  /api/v1/jobs/:id/conflicts` lists them; `POST
+  /api/v1/jobs/:id/conflicts/:id/resolve {choice: a|b|keep}` applies the
+  user's pick (re-parses salary, provenance `manual`). Already-resolved
+  rows stay put. Job detail shows unresolved rows with Use A / Use B /
+  Keep current. CLI: `jobseeker conflicts <id>` and
+  `jobseeker resolve-conflict <job> <conflict> --pick b`. Nothing is
+  auto-resolved — the ATS wording is usually the one you want.
 
 - **Possible duplicates.** `GET /api/v1/jobs/:id/duplicates` and
   `jobseeker duplicates <id>` flag same-company jobs whose

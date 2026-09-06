@@ -19,7 +19,7 @@ use jobseeker_core::{Error, Result};
 use jobseeker_db::persist::{self, PersistExtracted};
 use jobseeker_db::queue::{ClaimedTask, NewTask, Queue};
 use jobseeker_db::repo::{
-    capture, company, event, experience, listing, listing::UpsertListing, profile, score,
+    capture, company, conflict, event, experience, listing, listing::UpsertListing, profile, score,
 };
 use jobseeker_db::Db;
 use jobseeker_extract::{extract, ExtractInput};
@@ -862,6 +862,40 @@ impl Pipeline {
             )
             .await;
         Ok(report)
+    }
+
+    /// Record the user's pick on a cross-source disagreement. Never auto-picks.
+    /// Applying a new salary re-scores so Comp stays honest.
+    pub async fn resolve_conflict(
+        &self,
+        job_id: &jobseeker_core::ids::JobId,
+        conflict_id: &str,
+        choice: conflict::ResolveChoice,
+    ) -> Result<conflict::ExtractionConflict> {
+        let row = conflict::resolve(&self.db, job_id, conflict_id, choice).await?;
+        if row.field == "salary" && choice != conflict::ResolveChoice::Keep {
+            if let Err(e) = self
+                .handle_score_match(&json!({ "job_id": job_id.as_str() }))
+                .await
+            {
+                tracing::warn!(error = %e, "rescore after conflict resolve failed");
+            }
+        }
+        let _ = self
+            .emit(
+                DomainEvent::JOB_UPDATED,
+                "job",
+                job_id.as_str(),
+                json!({
+                    "source": "conflict_resolve",
+                    "conflict_id": row.id,
+                    "field": row.field,
+                    "choice": choice.as_str(),
+                    "resolution": row.resolution,
+                }),
+            )
+            .await;
+        Ok(row)
     }
 
     async fn materialize_profile(&self, profile_id: &jobseeker_core::ids::ProfileId) -> Result<()> {

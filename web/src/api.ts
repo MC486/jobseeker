@@ -81,6 +81,21 @@ export type MatchSummary = {
   verdicts: RequirementVerdict[];
 };
 
+export type ExtractionConflict = {
+  id: string;
+  job_id: string;
+  field: string;
+  value_a: string | null;
+  provenance_a: string | null;
+  listing_a_id: string | null;
+  value_b: string | null;
+  provenance_b: string | null;
+  listing_b_id: string | null;
+  resolved_value: string | null;
+  resolution: string;
+  created_at: string;
+};
+
 export type DuplicateCandidate = {
   job_id: string;
   title: string;
@@ -216,6 +231,13 @@ export const api = {
     ),
   duplicates: (id: string) =>
     request<DuplicateCandidate[]>(`/api/v1/jobs/${id}/duplicates`),
+  conflicts: (id: string) =>
+    request<ExtractionConflict[]>(`/api/v1/jobs/${id}/conflicts`),
+  resolveConflict: (jobId: string, conflictId: string, choice: "a" | "b" | "keep") =>
+    request<ExtractionConflict>(`/api/v1/jobs/${jobId}/conflicts/${conflictId}/resolve`, {
+      method: "POST",
+      body: JSON.stringify({ choice }),
+    }),
   task: (id: string) => request<TaskView>(`/api/v1/tasks/${id}`),
   ingestUrl: (url: string) =>
     request<Accepted>("/api/v1/ingest/url", { method: "POST", body: JSON.stringify({ url }) }),
