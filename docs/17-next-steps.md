@@ -24,10 +24,18 @@ pair with a hashed, ingest-scoped device token.
 
 ## Do next (M0 remaining → M1)
 
-1. **TanStack Router + Query.** The shell still uses a hand-rolled router; SSE
-   already invalidates the job list / task / match / profile views.
+1. **File-based routes + virtualized job table.** The shell now uses a
+   code-based TanStack route tree and Query. Next is file-based routes,
+   TanStack Table, and a compare view (`/jobs/compare?ids=`).
 
 ## Just shipped
+
+- **TanStack Router + Query.** `/`, `/jobs`, `/jobs/$jobId`, `/profile`,
+  `/tasks/$taskId` are a code-based route tree. Search `?q=` and sort
+  `?sort=overall|skills|years` live in the URL (sort is client-side on the
+  current page and does not change overall). SSE invalidates Query keys
+  instead of a `live` counter. Back button and reload keep the list
+  filter.
 
 - **Match breakdown.** Overall is unchanged. The job page and the jobs list
   show Skills (required bars with tenure stripped) and Years (required
@@ -96,5 +104,5 @@ A LinkedIn URL must still fail with `needs_browser` and must not be fetched.
 
 - `crates/api/src/lib.rs` — SSE events, password login
 - `crates/pipeline/src/lib.rs` — `refresh_listing`, reconcile handlers
-- `web/src/App.tsx` — replace the hand-rolled router with TanStack Router
+- `web/src/router.tsx` — TanStack route tree; `web/src/query.ts` — Query keys
 - `extension/popup.js` — capture polish / origin allowlist

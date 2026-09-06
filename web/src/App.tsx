@@ -1,130 +1,80 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { api, JobDetail, JobListRow, MatchSummary, Me, Profile, TaskView } from "./api";
-import { isTaskView, subscribeEvents } from "./api/events";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link, Outlet, useNavigate, useParams, useSearch } from "@tanstack/react-router";
+import { api, JobDetail, JobListRow, Me } from "./api";
+import { fetchers, keys, subscribeQueryEvents } from "./query";
 
-type Route =
-  | { name: "home" }
-  | { name: "jobs" }
-  | { name: "job"; id: string }
-  | { name: "task"; id: string }
-  | { name: "profile" };
+export type JobSort = "overall" | "skills" | "years";
 
-function parseRoute(): Route {
-  const path = window.location.pathname.replace(/\/+$/, "") || "/";
-  if (path === "/") return { name: "home" };
-  if (path === "/jobs") return { name: "jobs" };
-  if (path === "/profile") return { name: "profile" };
-  const job = path.match(/^\/jobs\/([^/]+)$/);
-  if (job) return { name: "job", id: job[1] };
-  const task = path.match(/^\/tasks\/([^/]+)$/);
-  if (task) return { name: "task", id: task[1] };
-  return { name: "home" };
-}
-
-function navigate(path: string) {
-  window.history.pushState({}, "", path);
-  window.dispatchEvent(new PopStateEvent("popstate"));
-}
-
-export function App() {
-  const [route, setRoute] = useState<Route>(parseRoute);
-  const [me, setMe] = useState<Me | null>(null);
-  const [live, setLive] = useState(0);
-  const [tasks, setTasks] = useState<Record<string, TaskView>>({});
-  useEffect(() => {
-    const onPop = () => setRoute(parseRoute());
-    window.addEventListener("popstate", onPop);
-    return () => window.removeEventListener("popstate", onPop);
-  }, []);
-  useEffect(() => {
-    api.me().then(setMe).catch(() => setMe(null));
-  }, []);
-  useEffect(() => {
-    return subscribeEvents((event) => {
-      if (event.kind === "task.updated" && event.entity_id && isTaskView(event.payload)) {
-        setTasks((prev) => ({ ...prev, [event.entity_id as string]: event.payload as TaskView }));
-      }
-      if (
-        event.kind === "job.created" ||
-        event.kind === "job.updated" ||
-        event.kind === "match.updated" ||
-        event.kind === "profile.updated"
-      ) {
-        setLive((n) => n + 1);
-      }
-    });
-  }, []);
+export function RootLayout() {
+  const me = useQuery({ queryKey: keys.me, queryFn: fetchers.me, staleTime: 60_000 });
+  useEffect(() => subscribeQueryEvents(), []);
 
   return (
     <div className="min-h-screen">
       <header className="border-b border-zinc-800">
         <div className="mx-auto flex max-w-4xl items-baseline justify-between px-5 py-4">
-          <button className="text-sm font-semibold tracking-wide" onClick={() => navigate("/")}>
+          <Link to="/" className="text-sm font-semibold tracking-wide">
             jobseeker
-          </button>
+          </Link>
           <nav className="flex gap-4 text-sm text-zinc-400">
-            <button onClick={() => navigate("/jobs")}>Jobs</button>
-            <button onClick={() => navigate("/profile")}>Profile</button>
+            <Link to="/jobs" className="hover:text-zinc-100">
+              Jobs
+            </Link>
+            <Link to="/profile" className="hover:text-zinc-100">
+              Profile
+            </Link>
             <a href="/openapi.json" className="hover:text-zinc-100">
               OpenAPI
             </a>
-            {me && <span title="auth.mode">auth:{me.auth_mode}</span>}
-            {me?.auth_mode === "password" && me.authenticated && (
-              <button
-                className="hover:text-zinc-100"
-                onClick={() => {
-                  api.logout().finally(() =>
-                    api.me().then(setMe).catch(() => setMe(null)),
-                  );
-                }}
-              >
-                Log out
-              </button>
+            {me.data && <span title="auth.mode">auth:{me.data.auth_mode}</span>}
+            {me.data?.auth_mode === "password" && me.data.authenticated && (
+              <LogoutButton />
             )}
           </nav>
         </div>
       </header>
       <main className="mx-auto max-w-4xl px-5 py-8">
-        {me?.auth_mode === "password" && !me.authenticated && (
-          <Login onLoggedIn={setMe} />
-        )}
-        {!(me?.auth_mode === "password" && !me.authenticated) && route.name === "home" && (
-          <Home />
-        )}
-        {!(me?.auth_mode === "password" && !me.authenticated) && route.name === "profile" && (
-          <ProfilePage live={live} />
-        )}
-        {!(me?.auth_mode === "password" && !me.authenticated) && route.name === "jobs" && (
-          <JobList live={live} />
-        )}
-        {!(me?.auth_mode === "password" && !me.authenticated) && route.name === "job" && (
-          <JobPage id={route.id} live={live} />
-        )}
-        {!(me?.auth_mode === "password" && !me.authenticated) && route.name === "task" && (
-          <TaskPage id={route.id} pushed={tasks[route.id]} />
+        {me.data?.auth_mode === "password" && !me.data.authenticated ? (
+          <Login />
+        ) : (
+          <Outlet />
         )}
       </main>
     </div>
   );
 }
 
-function Login({ onLoggedIn }: { onLoggedIn: (me: Me) => void }) {
+function LogoutButton() {
+  const qc = useQueryClient();
+  return (
+    <button
+      className="hover:text-zinc-100"
+      onClick={() => {
+        api.logout().finally(() => {
+          qc.invalidateQueries({ queryKey: keys.me });
+        });
+      }}
+    >
+      Log out
+    </button>
+  );
+}
+
+function Login() {
+  const qc = useQueryClient();
   const [username, setUsername] = useState("owner");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const login = useMutation({
+    mutationFn: () => api.login(username, password),
+    onSuccess: (me: Me) => {
+      qc.setQueryData(keys.me, me);
+    },
+  });
 
-  async function onSubmit(e: FormEvent) {
+  function onSubmit(e: FormEvent) {
     e.preventDefault();
-    setBusy(true);
-    setError(null);
-    try {
-      onLoggedIn(await api.login(username, password));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "login failed");
-    } finally {
-      setBusy(false);
-    }
+    login.mutate();
   }
 
   return (
@@ -157,9 +107,13 @@ function Login({ onLoggedIn }: { onLoggedIn: (me: Me) => void }) {
           required
         />
       </label>
-      {error && <p className="text-sm text-red-300">{error}</p>}
+      {login.isError && (
+        <p className="text-sm text-red-300">
+          {login.error instanceof Error ? login.error.message : "login failed"}
+        </p>
+      )}
       <button
-        disabled={busy}
+        disabled={login.isPending}
         className="rounded-lg bg-indigo-400 px-4 py-2 text-sm font-semibold text-zinc-950 disabled:opacity-50"
       >
         Sign in
@@ -168,43 +122,34 @@ function Login({ onLoggedIn }: { onLoggedIn: (me: Me) => void }) {
   );
 }
 
-function Home() {
+export function Home() {
+  const navigate = useNavigate();
   const [url, setUrl] = useState("");
   const [paste, setPaste] = useState("");
   const [message, setMessage] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  async function onUrl(e: FormEvent) {
-    e.preventDefault();
-    setBusy(true);
-    setMessage(null);
-    try {
-      const accepted = await api.ingestUrl(url);
+  const ingestUrl = useMutation({
+    mutationFn: () => api.ingestUrl(url),
+    onSuccess: (accepted) => {
       setMessage(`Queued ${accepted.task_id}`);
       setUrl("");
-      navigate(`/tasks/${accepted.task_id}`);
-    } catch (err) {
+      void navigate({ to: "/tasks/$taskId", params: { taskId: accepted.task_id } });
+    },
+    onError: (err) => {
       setMessage(err instanceof Error ? err.message : "failed");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function onPaste(e: FormEvent) {
-    e.preventDefault();
-    setBusy(true);
-    setMessage(null);
-    try {
-      const accepted = await api.ingestPaste(paste);
+    },
+  });
+  const ingestPaste = useMutation({
+    mutationFn: () => api.ingestPaste(paste),
+    onSuccess: (accepted) => {
       setMessage(`Queued ${accepted.task_id}`);
       setPaste("");
-      navigate(`/tasks/${accepted.task_id}`);
-    } catch (err) {
+      void navigate({ to: "/tasks/$taskId", params: { taskId: accepted.task_id } });
+    },
+    onError: (err) => {
       setMessage(err instanceof Error ? err.message : "failed");
-    } finally {
-      setBusy(false);
-    }
-  }
+    },
+  });
+  const busy = ingestUrl.isPending || ingestPaste.isPending;
 
   return (
     <div className="space-y-8">
@@ -215,7 +160,13 @@ function Home() {
           this server will not log in for you.
         </p>
       </div>
-      <form onSubmit={onUrl} className="space-y-3">
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          ingestUrl.mutate();
+        }}
+        className="space-y-3"
+      >
         <label className="block text-sm text-zinc-400">
           Public job URL
           <input
@@ -233,7 +184,13 @@ function Home() {
           Ingest URL
         </button>
       </form>
-      <form onSubmit={onPaste} className="space-y-3">
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          ingestPaste.mutate();
+        }}
+        className="space-y-3"
+      >
         <label className="block text-sm text-zinc-400">
           Or paste HTML / text
           <textarea
@@ -255,25 +212,48 @@ function Home() {
   );
 }
 
-function JobList({ live }: { live: number }) {
-  const [q, setQ] = useState("");
-  const [rows, setRows] = useState<JobListRow[]>([]);
-  const [error, setError] = useState<string | null>(null);
+function scoreOf(row: JobListRow, sort: JobSort): number {
+  const value =
+    sort === "skills"
+      ? row.skills_coverage
+      : sort === "years"
+        ? row.years_fit
+        : row.match_overall;
+  return value ?? -1;
+}
+
+export function JobList() {
+  const navigate = useNavigate({ from: "/jobs" });
+  const search = useSearch({ from: "/jobs" });
+  const sort: JobSort = search.sort ?? "overall";
+  const [draft, setDraft] = useState(search.q ?? "");
 
   useEffect(() => {
-    let cancelled = false;
-    api
-      .jobs(q || undefined)
-      .then((page) => {
-        if (!cancelled) setRows(page.items);
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : "failed");
+    setDraft(search.q ?? "");
+  }, [search.q]);
+
+  useEffect(() => {
+    const next = draft.trim() || undefined;
+    if (next === search.q) return;
+    const timer = window.setTimeout(() => {
+      void navigate({
+        search: (prev) => ({ ...prev, q: next }),
+        replace: true,
       });
-    return () => {
-      cancelled = true;
-    };
-  }, [q, live]);
+    }, 200);
+    return () => window.clearTimeout(timer);
+  }, [draft, navigate, search.q]);
+
+  const jobs = useQuery({
+    queryKey: keys.jobs(search.q),
+    queryFn: () => fetchers.jobs(search.q),
+    placeholderData: keepPreviousData,
+  });
+
+  const rows = useMemo(() => {
+    const items = jobs.data?.items ?? [];
+    return [...items].sort((a, b) => scoreOf(b, sort) - scoreOf(a, sort));
+  }, [jobs.data, sort]);
 
   return (
     <div className="space-y-4">
@@ -281,14 +261,27 @@ function JobList({ live }: { live: number }) {
       <input
         className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2"
         placeholder="Search title, company, requirements…"
-        value={q}
-        onChange={(e) => setQ(e.target.value)}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
       />
-      {error && <p className="text-sm text-red-300">{error}</p>}
+      <div className="flex flex-wrap gap-3 text-xs">
+        <span className="text-zinc-500">Sort</span>
+        <SortChip current={sort} value="overall" label="Overall" />
+        <SortChip current={sort} value="skills" label="Skills" />
+        <SortChip current={sort} value="years" label="Years" />
+        <span className="text-zinc-600">
+          client-side on this page · does not change overall
+        </span>
+      </div>
+      {jobs.isError && (
+        <p className="text-sm text-red-300">
+          {jobs.error instanceof Error ? jobs.error.message : "failed"}
+        </p>
+      )}
       <ul className="divide-y divide-zinc-800">
         {rows.map((row) => (
           <li key={row.id} className="py-3">
-            <button className="text-left" onClick={() => navigate(`/jobs/${row.id}`)}>
+            <Link to="/jobs/$jobId" params={{ jobId: row.id }} className="block text-left">
               <div className="font-medium">{row.title}</div>
               <div className="text-sm text-zinc-400">
                 {row.company_name} · {row.work_mode} · {row.status}
@@ -296,25 +289,64 @@ function JobList({ live }: { live: number }) {
               </div>
               {row.match_overall != null ? (
                 <div className="mt-1 flex flex-wrap gap-x-3 text-xs text-zinc-400">
-                  <span className="text-zinc-200">{pct(row.match_overall)} match</span>
+                  <span className={sort === "overall" ? "text-zinc-100" : "text-zinc-200"}>
+                    {pct(row.match_overall)} match
+                  </span>
                   {row.skills_coverage != null ? (
-                    <span title="Required bars with tenure stripped. Does not change overall.">
+                    <span
+                      className={sort === "skills" ? "text-zinc-100" : undefined}
+                      title="Required bars with tenure stripped. Does not change overall."
+                    >
                       skills {pct(row.skills_coverage)}
                     </span>
                   ) : null}
                   {row.years_fit != null ? (
-                    <span title="Required year-count asks. Recruiters overfit this; postings often mean a wishlist.">
+                    <span
+                      className={sort === "years" ? "text-zinc-100" : undefined}
+                      title="Required year-count asks. Recruiters overfit this; postings often mean a wishlist."
+                    >
                       years {pct(row.years_fit)}
                     </span>
                   ) : null}
                 </div>
               ) : null}
-            </button>
+            </Link>
           </li>
         ))}
       </ul>
-      {rows.length === 0 && !error && <p className="text-zinc-500">No jobs yet.</p>}
+      {rows.length === 0 && !jobs.isError && !jobs.isPending && (
+        <p className="text-zinc-500">No jobs yet.</p>
+      )}
     </div>
+  );
+}
+
+function SortChip({
+  current,
+  value,
+  label,
+}: {
+  current: JobSort;
+  value: JobSort;
+  label: string;
+}) {
+  const active = current === value;
+  return (
+    <Link
+      to="/jobs"
+      search={(prev) => ({
+        ...prev,
+        sort: value === "overall" ? undefined : value,
+      })}
+      replace
+      className={
+        active
+          ? "rounded-md bg-zinc-700 px-2 py-0.5 text-zinc-50 ring-1 ring-zinc-400"
+          : "rounded-md px-2 py-0.5 text-zinc-400 hover:text-zinc-200"
+      }
+    >
+      {label}
+    </Link>
   );
 }
 
@@ -337,83 +369,67 @@ function provenanceDot(job: JobDetail, field: string) {
   );
 }
 
-function JobPage({ id, live }: { id: string; live: number }) {
-  const [job, setJob] = useState<JobDetail | null>(null);
-  const [match, setMatch] = useState<MatchSummary | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    let cancelled = false;
-    api
-      .job(id)
-      .then((detail) => {
-        if (!cancelled) setJob(detail);
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : "failed");
-      });
-    api
-      .jobMatch(id)
-      .then((score) => {
-        if (!cancelled) setMatch(score);
-      })
-      .catch(() => {
-        if (!cancelled) setMatch(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [id, live]);
+export function JobPage() {
+  const { jobId } = useParams({ from: "/jobs/$jobId" });
+  const qc = useQueryClient();
+  const job = useQuery({ queryKey: keys.job(jobId), queryFn: () => fetchers.job(jobId) });
+  const match = useQuery({
+    queryKey: keys.match(jobId),
+    queryFn: () => fetchers.match(jobId),
+    retry: false,
+  });
+  const archive = useMutation({
+    mutationFn: (next: boolean) => api.patchJob(jobId, { is_archived: next }),
+    onSuccess: (detail) => {
+      qc.setQueryData(keys.job(jobId), detail);
+      qc.invalidateQueries({ queryKey: ["jobs"] });
+    },
+  });
 
-  async function toggleArchive() {
-    if (!job) return;
-    setBusy(true);
-    try {
-      const next = await api.patchJob(id, { is_archived: !job.is_archived });
-      setJob(next);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "failed");
-    } finally {
-      setBusy(false);
-    }
+  if (job.isError) {
+    return (
+      <p className="text-red-300">
+        {job.error instanceof Error ? job.error.message : "failed"}
+      </p>
+    );
   }
-
-  if (error) return <p className="text-red-300">{error}</p>;
-  if (!job) return <p className="text-zinc-500">Loading…</p>;
-  const verdictByReq = new Map((match?.verdicts ?? []).map((v) => [v.requirement_id, v]));
+  if (!job.data) return <p className="text-zinc-500">Loading…</p>;
+  const detail = job.data;
+  const score = match.data ?? null;
+  const verdictByReq = new Map((score?.verdicts ?? []).map((v) => [v.requirement_id, v]));
   return (
     <article className="space-y-6">
       <div>
-        <p className="text-sm text-zinc-400">{job.company_name}</p>
+        <p className="text-sm text-zinc-400">{detail.company_name}</p>
         <h1 className="text-2xl font-semibold">
-          {job.title}
-          {provenanceDot(job, "title")}
+          {detail.title}
+          {provenanceDot(detail, "title")}
         </h1>
         <p className="mt-1 text-sm text-zinc-400">
-          {job.work_mode} · {job.seniority} · {job.employment_type}
-          {job.extraction_partial ? " · partial extraction" : ""}
-          {job.is_archived ? " · archived" : ""}
+          {detail.work_mode} · {detail.seniority} · {detail.employment_type}
+          {detail.extraction_partial ? " · partial extraction" : ""}
+          {detail.is_archived ? " · archived" : ""}
         </p>
-        {job.apply_url && (
-          <a className="mt-2 inline-block text-sm text-indigo-300" href={job.apply_url}>
+        {detail.apply_url && (
+          <a className="mt-2 inline-block text-sm text-indigo-300" href={detail.apply_url}>
             Apply
           </a>
         )}
         <div className="mt-3">
           <button
-            disabled={busy}
-            onClick={toggleArchive}
+            disabled={archive.isPending}
+            onClick={() => archive.mutate(!detail.is_archived)}
             className="rounded-lg border border-zinc-700 px-3 py-1 text-sm text-zinc-300 disabled:opacity-50"
           >
-            {job.is_archived ? "Unarchive" : "Archive"}
+            {detail.is_archived ? "Unarchive" : "Archive"}
           </button>
         </div>
       </div>
-      {match && (
+      {score && (
         <section className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
           <h2 className="text-lg font-medium">
-            Match {Math.round(match.overall * 100)}%
-            {match.is_stale ? " · stale" : ""}
+            Match {Math.round(score.overall * 100)}%
+            {score.is_stale ? " · stale" : ""}
           </h2>
           <p className="mt-1 text-xs text-zinc-500">
             Overall is unchanged. Skills ignore year shortfalls when the skill is on the
@@ -423,44 +439,44 @@ function JobPage({ id, live }: { id: string; live: number }) {
           <dl className="mt-3 grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
             <ScoreCell
               label="Skills"
-              value={match.skills_coverage}
+              value={score.skills_coverage}
               hint="required bars, tenure stripped"
             />
             <ScoreCell
               label="Years"
-              value={match.years_fit}
+              value={score.years_fit}
               hint="required year-count asks"
             />
             <ScoreCell
               label="Required"
-              value={match.required_coverage}
+              value={score.required_coverage}
               hint="feeds overall (includes years)"
             />
-            <ScoreCell label="Preferred" value={match.preferred_coverage} />
-            <ScoreCell label="Seniority" value={match.seniority_fit} />
-            <ScoreCell label="Comp" value={match.comp_fit} />
-            <ScoreCell label="Location" value={match.location_fit} />
+            <ScoreCell label="Preferred" value={score.preferred_coverage} />
+            <ScoreCell label="Seniority" value={score.seniority_fit} />
+            <ScoreCell label="Comp" value={score.comp_fit} />
+            <ScoreCell label="Location" value={score.location_fit} />
           </dl>
-          {match.blocker_count > 0 ? (
+          {score.blocker_count > 0 ? (
             <p className="mt-2 text-sm text-amber-300">
-              {match.blocker_count} blocker(s) — overall is capped
+              {score.blocker_count} blocker(s) — overall is capped
             </p>
           ) : null}
         </section>
       )}
-      {job.salary_raw && (
+      {detail.salary_raw && (
         <p>
-          Comp: {job.salary_raw}
-          {provenanceDot(job, "salary")}
+          Comp: {detail.salary_raw}
+          {provenanceDot(detail, "salary")}
         </p>
       )}
-      {job.locations.length > 0 && (
-        <p className="text-zinc-300">Location: {job.locations.join(" · ")}</p>
+      {detail.locations.length > 0 && (
+        <p className="text-zinc-300">Location: {detail.locations.join(" · ")}</p>
       )}
       <section>
         <h2 className="mb-2 text-lg font-medium">Requirements</h2>
         <ul className="space-y-2 text-sm">
-          {job.requirements.map((r) => {
+          {detail.requirements.map((r) => {
             const verdict = verdictByReq.get(r.id);
             return (
               <li key={r.id}>
@@ -486,7 +502,7 @@ function JobPage({ id, live }: { id: string; live: number }) {
       </section>
       <section>
         <h2 className="mb-2 text-lg font-medium">Description</h2>
-        <pre className="whitespace-pre-wrap text-sm text-zinc-300">{job.description_md}</pre>
+        <pre className="whitespace-pre-wrap text-sm text-zinc-300">{detail.description_md}</pre>
       </section>
     </article>
   );
@@ -519,87 +535,54 @@ function ScoreCell({
   );
 }
 
-function TaskPage({ id, pushed }: { id: string; pushed?: TaskView }) {
-  const [task, setTask] = useState<TaskView | null>(pushed ?? null);
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    if (pushed && pushed.id === id) setTask(pushed);
-  }, [id, pushed]);
-  useEffect(() => {
-    let cancelled = false;
-    api
-      .task(id)
-      .then((next) => {
-        if (!cancelled) setTask(next);
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : "failed");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [id]);
+export function TaskPage() {
+  const { taskId } = useParams({ from: "/tasks/$taskId" });
+  const task = useQuery({
+    queryKey: keys.task(taskId),
+    queryFn: () => fetchers.task(taskId),
+  });
+  const done = useMemo(
+    () => task.data && ["done", "failed", "cancelled"].includes(task.data.status),
+    [task.data],
+  );
 
-  const done = useMemo(() => task && ["done", "failed", "cancelled"].includes(task.status), [task]);
-
-  if (error) return <p className="text-red-300">{error}</p>;
-  if (!task) return <p className="text-zinc-500">Loading…</p>;
+  if (task.isError) {
+    return (
+      <p className="text-red-300">
+        {task.error instanceof Error ? task.error.message : "failed"}
+      </p>
+    );
+  }
+  if (!task.data) return <p className="text-zinc-500">Loading…</p>;
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-semibold">Task {task.kind}</h1>
+      <h1 className="text-2xl font-semibold">Task {task.data.kind}</h1>
       <p className="text-zinc-400">
-        {task.status}
-        {task.progress_message ? ` — ${task.progress_message}` : ""}
+        {task.data.status}
+        {task.data.progress_message ? ` — ${task.data.progress_message}` : ""}
       </p>
-      {task.last_error && <p className="text-red-300">{task.last_error}</p>}
+      {task.data.last_error && <p className="text-red-300">{task.data.last_error}</p>}
       {done && (
-        <button className="text-indigo-300" onClick={() => navigate("/jobs")}>
+        <Link to="/jobs" className="text-indigo-300">
           View jobs
-        </button>
+        </Link>
       )}
     </div>
   );
 }
 
-function ProfilePage({ live }: { live: number }) {
-  const [profile, setProfile] = useState<Profile | null>(null);
+export function ProfilePage() {
+  const qc = useQueryClient();
   const [text, setText] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    api
-      .profile()
-      .then((row) => {
-        if (!cancelled) setProfile(row);
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : "failed");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [live]);
-
-  async function onImport(e: FormEvent) {
-    e.preventDefault();
-    setBusy(true);
-    setError(null);
-    setMessage(null);
-    try {
-      const report = await api.importResume(text);
-      setMessage(
-        `Imported ${report.items} items, ${report.accomplishments} accomplishments, ${report.skills} skills. Jobs are rescoring.`,
-      );
-      setProfile(await api.profile());
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "import failed");
-    } finally {
-      setBusy(false);
-    }
-  }
+  const profile = useQuery({ queryKey: keys.profile, queryFn: fetchers.profile });
+  const importResume = useMutation({
+    mutationFn: () => api.importResume(text),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: keys.profile });
+      await qc.invalidateQueries({ queryKey: ["jobs"] });
+      await qc.invalidateQueries({ queryKey: ["match"] });
+    },
+  });
 
   return (
     <div className="space-y-8">
@@ -610,7 +593,13 @@ function ProfilePage({ live }: { live: number }) {
           saved job. Nothing here is invented — only what the file already says.
         </p>
       </div>
-      <form onSubmit={onImport} className="space-y-3">
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          importResume.mutate();
+        }}
+        className="space-y-3"
+      >
         <textarea
           className="min-h-40 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm"
           placeholder="Paste # Name — Career Evidence Bank …"
@@ -619,41 +608,59 @@ function ProfilePage({ live }: { live: number }) {
           required
         />
         <button
-          disabled={busy}
+          disabled={importResume.isPending}
           className="rounded-lg bg-indigo-400 px-4 py-2 text-sm font-semibold text-zinc-950 disabled:opacity-50"
         >
-          {busy ? "Importing…" : "Import Markdown"}
+          {importResume.isPending ? "Importing…" : "Import Markdown"}
         </button>
       </form>
-      {error && <p className="text-sm text-red-300">{error}</p>}
-      {message && <p className="text-sm text-emerald-300">{message}</p>}
-      {profile && (
+      {importResume.isError && (
+        <p className="text-sm text-red-300">
+          {importResume.error instanceof Error ? importResume.error.message : "import failed"}
+        </p>
+      )}
+      {importResume.isSuccess && importResume.data && (
+        <p className="text-sm text-emerald-300">
+          Imported {importResume.data.items} items, {importResume.data.accomplishments}{" "}
+          accomplishments, {importResume.data.skills} skills. Jobs are rescoring.
+        </p>
+      )}
+      {profile.isError && (
+        <p className="text-sm text-red-300">
+          {profile.error instanceof Error ? profile.error.message : "failed"}
+        </p>
+      )}
+      {profile.data && (
         <section className="space-y-4">
           <div>
-            <h2 className="text-xl font-semibold">{profile.full_name ?? profile.name}</h2>
+            <h2 className="text-xl font-semibold">
+              {profile.data.full_name ?? profile.data.name}
+            </h2>
             <p className="text-sm text-zinc-400">
-              {profile.headline ?? "Default profile"}
-              {profile.location ? ` · ${profile.location}` : ""}
-              {profile.accepts_remote ? " · remote" : ""}
-              {profile.years_experience != null
-                ? ` · ${profile.years_experience.toFixed(1)}y`
+              {profile.data.headline ?? "Default profile"}
+              {profile.data.location ? ` · ${profile.data.location}` : ""}
+              {profile.data.accepts_remote ? " · remote" : ""}
+              {profile.data.years_experience != null
+                ? ` · ${profile.data.years_experience.toFixed(1)}y`
                 : ""}
-              {profile.target_comp_min_cents != null
-                ? ` · ≥$${(profile.target_comp_min_cents / 100).toLocaleString()}`
+              {profile.data.target_comp_min_cents != null
+                ? ` · ≥$${(profile.data.target_comp_min_cents / 100).toLocaleString()}`
                 : ""}
             </p>
-            {profile.target_titles.length > 0 && (
-              <p className="mt-1 text-sm text-zinc-500">{profile.target_titles.join(" · ")}</p>
+            {profile.data.target_titles.length > 0 && (
+              <p className="mt-1 text-sm text-zinc-500">
+                {profile.data.target_titles.join(" · ")}
+              </p>
             )}
-            {profile.summary_md && (
-              <p className="mt-3 text-sm text-zinc-300">{profile.summary_md}</p>
+            {profile.data.summary_md && (
+              <p className="mt-3 text-sm text-zinc-300">{profile.data.summary_md}</p>
             )}
           </div>
-          {profile.skills.filter((s) => s.is_primary).length > 0 && (
+          {profile.data.skills.filter((s) => s.is_primary).length > 0 && (
             <div>
               <h3 className="text-sm font-medium text-zinc-400">Primary skills</h3>
               <p className="mt-1 text-sm text-zinc-200">
-                {profile.skills
+                {profile.data.skills
                   .filter((s) => s.is_primary)
                   .map((s) =>
                     s.years != null ? `${s.slug} ${s.years.toFixed(1)}y` : s.slug,
@@ -663,7 +670,7 @@ function ProfilePage({ live }: { live: number }) {
             </div>
           )}
           <div className="space-y-5">
-            {profile.experience.map((item) => (
+            {profile.data.experience.map((item) => (
               <article key={item.id}>
                 <h3 className="font-medium">
                   {item.title ?? item.kind} — {item.org}

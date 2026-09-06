@@ -6,7 +6,7 @@
 |---|---|---|
 | Framework | React 19 + TypeScript (strict) | ecosystem depth for tables/virtualization/editors |
 | Build | Vite 7 | fast dev, good code splitting, brotli output |
-| Routing | TanStack Router (file-based) | typed params/search — filters live in the URL safely |
+| Routing | TanStack Router (code-based tree; file-based later) | typed params/search — filters live in the URL safely |
 | Server state | TanStack Query | caching, invalidation, optimistic updates |
 | Styling | Tailwind CSS v4 | no naming overhead, dark mode, tiny output |
 | Components | Radix primitives + local components | accessible, unstyled, no design-system lock-in |
@@ -87,7 +87,8 @@ application · Refresh · Archive).
 close-date urgency, match overall plus the diagnostic Skills / Years split, status. Facet
 rail on the left with counts. Column set and saved views are user-configurable. Bulk select
 for tag/archive/rescore. Skills and Years do not change overall; they exist so a 5-year
-wishlist can be compared across rows without opening each job.
+wishlist can be compared across rows without opening each job. Search (`?q=`) and sort
+(`?sort=overall|skills|years`) live in the URL; sort reorders the loaded page only.
 
 **Experience bank editor** is a two-pane outline: roles on the left, accomplishments on the
 right with inline metric fields, skill chips with autocomplete, strength stars, and a
