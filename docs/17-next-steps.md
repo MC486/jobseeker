@@ -16,18 +16,25 @@ pair with a hashed, ingest-scoped device token.
 - Field provenance rows; PATCH `/api/v1/jobs/{id}` is sticky `manual`
 - HTTP API: health, ready, meta, ingest, jobs, match, tasks, OpenAPI, SPA fallback
 - Auth: pairing tokens, plus password sessions (`jobseeker user set-password`)
-- CLI: `serve`, `migrate`, `add`, `list`, `show`, `merge`, `split`, `pair`, `user set-password`,
-  `profile import|show`, `reconcile`, `openapi`
+- CLI: `serve`, `migrate`, `add`, `list`, `show`, `merge`, `split`, `duplicates`, `pair`,
+  `user set-password`, `profile import|show`, `reconcile`, `openapi`
 - React/Vite/Tailwind shell in `web/` (score + confidence dots)
 - MV3 extension with pairing in `extension/`
 - Paste fixture: `fixtures/greenhouse-platform-engineer.html`
 
 ## Do next (M0 remaining → M1)
 
-1. **File-based routes + virtualized job table.** Split is in. Next is
+1. **File-based routes + virtualized job table.** Duplicate flags are in. Next is
    file-based routes and TanStack Table.
 
 ## Just shipped
+
+- **Possible duplicates.** `GET /api/v1/jobs/:id/duplicates` and
+  `jobseeker duplicates <id>` flag same-company jobs whose
+  `title_normalized` Jaccard is ≥ 0.6. Strength is `strong` when Jaccard ≥ 0.8
+  and both are remote or share a location. Nothing is merged automatically —
+  the job page offers Compare and a recommended Merge (more reqs / ATS wins).
+  Harbor vs Zillow is not a candidate.
 
 - **Split (FR-A-11).** `POST /api/v1/jobs/:id/split {listing_id}` and
   `jobseeker split <job> <listing>` peel one listing off a merged job into a

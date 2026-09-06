@@ -102,7 +102,8 @@ POST /api/v1/jobs/:id/split      {listing_id}
                                       otherwise). Original keeps title /
                                       description. Returns
                                       `{from_id, new_id, listing_id}`.
-GET  /api/v1/jobs/:id/similar    → nearest neighbours by embedding
+GET  /api/v1/jobs/:id/duplicates → same-company title matches (flag only)
+GET  /api/v1/jobs/:id/similar    → nearest neighbours by embedding (not implemented)
 ```
 
 ### Companies, skills, tags, views
