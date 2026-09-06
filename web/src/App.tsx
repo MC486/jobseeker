@@ -1,19 +1,37 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, Outlet, useNavigate, useParams, useSearch } from "@tanstack/react-router";
-import { api, JobDetail, JobListRow, Me } from "./api";
+import {
+  keepPreviousData,
+  useMutation,
+  useQueries,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
+import {
+  Link,
+  Outlet,
+  useNavigate,
+  useParams,
+  useRouterState,
+  useSearch,
+} from "@tanstack/react-router";
+import { api, JobDetail, JobListRow, MatchSummary, Me } from "./api";
+import { MAX_COMPARE, parseCompareIds } from "./compare";
 import { fetchers, keys, subscribeQueryEvents } from "./query";
 
 export type JobSort = "overall" | "skills" | "years";
 
 export function RootLayout() {
   const me = useQuery({ queryKey: keys.me, queryFn: fetchers.me, staleTime: 60_000 });
+  const wide = useRouterState({
+    select: (s) => s.location.pathname === "/jobs/compare",
+  });
   useEffect(() => subscribeQueryEvents(), []);
+  const shell = wide ? "max-w-6xl" : "max-w-4xl";
 
   return (
     <div className="min-h-screen">
       <header className="border-b border-zinc-800">
-        <div className="mx-auto flex max-w-4xl items-baseline justify-between px-5 py-4">
+        <div className={`mx-auto flex ${shell} items-baseline justify-between px-5 py-4`}>
           <Link to="/" className="text-sm font-semibold tracking-wide">
             jobseeker
           </Link>
@@ -34,7 +52,7 @@ export function RootLayout() {
           </nav>
         </div>
       </header>
-      <main className="mx-auto max-w-4xl px-5 py-8">
+      <main className={`mx-auto ${shell} px-5 py-8`}>
         {me.data?.auth_mode === "password" && !me.data.authenticated ? (
           <Login />
         ) : (
@@ -254,10 +272,32 @@ export function JobList() {
     const items = jobs.data?.items ?? [];
     return [...items].sort((a, b) => scoreOf(b, sort) - scoreOf(a, sort));
   }, [jobs.data, sort]);
+  const [picked, setPicked] = useState<string[]>([]);
+
+  function togglePick(id: string) {
+    setPicked((prev) => {
+      if (prev.includes(id)) return prev.filter((item) => item !== id);
+      if (prev.length >= MAX_COMPARE) return prev;
+      return [...prev, id];
+    });
+  }
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-semibold">Jobs</h1>
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <h1 className="text-2xl font-semibold">Jobs</h1>
+        {picked.length >= 2 ? (
+          <Link
+            to="/jobs/compare"
+            search={{ ids: picked.join(",") }}
+            className="rounded-lg bg-indigo-400 px-3 py-1.5 text-sm font-semibold text-zinc-950"
+          >
+            Compare {picked.length}
+          </Link>
+        ) : (
+          <span className="text-xs text-zinc-600">Select 2–4 to compare</span>
+        )}
+      </div>
       <input
         className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2"
         placeholder="Search title, company, requirements…"
@@ -279,40 +319,52 @@ export function JobList() {
         </p>
       )}
       <ul className="divide-y divide-zinc-800">
-        {rows.map((row) => (
-          <li key={row.id} className="py-3">
-            <Link to="/jobs/$jobId" params={{ jobId: row.id }} className="block text-left">
-              <div className="font-medium">{row.title}</div>
-              <div className="text-sm text-zinc-400">
-                {row.company_name} · {row.work_mode} · {row.status}
-                {row.primary_location ? ` · ${row.primary_location}` : ""}
-              </div>
-              {row.match_overall != null ? (
-                <div className="mt-1 flex flex-wrap gap-x-3 text-xs text-zinc-400">
-                  <span className={sort === "overall" ? "text-zinc-100" : "text-zinc-200"}>
-                    {pct(row.match_overall)} match
-                  </span>
-                  {row.skills_coverage != null ? (
-                    <span
-                      className={sort === "skills" ? "text-zinc-100" : undefined}
-                      title="Required bars with tenure stripped. Does not change overall."
-                    >
-                      skills {pct(row.skills_coverage)}
-                    </span>
-                  ) : null}
-                  {row.years_fit != null ? (
-                    <span
-                      className={sort === "years" ? "text-zinc-100" : undefined}
-                      title="Required year-count asks. Recruiters overfit this; postings often mean a wishlist."
-                    >
-                      years {pct(row.years_fit)}
-                    </span>
-                  ) : null}
+        {rows.map((row) => {
+          const checked = picked.includes(row.id);
+          const locked = !checked && picked.length >= MAX_COMPARE;
+          return (
+            <li key={row.id} className="flex items-start gap-3 py-3">
+              <input
+                type="checkbox"
+                className="mt-1.5 accent-indigo-400"
+                checked={checked}
+                disabled={locked}
+                aria-label={`Select ${row.title} at ${row.company_name} for compare`}
+                onChange={() => togglePick(row.id)}
+              />
+              <Link to="/jobs/$jobId" params={{ jobId: row.id }} className="min-w-0 flex-1 text-left">
+                <div className="font-medium">{row.title}</div>
+                <div className="text-sm text-zinc-400">
+                  {row.company_name} · {row.work_mode} · {row.status}
+                  {row.primary_location ? ` · ${row.primary_location}` : ""}
                 </div>
-              ) : null}
-            </Link>
-          </li>
-        ))}
+                {row.match_overall != null ? (
+                  <div className="mt-1 flex flex-wrap gap-x-3 text-xs text-zinc-400">
+                    <span className={sort === "overall" ? "text-zinc-100" : "text-zinc-200"}>
+                      {pct(row.match_overall)} match
+                    </span>
+                    {row.skills_coverage != null ? (
+                      <span
+                        className={sort === "skills" ? "text-zinc-100" : undefined}
+                        title="Required bars with tenure stripped. Does not change overall."
+                      >
+                        skills {pct(row.skills_coverage)}
+                      </span>
+                    ) : null}
+                    {row.years_fit != null ? (
+                      <span
+                        className={sort === "years" ? "text-zinc-100" : undefined}
+                        title="Required year-count asks. Recruiters overfit this; postings often mean a wishlist."
+                      >
+                        years {pct(row.years_fit)}
+                      </span>
+                    ) : null}
+                  </div>
+                ) : null}
+              </Link>
+            </li>
+          );
+        })}
       </ul>
       {rows.length === 0 && !jobs.isError && !jobs.isPending && (
         <p className="text-zinc-500">No jobs yet.</p>
@@ -347,6 +399,247 @@ function SortChip({
     >
       {label}
     </Link>
+  );
+}
+
+const COMPARE_SCORES: {
+  key: "overall" | "skills_coverage" | "years_fit" | "required_coverage" | "preferred_coverage" | "seniority_fit" | "comp_fit" | "location_fit";
+  label: string;
+  hint?: string;
+}[] = [
+  { key: "overall", label: "Overall", hint: "unchanged weighted score" },
+  { key: "skills_coverage", label: "Skills", hint: "tenure stripped" },
+  { key: "years_fit", label: "Years", hint: "year-count asks" },
+  { key: "required_coverage", label: "Required", hint: "feeds overall" },
+  { key: "preferred_coverage", label: "Preferred" },
+  { key: "seniority_fit", label: "Seniority" },
+  { key: "comp_fit", label: "Comp" },
+  { key: "location_fit", label: "Location" },
+];
+
+function scoreValue(
+  match: MatchSummary | undefined,
+  key: (typeof COMPARE_SCORES)[number]["key"],
+): number | null {
+  if (!match) return null;
+  if (key === "overall") return match.overall;
+  return match[key] ?? null;
+}
+
+function bestIndexes(values: Array<number | null>): Set<number> {
+  let top = -Infinity;
+  const winners = new Set<number>();
+  values.forEach((value, i) => {
+    if (value == null) return;
+    if (value > top) {
+      top = value;
+      winners.clear();
+      winners.add(i);
+    } else if (value === top) {
+      winners.add(i);
+    }
+  });
+  return winners.size === values.filter((v) => v != null).length ? new Set() : winners;
+}
+
+export function ComparePage() {
+  const navigate = useNavigate({ from: "/jobs/compare" });
+  const search = useSearch({ from: "/jobs/compare" });
+  const ids = parseCompareIds(search.ids);
+  const details = useQueries({
+    queries: ids.map((id) => ({
+      queryKey: keys.job(id),
+      queryFn: () => fetchers.job(id),
+    })),
+  });
+  const matches = useQueries({
+    queries: ids.map((id) => ({
+      queryKey: keys.match(id),
+      queryFn: () => fetchers.match(id),
+      retry: false,
+    })),
+  });
+
+  function drop(id: string) {
+    const next = ids.filter((item) => item !== id);
+    void navigate({
+      search: { ids: next.length ? next.join(",") : undefined },
+      replace: true,
+    });
+  }
+
+  if (ids.length < 2) {
+    return (
+      <div className="space-y-3">
+        <h1 className="text-2xl font-semibold">Compare</h1>
+        <p className="text-sm text-zinc-400">
+          Select 2–4 jobs on the list. Overall is unchanged — this page only lines the
+          same numbers up.
+        </p>
+        <Link to="/jobs" className="text-sm text-indigo-300">
+          Back to jobs
+        </Link>
+      </div>
+    );
+  }
+
+  const loading = details.some((q) => q.isPending);
+  const columns = ids.map((id, i) => ({
+    id,
+    job: details[i]?.data,
+    match: matches[i]?.data,
+    error: details[i]?.error,
+  }));
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold">Compare</h1>
+          <p className="mt-1 text-xs text-zinc-500">
+            Highest value in a score row is highlighted. Skills and Years are diagnostic
+            and do not change overall.
+          </p>
+        </div>
+        <Link to="/jobs" className="text-sm text-zinc-400 hover:text-zinc-100">
+          Back to jobs
+        </Link>
+      </div>
+      {loading && <p className="text-sm text-zinc-500">Loading…</p>}
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[40rem] border-collapse text-sm">
+          <thead>
+            <tr className="border-b border-zinc-800 align-top">
+              <th className="w-28 py-2 text-left text-xs font-normal uppercase tracking-wide text-zinc-500">
+                Field
+              </th>
+              {columns.map((col) => (
+                <th key={col.id} className="px-3 py-2 text-left font-medium">
+                  {col.job ? (
+                    <>
+                      <Link
+                        to="/jobs/$jobId"
+                        params={{ jobId: col.id }}
+                        className="text-zinc-100 hover:text-indigo-300"
+                      >
+                        {col.job.title}
+                      </Link>
+                      <div className="text-xs font-normal text-zinc-400">
+                        {col.job.company_name}
+                      </div>
+                      <button
+                        type="button"
+                        className="mt-1 text-xs font-normal text-zinc-500 hover:text-zinc-200"
+                        onClick={() => drop(col.id)}
+                      >
+                        Remove
+                      </button>
+                    </>
+                  ) : col.error ? (
+                    <span className="text-red-300">missing</span>
+                  ) : (
+                    <span className="text-zinc-500">…</span>
+                  )}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            <tr className="border-b border-zinc-800/80">
+              <th className="py-2 text-left text-xs font-normal text-zinc-500">Location</th>
+              {columns.map((col) => (
+                <td key={col.id} className="px-3 py-2 text-zinc-300">
+                  {col.job?.locations.join(" · ") || "—"}
+                </td>
+              ))}
+            </tr>
+            <tr className="border-b border-zinc-800/80">
+              <th className="py-2 text-left text-xs font-normal text-zinc-500">Mode</th>
+              {columns.map((col) => (
+                <td key={col.id} className="px-3 py-2 text-zinc-300">
+                  {col.job ? `${col.job.work_mode} · ${col.job.seniority}` : "—"}
+                </td>
+              ))}
+            </tr>
+            <tr className="border-b border-zinc-800/80">
+              <th className="py-2 text-left text-xs font-normal text-zinc-500">Comp</th>
+              {columns.map((col) => (
+                <td key={col.id} className="px-3 py-2 text-zinc-300">
+                  {col.job?.salary_raw || "—"}
+                </td>
+              ))}
+            </tr>
+            {COMPARE_SCORES.map((row) => {
+              const values = columns.map((col) => scoreValue(col.match, row.key));
+              const winners = bestIndexes(values);
+              return (
+                <tr key={row.key} className="border-b border-zinc-800/80">
+                  <th className="py-2 text-left text-xs font-normal text-zinc-500">
+                    <span>{row.label}</span>
+                    {row.hint ? (
+                      <span className="mt-0.5 block font-normal normal-case tracking-normal text-zinc-600">
+                        {row.hint}
+                      </span>
+                    ) : null}
+                  </th>
+                  {values.map((value, i) => (
+                    <td
+                      key={columns[i].id}
+                      className={`px-3 py-2 ${winners.has(i) ? "font-medium text-emerald-300" : "text-zinc-200"}`}
+                    >
+                      {pct(value)}
+                    </td>
+                  ))}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {columns.map((col) => {
+          const reqs = col.job?.requirements ?? [];
+          const verdicts = new Map(
+            (col.match?.verdicts ?? []).map((v) => [v.requirement_id, v]),
+          );
+          const shown = reqs.slice(0, 12);
+          return (
+            <div key={col.id} className="rounded-xl border border-zinc-800 p-3">
+              <h2 className="text-sm font-medium text-zinc-200">
+                {col.job?.title ?? "Requirements"}
+              </h2>
+              <ul className="mt-2 space-y-2 text-xs text-zinc-400">
+                {shown.map((r) => {
+                  const verdict = verdicts.get(r.id);
+                  return (
+                    <li key={r.id}>
+                      <span className="text-zinc-500">{r.necessity}</span> {r.text}
+                      {verdict ? (
+                        <span className="ml-1 text-zinc-300">
+                          · {verdict.status} ({Math.round(verdict.score * 100)}%)
+                          {verdict.years_needed != null
+                            ? ` · ${fmtYears(verdict.years_have)} / ${fmtYears(verdict.years_needed)} yr`
+                            : ""}
+                        </span>
+                      ) : null}
+                    </li>
+                  );
+                })}
+              </ul>
+              {reqs.length > shown.length ? (
+                <Link
+                  to="/jobs/$jobId"
+                  params={{ jobId: col.id }}
+                  className="mt-2 inline-block text-xs text-indigo-300"
+                >
+                  {reqs.length - shown.length} more
+                </Link>
+              ) : null}
+            </div>
+          );
+        })}
+      </section>
+    </div>
   );
 }
 
