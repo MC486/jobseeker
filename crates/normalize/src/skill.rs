@@ -646,6 +646,31 @@ pub static SEED_SKILLS: Lazy<Vec<SeedSkill>> = Lazy::new(|| {
             parent = "python",
             aliases = ["numpy", "scipy", "scikit-learn", "sklearn"]
         ),
+        skill!(
+            "lightgbm",
+            "LightGBM",
+            Library,
+            parent = "machine-learning",
+            aliases = ["light gbm", "xgboost", "catboost", "gradient boosting"]
+        ),
+        skill!(
+            "dataiku",
+            "Dataiku",
+            Platform,
+            aliases = ["dataiku dss", "dss"]
+        ),
+        skill!(
+            "tableau",
+            "Tableau",
+            Tool,
+            aliases = ["tableau server", "tableau desktop"]
+        ),
+        skill!(
+            "databricks",
+            "Databricks",
+            Platform,
+            aliases = ["databricks sql"]
+        ),
         // ---- mobile & embedded -------------------------------------------------------
         skill!("mobile", "Mobile Development", Concept),
         skill!(

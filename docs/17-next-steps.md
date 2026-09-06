@@ -11,11 +11,13 @@ pair with a hashed, ingest-scoped device token.
 - SQLite schema, dual pools, FTS5, task queue, persist (`crates/db`)
 - Normalizers, acquisition guards, extraction, store, matching, resume
 - Pipeline: `ingest_url` / `ingest_paste` / `ingest_capture` → extract → files → score
-- Default profile (Rust 8y, Kubernetes 5y) seeded on `Pipeline::open`
+- Default profile (Rust 8y, Kubernetes 5y) seeded on `Pipeline::open`;
+  replaced by `jobseeker profile import` / `POST /api/v1/profiles/default/import-resume`
 - Field provenance rows; PATCH `/api/v1/jobs/{id}` is sticky `manual`
 - HTTP API: health, ready, meta, ingest, jobs, match, tasks, OpenAPI, SPA fallback
 - Auth: pairing tokens, plus password sessions (`jobseeker user set-password`)
-- CLI: `serve`, `migrate`, `add`, `list`, `show`, `pair`, `user set-password`, `reconcile`, `openapi`
+- CLI: `serve`, `migrate`, `add`, `list`, `show`, `pair`, `user set-password`,
+  `profile import|show`, `reconcile`, `openapi`
 - React/Vite/Tailwind shell in `web/` (score + confidence dots)
 - MV3 extension with pairing in `extension/`
 - Paste fixture: `fixtures/greenhouse-platform-engineer.html`
@@ -23,11 +25,19 @@ pair with a hashed, ingest-scoped device token.
 ## Do next (M0 remaining → M1)
 
 1. **TanStack Router + Query.** The shell still uses a hand-rolled router; SSE
-   already invalidates the job list / task / match views.
+   already invalidates the job list / task / match / profile views.
 2. **Workday adapter.** SPA; extension path. Location lives in
    `data-automation-id`; `reqId` is the durable identifier.
 
 ## Just shipped
+
+- **Experience-bank import.** Markdown (evidence bank or a conventional resume)
+  parses deterministically into `experience_item` + `accomplishment` +
+  `profile_skill`. Placeholder Rust/K8s years are replaced. Jobs rescore
+  against honest tenure and the imported skill bank. CLI:
+  `jobseeker profile import --file bank.md`. UI: `/profile`.
+  Fixture: `fixtures/evidence-bank.md` (sanitized). Do not commit a personal
+  bank that contains a phone number, employer email, or internal names.
 
 - **Password auth.** `auth.mode = password` gates the API. Login is
   `POST /api/v1/auth/login` → `js_session` cookie (HttpOnly, SameSite=Lax,

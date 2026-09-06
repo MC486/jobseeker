@@ -1,4 +1,4 @@
-//! Process entrypoint: `jobseeker serve`, `add`, `list`, `show`, `migrate`, `openapi`, `reconcile`.
+//! Process entrypoint: `jobseeker serve`, `add`, `list`, `show`, `migrate`, `openapi`, `reconcile`, `profile`.
 
 use std::io::{self, Read};
 use std::path::PathBuf;
@@ -90,6 +90,11 @@ enum Command {
         #[command(subcommand)]
         command: UserCommand,
     },
+    /// Default profile and experience bank.
+    Profile {
+        #[command(subcommand)]
+        command: ProfileCommand,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -102,6 +107,21 @@ enum UserCommand {
         #[arg(long)]
         password: Option<String>,
     },
+}
+
+#[derive(Subcommand, Debug)]
+enum ProfileCommand {
+    /// Parse a Markdown evidence bank or resume into the default profile.
+    Import {
+        /// Markdown file, or `-` for stdin.
+        #[arg(long)]
+        file: PathBuf,
+        /// Do not wait for queued rescores to finish.
+        #[arg(long)]
+        async_queue: bool,
+    },
+    /// Print the default profile as JSON.
+    Show,
 }
 
 #[tokio::main]
@@ -322,6 +342,29 @@ async fn main() -> Result<()> {
                     jobseeker_db::repo::user::upsert_owner(&pipeline.db, &username, &password)
                         .await?;
                 println!("owner {} ready ({})", user.username, user.id);
+            }
+        },
+        Command::Profile { command } => match command {
+            ProfileCommand::Import { file, async_queue } => {
+                let pipeline = Pipeline::open(config).await?;
+                let text = read_paste(&file)?;
+                let report = pipeline.import_resume(&text).await?;
+                println!(
+                    "profile {}  items={} accomplishments={} skills={}",
+                    report.profile_id, report.items, report.accomplishments, report.skills
+                );
+                if !async_queue {
+                    let n = pipeline.drain().await?;
+                    println!("processed {n} task(s)");
+                }
+            }
+            ProfileCommand::Show => {
+                let pipeline = Pipeline::open(config).await?;
+                let id = jobseeker_db::repo::profile::ensure_default(&pipeline.db).await?;
+                let view = jobseeker_db::repo::experience::get_view(&pipeline.db, &id)
+                    .await?
+                    .context("no default profile")?;
+                println!("{}", serde_json::to_string_pretty(&view)?);
             }
         },
         Command::Openapi { out } => {

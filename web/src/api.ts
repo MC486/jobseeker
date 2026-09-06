@@ -107,6 +107,57 @@ export type Me = {
   scopes: string[];
 };
 
+export type ProfileSkill = {
+  slug: string;
+  years: number | null;
+  last_used_year: number | null;
+  is_primary: boolean;
+  evidence_count: number;
+};
+
+export type Accomplishment = {
+  id: string;
+  text: string;
+  strength: number;
+  verified: boolean;
+  skills: string[];
+};
+
+export type Experience = {
+  id: string;
+  kind: string;
+  org: string;
+  title: string | null;
+  start_date: string | null;
+  end_date: string | null;
+  is_current: boolean;
+  accomplishments: Accomplishment[];
+};
+
+export type Profile = {
+  id: string;
+  name: string;
+  full_name: string | null;
+  headline: string | null;
+  location: string | null;
+  summary_md: string | null;
+  target_titles: string[];
+  target_comp_min_cents: number | null;
+  target_locations: string[];
+  accepts_remote: boolean;
+  years_experience: number | null;
+  revision: number;
+  skills: ProfileSkill[];
+  experience: Experience[];
+};
+
+export type ImportReport = {
+  profile_id: string;
+  items: number;
+  accomplishments: number;
+  skills: number;
+};
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     credentials: "include",
@@ -151,5 +202,11 @@ export const api = {
   logout: () =>
     fetch("/api/v1/auth/logout", { method: "POST", credentials: "include" }).then((res) => {
       if (!res.ok && res.status !== 204) throw new Error(res.statusText);
+    }),
+  profile: () => request<Profile>("/api/v1/profiles/default"),
+  importResume: (text: string) =>
+    request<ImportReport>("/api/v1/profiles/default/import-resume", {
+      method: "POST",
+      body: JSON.stringify({ text }),
     }),
 };

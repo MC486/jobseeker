@@ -322,6 +322,44 @@
         }
       }
     },
+    "/api/v1/profiles/default": {
+      "get": {
+        "tags": [],
+        "operationId": "get_profile",
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/api/v1/profiles/default/import-resume": {
+      "post": {
+        "tags": [],
+        "operationId": "import_resume",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportResumeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "400": {
+            "description": ""
+          }
+        }
+      }
+    },
     "/api/v1/tasks/{id}": {
       "get": {
         "tags": [],
@@ -446,6 +484,17 @@
             "type": "string"
           },
           "payload": {}
+        }
+      },
+      "ImportResumeRequest": {
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "properties": {
+          "text": {
+            "type": "string"
+          }
         }
       },
       "IngestPasteRequest": {

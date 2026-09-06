@@ -197,6 +197,15 @@ pub async fn latest_for_job(
     }))
 }
 
+pub async fn mark_stale_for_profile(db: &Db, profile_id: &ProfileId) -> Result<u64> {
+    let res = sqlx::query("UPDATE match_score SET is_stale = 1 WHERE profile_id = ?1")
+        .bind(profile_id.as_str())
+        .execute(db.writer())
+        .await
+        .map_err(db_err)?;
+    Ok(res.rows_affected())
+}
+
 async fn load_verdicts(db: &Db, match_id: &str) -> Result<Vec<RequirementVerdict>> {
     let rows = sqlx::query(
         "SELECT requirement_id, status, score, rationale

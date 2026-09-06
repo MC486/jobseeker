@@ -20,7 +20,7 @@ export function subscribeEvents(
 ): () => void {
   const since = opts?.since ?? 0;
   const source = new EventSource(`/api/v1/events?since=${since}`);
-  const kinds = ["job.created", "job.updated", "match.updated", "task.updated"];
+  const kinds = ["job.created", "job.updated", "match.updated", "task.updated", "profile.updated"];
 
   const handle = (ev: MessageEvent<string>) => {
     if (!ev.data || ev.data === "ping") return;

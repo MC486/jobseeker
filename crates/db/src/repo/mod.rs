@@ -12,6 +12,7 @@
 pub mod capture;
 pub mod company;
 pub mod event;
+pub mod experience;
 pub mod job;
 pub mod listing;
 pub mod profile;

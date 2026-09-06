@@ -26,18 +26,20 @@ an interview story, and a skill-years data point.
 
 ## 2. Bootstrapping the bank
 
-Nobody hand-enters 60 accomplishments. `POST /api/v1/profiles/:id/import-resume`:
+Nobody hand-enters 60 accomplishments. `POST /api/v1/profiles/default/import-resume`
+(`jobseeker profile import --file bank.md`) accepts Markdown now:
 
-1. Accept PDF / DOCX / Markdown / plain text.
-2. Extract text (`pdf-extract` for PDF, DOCX = zip + XML parse — no external converter).
-3. Segment into sections (experience / education / skills / projects) using layout and
-   heading heuristics.
-4. Parse each role: org, title, dates, location; each bullet becomes a draft accomplishment.
-5. LLM pass (optional) to extract `impact_metric/value/unit`, propose skill tags, and
-   generate STAR decomposition.
-6. Land everything as **drafts** in a review queue. You confirm, correct, and rate strength.
-   Nothing enters the bank unreviewed — the bank is the source of truth for claims you will
-   make to employers, so it must be exactly right.
+1. Accept Markdown / plain text (PDF / DOCX still to come).
+2. Segment into sections (experience / education / skills / projects) using heading
+   heuristics. Evidence-bank headings such as `Title — Org` and `Dates: January 2026–Present`
+   are first-class.
+3. Parse each role: org, title, dates; each qualifying bullet becomes an accomplishment.
+4. Tag skills from the taxonomy (`extract_all`). Unknown phrases are ignored, not invented.
+5. Land onto the default profile and rescore saved jobs. Strength/verified flags follow
+   section labels (`Completed`, `Verified`, `Bullet Bank`). Roadmap / "do not claim"
+   sections are skipped.
+6. LLM extraction of metrics/STAR remains optional and later. The bank is still the source
+   of truth — import does not invent facts.
 
 Follow-up loop: the UI surfaces "accomplishments with no metric" and "skills demanded by
 your saved jobs with no supporting accomplishment," which is a concrete, finite backlog for

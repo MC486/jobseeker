@@ -18,7 +18,9 @@ use jobseeker_core::ids::{CaptureId, ListingId, TaskId};
 use jobseeker_core::{Error, Result};
 use jobseeker_db::persist::{self, PersistExtracted};
 use jobseeker_db::queue::{ClaimedTask, NewTask, Queue};
-use jobseeker_db::repo::{capture, company, event, listing, listing::UpsertListing};
+use jobseeker_db::repo::{
+    capture, company, event, experience, listing, listing::UpsertListing, profile, score,
+};
 use jobseeker_db::Db;
 use jobseeker_extract::{extract, ExtractInput};
 use jobseeker_llm::LlmClient;
@@ -382,6 +384,15 @@ impl Pipeline {
                 Ok(())
             }
             TaskKind::ScoreMatch => self.handle_score_match(&task.payload).await,
+            TaskKind::ImportResume => {
+                let text = task
+                    .payload
+                    .get("text")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| Error::BadRequest("import_resume missing text".into()))?;
+                self.import_resume(text).await?;
+                Ok(())
+            }
             other => {
                 tracing::info!(kind = other.as_str(), "no handler yet; marking done");
                 Ok(())
@@ -647,10 +658,13 @@ impl Pipeline {
         else {
             return Err(Error::NotFound("job"));
         };
-        let Some(profile_row) = jobseeker_db::repo::profile::get(&self.db, None).await? else {
+        let Some(profile_row) = profile::get(&self.db, None).await? else {
             tracing::warn!("score_match skipped: no default profile");
             return Ok(());
         };
+        let view = experience::get_view(&self.db, &profile_row.id).await?;
+        let (seniority, years_experience, education) =
+            scoring_identity(&profile_row, view.as_ref());
 
         let snapshot = jobseeker_matching::JobSnapshot {
             job_id: Some(job.id.clone()),
@@ -674,17 +688,17 @@ impl Pipeline {
                     excerpt: None,
                 })
                 .collect(),
-            seniority: Some(jobseeker_core::domain::enums::Seniority::Senior),
-            years_experience: Some(10.0),
+            seniority: Some(seniority),
+            years_experience: Some(years_experience),
             target_comp_min_cents: profile_row.target_comp_min_cents,
             accepts_remote: profile_row.accepts_remote,
             willing_to_relocate: profile_row.willing_to_relocate,
             target_locations: profile_row.target_locations,
             clearances: vec![],
-            education: None,
+            education,
         };
         let score = jobseeker_matching::score(&snapshot, &profile, &self.config.matching)?;
-        jobseeker_db::repo::score::upsert(&self.db, &score).await?;
+        score::upsert(&self.db, &score).await?;
         if let Err(e) = self
             .emit(
                 DomainEvent::MATCH_UPDATED,
@@ -701,6 +715,59 @@ impl Pipeline {
         {
             tracing::warn!(error = %e, "failed to emit match.updated");
         }
+        Ok(())
+    }
+
+    /// Parse a Markdown evidence bank or resume, replace the default profile, and rescore.
+    pub async fn import_resume(&self, markdown: &str) -> Result<experience::ImportReport> {
+        let parsed = jobseeker_resume::import::parse_markdown(markdown);
+        if parsed.items.is_empty() && parsed.skills.is_empty() {
+            return Err(Error::BadRequest(
+                "no experience items or skills found in the Markdown".into(),
+            ));
+        }
+        let profile_id = profile::ensure_default(&self.db).await?;
+        let write = bank_write(&parsed)?;
+        let report = experience::replace_bank(&self.db, &profile_id, &write).await?;
+        self.materialize_profile(&profile_id).await?;
+        score::mark_stale_for_profile(&self.db, &profile_id).await?;
+        let job_ids = jobseeker_db::repo::job::list_ids(&self.db).await?;
+        // Score here, not via the queue: `score:{job}` is already a completed
+        // dedupe key from first ingest, so a re-enqueue would be dropped.
+        for job_id in &job_ids {
+            self.handle_score_match(&json!({ "job_id": job_id.as_str() }))
+                .await?;
+        }
+        if let Err(e) = self
+            .emit(
+                DomainEvent::PROFILE_UPDATED,
+                "profile",
+                profile_id.as_str(),
+                json!({
+                    "items": report.items,
+                    "accomplishments": report.accomplishments,
+                    "skills": report.skills,
+                    "rescored_jobs": job_ids.len(),
+                }),
+            )
+            .await
+        {
+            tracing::warn!(error = %e, "failed to emit profile.updated");
+        }
+        Ok(report)
+    }
+
+    async fn materialize_profile(&self, profile_id: &jobseeker_core::ids::ProfileId) -> Result<()> {
+        let Some(view) = experience::get_view(&self.db, profile_id).await? else {
+            return Ok(());
+        };
+        let dir = self.data_dir().join("profiles").join("default");
+        atomic_write(&dir.join("profile.json"), &to_stable_json(&view)?)?;
+        atomic_write(
+            &dir.join("experience.json"),
+            &to_stable_json(&view.experience)?,
+        )?;
+        atomic_write(&dir.join("skills.json"), &to_stable_json(&view.skills)?)?;
         Ok(())
     }
 
@@ -836,6 +903,124 @@ fn file_job_write(discovered: &DiscoveredJob) -> Result<persist::FileJobWrite> {
         file_path: discovered.rel_dir.clone(),
         requirements,
     })
+}
+
+fn bank_write(parsed: &jobseeker_resume::import::ParsedBank) -> Result<experience::BankWrite> {
+    Ok(experience::BankWrite {
+        full_name: parsed.identity.full_name.clone(),
+        headline: parsed.identity.headline.clone(),
+        email: parsed.identity.email.clone(),
+        phone: parsed.identity.phone.clone(),
+        location: parsed.identity.location.clone(),
+        links_json: serde_json::to_string(&parsed.identity.links)?,
+        summary_md: parsed.identity.summary_md.clone(),
+        target_titles_json: serde_json::to_string(&parsed.identity.target_titles)?,
+        target_comp_min_cents: parsed.identity.target_comp_min_cents,
+        target_locations_json: serde_json::to_string(&parsed.identity.target_locations)?,
+        accepts_remote: parsed.identity.accepts_remote,
+        willing_to_relocate: parsed.identity.willing_to_relocate,
+        items: parsed
+            .items
+            .iter()
+            .map(|item| experience::ItemWrite {
+                kind: item.kind,
+                org: item.org.clone(),
+                title: item.title.clone(),
+                location: item.location.clone(),
+                start_date: item.start_date.clone(),
+                end_date: item.end_date.clone(),
+                is_current: item.is_current,
+                description_md: item.description_md.clone(),
+                accomplishments: item
+                    .accomplishments
+                    .iter()
+                    .map(|a| experience::AccomplishmentWrite {
+                        text: a.text.clone(),
+                        variants: a.variants.clone(),
+                        strength: a.strength,
+                        verified: a.verified,
+                        skill_slugs: a.skill_slugs.clone(),
+                    })
+                    .collect(),
+            })
+            .collect(),
+        skills: parsed
+            .skills
+            .iter()
+            .map(|s| experience::SkillWrite {
+                slug: s.slug.clone(),
+                years: s.years,
+                last_used_year: s.last_used_year,
+                is_primary: s.is_primary,
+                evidence_count: s.evidence_count,
+            })
+            .collect(),
+    })
+}
+
+fn scoring_identity(
+    row: &profile::ProfileRow,
+    view: Option<&experience::ProfileView>,
+) -> (
+    jobseeker_core::domain::enums::Seniority,
+    f32,
+    Option<jobseeker_core::domain::enums::EducationLevel>,
+) {
+    use jobseeker_core::domain::enums::{EducationLevel, Seniority};
+    let years = view
+        .and_then(|v| v.years_experience)
+        .or_else(|| {
+            row.skills
+                .iter()
+                .filter_map(|s| s.years)
+                .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+        })
+        .unwrap_or(0.0);
+    let headline = view
+        .and_then(|v| v.headline.as_deref())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let titles = view
+        .map(|v| v.target_titles.join(" ").to_ascii_lowercase())
+        .unwrap_or_default();
+    let seniority = if headline.contains("mid") || titles.contains("mid-level") {
+        Seniority::Mid
+    } else {
+        Seniority::from_years(years)
+    };
+    let education = view.and_then(|v| {
+        let mut best = None;
+        for item in &v.experience {
+            if item.kind != "education" || item.is_current {
+                continue;
+            }
+            let blob = format!(
+                "{} {}",
+                item.title.as_deref().unwrap_or(""),
+                item.description_md.as_deref().unwrap_or("")
+            )
+            .to_ascii_lowercase();
+            if blob.contains("in progress") {
+                continue;
+            }
+            let level = if blob.contains("master") {
+                EducationLevel::Master
+            } else if blob.contains("bachelor") {
+                EducationLevel::Bachelor
+            } else {
+                continue;
+            };
+            if best
+                .map(|b: EducationLevel| b.rank().unwrap_or(0))
+                .unwrap_or(0)
+                < level.rank().unwrap_or(0)
+            {
+                best = Some(level);
+            }
+        }
+        best
+    });
+    (seniority, years, education)
 }
 
 fn relative_path(root: &Path, path: &Path) -> String {
@@ -1149,6 +1334,82 @@ mod tests {
             report.divergent.len(),
             1,
             "tombstoned files must not overwrite the database"
+        );
+    }
+
+    const EVIDENCE_BANK: &str = include_str!("../../../fixtures/evidence-bank.md");
+    const DS_HTML: &str = include_str!("../../../fixtures/applied-data-scientist.html");
+
+    #[tokio::test]
+    async fn importing_an_evidence_bank_replaces_placeholder_skills_and_rescores() {
+        let dir = tempfile::tempdir().unwrap();
+        let pipe = for_test(dir.path().to_path_buf()).await.unwrap();
+        pipe.ingest_paste(
+            GREENHOUSE_HTML,
+            Some("https://boards.greenhouse.io/acmerobotics/jobs/5512034"),
+        )
+        .await
+        .unwrap();
+        pipe.ingest_paste(
+            DS_HTML,
+            Some("https://boards.greenhouse.io/harbormedia/jobs/88001"),
+        )
+        .await
+        .unwrap();
+        pipe.drain().await.unwrap();
+
+        let before = jobseeker_db::repo::job::list(&pipe.db, &Default::default())
+            .await
+            .unwrap();
+        let pe_before = before
+            .items
+            .iter()
+            .find(|j| j.title.contains("Platform"))
+            .and_then(|j| j.match_overall)
+            .expect("platform engineer should already be scored");
+
+        let report = pipe.import_resume(EVIDENCE_BANK).await.unwrap();
+        assert!(report.accomplishments >= 5, "{report:?}");
+        assert!(report.skills >= 4, "{report:?}");
+        pipe.drain().await.unwrap();
+
+        let view =
+            jobseeker_db::repo::experience::get_view(&pipe.db, &report.profile_id.parse().unwrap())
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(view.full_name.as_deref(), Some("Alex Rivera"));
+        assert!(view.skills.iter().any(|s| s.slug == "python"));
+        assert!(view.skills.iter().any(|s| s.slug == "dataiku"));
+        assert!(
+            !view.skills.iter().any(|s| s.slug == "kubernetes"),
+            "placeholder k8s must not survive import"
+        );
+        assert!(dir.path().join("profiles/default/profile.json").is_file());
+
+        let after = jobseeker_db::repo::job::list(&pipe.db, &Default::default())
+            .await
+            .unwrap();
+        let pe = after
+            .items
+            .iter()
+            .find(|j| j.title.contains("Platform"))
+            .unwrap();
+        let ds = after
+            .items
+            .iter()
+            .find(|j| j.title.contains("Data Scientist"))
+            .unwrap();
+        assert!(
+            pe.match_overall.unwrap() < pe_before,
+            "a DS bank should score a Rust/K8s platform role lower than the placeholder profile: before={pe_before} after={:?}",
+            pe.match_overall
+        );
+        assert!(
+            ds.match_overall.unwrap() > pe.match_overall.unwrap(),
+            "Applied Data Scientist should outrank Senior Platform Engineer, got ds={:?} pe={:?}",
+            ds.match_overall,
+            pe.match_overall
         );
     }
 }
