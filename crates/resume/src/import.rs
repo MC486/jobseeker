@@ -137,9 +137,14 @@ pub fn parse_markdown(input: &str) -> ParsedBank {
             verified_zone = heading_is_verified(title);
             in_progress_zone = heading_is_in_progress(title);
             variant_label = None;
-            if let Some(item) = item_from_heading(title, bucket) {
+            if let Some(item) = item_from_heading(title, bucket, level) {
                 items.push(item);
                 current = Some(items.len() - 1);
+            } else if let Some(idx) = infer_item(&items, bucket) {
+                current = Some(idx);
+                if looks_variant_label(title) {
+                    variant_label = Some(clean_variant_label(title));
+                }
             } else if looks_variant_label(title) {
                 variant_label = Some(clean_variant_label(title));
             }
@@ -527,33 +532,41 @@ fn heading_is_in_progress(title: &str) -> bool {
     t.contains("in progress") || t.contains("do not claim") || t.contains("roadmap")
 }
 
-fn item_from_heading(title: &str, bucket: Bucket) -> Option<ParsedItem> {
+fn item_from_heading(title: &str, bucket: Bucket, level: u8) -> Option<ParsedItem> {
+    if level <= 1 {
+        return None;
+    }
     let cleaned = strip_section_number(title);
     if matches!(bucket, Bucket::Education)
         && !cleaned.to_ascii_lowercase().contains("education")
-        && heading(title).is_none()
+        && looks_school(&cleaned)
     {
-        if looks_school(&cleaned) {
-            return Some(ParsedItem {
-                kind: ExperienceKind::Education,
-                org: cleaned,
-                title: None,
-                location: None,
-                start_date: None,
-                end_date: None,
-                is_current: false,
-                description_md: None,
-                accomplishments: Vec::new(),
-            });
-        }
+        return Some(ParsedItem {
+            kind: ExperienceKind::Education,
+            org: cleaned,
+            title: None,
+            location: None,
+            start_date: None,
+            end_date: None,
+            is_current: false,
+            description_md: None,
+            accomplishments: Vec::new(),
+        });
     }
     if let Some((role, org)) = split_role_org(&cleaned) {
+        if is_status_org(&org) {
+            return None;
+        }
         let kind = if bucket == Bucket::Personal || cleaned.to_ascii_lowercase().contains("homelab")
         {
             ExperienceKind::Project
         } else {
             ExperienceKind::Role
         };
+        // Inventory / bullet-bank headings are not extra jobs.
+        if kind == ExperienceKind::Role && bucket != Bucket::Timeline {
+            return None;
+        }
         return Some(ParsedItem {
             kind,
             org,
@@ -632,6 +645,18 @@ fn split_role_org(title: &str) -> Option<(String, String)> {
         }
     }
     None
+}
+
+fn is_status_org(org: &str) -> bool {
+    matches!(
+        org.to_ascii_lowercase().as_str(),
+        "completed"
+            | "in progress"
+            | "source-supported"
+            | "verified"
+            | "candidate"
+            | "career evidence bank"
+    )
 }
 
 fn looks_school(s: &str) -> bool {
@@ -1114,6 +1139,48 @@ mod tests {
             inferred_education(&bank.items),
             Some(EducationLevel::Bachelor)
         );
+    }
+
+    #[test]
+    fn inventory_headings_do_not_become_extra_jobs() {
+        let md = "\
+# Michael Example — Career Evidence Bank\n\n\
+## 3. Professional Timeline\n\n\
+### Data Scientist — Example Co\n\n\
+Dates: January 2026–Present\n\n\
+### Coordinator and Trainer — Parks\n\n\
+Dates: February 2022–January 2025\n\n\
+## 4. Current Data Scientist Project Inventory\n\n\
+### Completed Proof Points\n\n\
+- Built and executed an API-driven migration that repointed approximately 5,000 datasets across 50 Dataiku projects to Snowflake.\n\n\
+#### Bulk Dataiku Connection Migration — Completed\n\n\
+- Built and executed an API-driven migration that repointed approximately 5,000 datasets across 50 Dataiku projects to a higher-capacity Snowflake warehouse, replacing manual reconfiguration.\n";
+        let bank = parse_markdown(md);
+        assert!(
+            !bank
+                .items
+                .iter()
+                .any(|i| i.org.eq_ignore_ascii_case("Completed")
+                    || i.org.eq_ignore_ascii_case("Career Evidence Bank")),
+            "{:?}",
+            bank.items
+        );
+        let ds = bank
+            .items
+            .iter()
+            .find(|i| i.title.as_deref() == Some("Data Scientist"))
+            .unwrap();
+        assert!(
+            ds.accomplishments.iter().any(|a| a.text.contains("5,000")),
+            "{:?}",
+            ds.accomplishments
+        );
+        let ops = bank
+            .items
+            .iter()
+            .find(|i| i.title.as_deref() == Some("Coordinator and Trainer"))
+            .unwrap();
+        assert!(ops.accomplishments.is_empty(), "{:?}", ops.accomplishments);
     }
 
     #[test]
