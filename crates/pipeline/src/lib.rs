@@ -875,6 +875,7 @@ mod tests {
 
     const GREENHOUSE_HTML: &str =
         include_str!("../../../fixtures/greenhouse-platform-engineer.html");
+    const LINKEDIN_HTML: &str = include_str!("../../../fixtures/linkedin-job-capture.html");
 
     #[tokio::test]
     async fn paste_travels_the_spine_to_files_and_a_queryable_row() {
@@ -975,6 +976,51 @@ mod tests {
         assert_eq!(err.code(), "needs_browser");
         let depth = pipe.queue().depth().await.unwrap();
         assert!(depth.is_empty(), "nothing should have been queued");
+    }
+
+    #[tokio::test]
+    async fn pasted_linkedin_html_is_extracted_via_the_adapter() {
+        let dir = tempfile::tempdir().unwrap();
+        let pipe = for_test(dir.path().to_path_buf()).await.unwrap();
+        pipe.ingest_paste(
+            LINKEDIN_HTML,
+            Some("https://www.linkedin.com/jobs/view/4294967296"),
+        )
+        .await
+        .unwrap();
+        pipe.drain().await.unwrap();
+        let page = jobseeker_db::repo::job::list(&pipe.db, &Default::default())
+            .await
+            .unwrap();
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].title, "Staff Platform Engineer");
+        assert_eq!(page.items[0].company_name, "Acme LinkedIn");
+        assert!(
+            page.items[0].salary_is_estimate,
+            "LinkedIn compensation is an estimate"
+        );
+
+        let id: jobseeker_core::ids::JobId = page.items[0].id.parse().unwrap();
+        let detail = jobseeker_db::repo::job::get(&pipe.db, &id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            detail
+                .provenance
+                .iter()
+                .any(|p| p.field == "title" && p.provenance == "adapter"),
+            "title must be tagged adapter, got {:?}",
+            detail.provenance
+        );
+        assert!(
+            detail
+                .requirements
+                .iter()
+                .any(|r| r.text.contains("Kubernetes")),
+            "got {:?}",
+            detail.requirements
+        );
     }
 
     #[tokio::test]

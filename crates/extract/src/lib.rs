@@ -5,6 +5,7 @@
 //! produce a usable record with deterministic stages alone; the model fills gaps when it
 //! is configured and is skipped, without failing the job, when it is not.
 
+pub mod adapter;
 pub mod html;
 pub mod infer;
 pub mod jsonld;
@@ -110,6 +111,15 @@ fn extract_deterministic(input: &ExtractInput) -> (ExtractedJob, String, String)
 
     let document = html::parse(&input.body);
     jsonld::apply_from_html(&mut job, &document, input.page_meta.as_ref());
+    adapter::apply(
+        &mut job,
+        &adapter::CaptureView {
+            url: input.url.as_deref(),
+            html: &input.body,
+            document: &document,
+            page_meta: input.page_meta.as_ref(),
+        },
+    );
     if let Some(url) = &input.url {
         rules::apply_url_hints(&mut job, url, input.source);
     }
@@ -278,5 +288,69 @@ mod tests {
         let out = extract(&inp, None, 16_000).await.unwrap();
         assert_eq!(out.job.title.as_ref().unwrap().provenance, Provenance::Api);
         assert_eq!(out.job.company_name.as_ref().unwrap().value, "Acme");
+    }
+
+    #[tokio::test]
+    async fn linkedin_capture_html_is_tagged_adapter() {
+        let html = include_str!("../../../fixtures/linkedin-job-capture.html");
+        let inp = ExtractInput {
+            url: Some("https://www.linkedin.com/jobs/view/4294967296".into()),
+            body: html.to_string(),
+            content_type: Some("text/html".into()),
+            method: CaptureMethod::Extension,
+            source: SourceKind::LinkedIn,
+            page_meta: None,
+        };
+        let out = extract(&inp, None, 16_000).await.unwrap();
+        assert_eq!(
+            out.job.title.as_ref().unwrap().value,
+            "Staff Platform Engineer"
+        );
+        assert_eq!(
+            out.job.title.as_ref().unwrap().provenance,
+            Provenance::Adapter
+        );
+        assert_eq!(
+            out.job.company_name.as_ref().unwrap().value,
+            "Acme LinkedIn"
+        );
+        assert_eq!(out.job.source_job_id.as_ref().unwrap().value, "4294967296");
+        assert!(
+            out.requirements
+                .iter()
+                .any(|r| r.text.contains("Kubernetes")),
+            "got {:?}",
+            out.requirements.iter().map(|r| &r.text).collect::<Vec<_>>()
+        );
+        assert_eq!(out.job.work_mode.as_ref().unwrap().value, WorkMode::Remote);
+    }
+
+    #[tokio::test]
+    async fn json_ld_outranks_the_greenhouse_html_adapter() {
+        let out = extract(&input(GREENHOUSE_HTML), None, 16_000)
+            .await
+            .unwrap();
+        assert_eq!(
+            out.job.title.as_ref().unwrap().provenance,
+            Provenance::Jsonld,
+            "stage 2 must beat the boards.greenhouse.io HTML adapter"
+        );
+    }
+
+    #[tokio::test]
+    async fn greenhouse_html_without_json_ld_uses_the_adapter() {
+        let html = include_str!("../../../fixtures/greenhouse-board-job.html");
+        let out = extract(&input(html), None, 16_000).await.unwrap();
+        assert_eq!(out.job.title.as_ref().unwrap().value, "Platform Engineer");
+        assert_eq!(
+            out.job.title.as_ref().unwrap().provenance,
+            Provenance::Adapter
+        );
+        assert_eq!(out.job.company_name.as_ref().unwrap().value, "Contoso");
+        assert_eq!(out.job.source_job_id.as_ref().unwrap().value, "5512034");
+        assert!(out
+            .requirements
+            .iter()
+            .any(|r| r.text.contains("Kubernetes")));
     }
 }
