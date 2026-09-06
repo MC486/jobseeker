@@ -16,6 +16,8 @@ export type JobListRow = {
   primary_location: string | null;
   extraction_partial: boolean;
   match_overall: number | null;
+  skills_coverage: number | null;
+  years_fit: number | null;
   updated_at: string;
 };
 
@@ -56,6 +58,9 @@ export type RequirementVerdict = {
   status: string;
   score: number;
   rationale: string;
+  years_have?: number | null;
+  years_needed?: number | null;
+  required?: boolean;
 };
 
 export type MatchSummary = {
@@ -64,6 +69,8 @@ export type MatchSummary = {
   overall: number;
   required_coverage: number | null;
   preferred_coverage: number | null;
+  skills_coverage: number | null;
+  years_fit: number | null;
   seniority_fit: number | null;
   comp_fit: number | null;
   location_fit: number | null;

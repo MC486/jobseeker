@@ -34,6 +34,12 @@ pub struct JobListRow {
     pub is_archived: bool,
     pub extraction_partial: bool,
     pub match_overall: Option<f64>,
+    /// Required bars with the year-count haircut removed. Diagnostic; not in overall.
+    #[serde(default)]
+    pub skills_coverage: Option<f64>,
+    /// Tenure bars only. Diagnostic; not in overall.
+    #[serde(default)]
+    pub years_fit: Option<f64>,
     pub updated_at: String,
 }
 
@@ -230,9 +236,12 @@ pub async fn list(db: &Db, filter: &JobFilter) -> Result<Page<JobListRow>> {
                 .map_err(db_err)?
                 != 0,
             match_overall: row.try_get("match_overall").map_err(db_err)?,
+            skills_coverage: None,
+            years_fit: None,
             updated_at: row.try_get("updated_at").map_err(db_err)?,
         });
     }
+    attach_list_breakdowns(db, &mut items).await?;
 
     // FTS results are relevance-ranked, and bm25 scores are not a stable keyset; that page
     // is deliberately single-page until relevance cursors are implemented.
@@ -259,6 +268,21 @@ pub async fn list(db: &Db, filter: &JobFilter) -> Result<Page<JobListRow>> {
     };
 
     Ok(Page::new(items, next_cursor))
+}
+
+async fn attach_list_breakdowns(db: &Db, items: &mut [JobListRow]) -> Result<()> {
+    if items.is_empty() {
+        return Ok(());
+    }
+    let ids: Vec<String> = items.iter().map(|row| row.id.clone()).collect();
+    let map = crate::repo::score::breakdowns_for_jobs(db, &ids).await?;
+    for row in items {
+        if let Some((skills, years)) = map.get(&row.id) {
+            row.skills_coverage = *skills;
+            row.years_fit = *years;
+        }
+    }
+    Ok(())
 }
 
 enum Bind {
@@ -1293,5 +1317,100 @@ mod tests {
             (overall - 0.81).abs() < 1e-9,
             "the value must survive staleness"
         );
+    }
+
+    #[tokio::test]
+    async fn list_attaches_skills_and_years_from_verdicts() {
+        let db = Db::open_in_memory().await.unwrap();
+        let job = insert_job(
+            &db,
+            "Acme",
+            "Scientist",
+            JobStatus::Open,
+            WorkMode::Remote,
+            None,
+            SalaryPeriod::Year,
+            "2026-09-01T00:00:00Z",
+        )
+        .await;
+        sqlx::query(
+            "INSERT INTO profile (id, name, created_at, updated_at)
+             VALUES ('p1', 'default', 'now', 'now');
+             INSERT INTO requirement (id, job_id, text, normalized_text, kind, necessity,
+                                      created_at, updated_at)
+             VALUES ('r-years', ?1, '5+ years data science', 'years data science',
+                     'skill', 'required', 'now', 'now'),
+                    ('r-pref', ?1, 'Nice PhD', 'nice phd',
+                     'education', 'preferred', 'now', 'now');
+             INSERT INTO match_score (id, job_id, profile_id, algorithm_version, overall,
+                                      weights_json, inputs_hash, computed_at)
+             VALUES ('m1', ?1, 'p1', '1.0.0', 0.52, '{}', 'h', 'now');
+             INSERT INTO requirement_match (id, match_score_id, requirement_id, status, score,
+                                            weight, years_have, years_needed, rationale, created_at)
+             VALUES ('rm1', 'm1', 'r-years', 'gap', 0.2, 1.0, 1.0, 5.0, '1 of 5', 'now'),
+                    ('rm2', 'm1', 'r-pref', 'gap', 0.0, 1.0, NULL, NULL, 'no PhD', 'now')",
+        )
+        .bind(job.as_str())
+        .execute(db.writer())
+        .await
+        .unwrap();
+
+        let page = list(&db, &JobFilter::default()).await.unwrap();
+        assert_eq!(page.items.len(), 1);
+        assert!((page.items[0].match_overall.unwrap() - 0.52).abs() < 1e-6);
+        assert!(
+            (page.items[0].skills_coverage.unwrap() - 1.0).abs() < 1e-6,
+            "year-bar with years_have is a skill hit: {:?}",
+            page.items[0].skills_coverage
+        );
+        assert!(
+            (page.items[0].years_fit.unwrap() - 0.2).abs() < 1e-6,
+            "1/5 years: {:?}",
+            page.items[0].years_fit
+        );
+    }
+
+    #[tokio::test]
+    async fn list_derives_breakdown_from_explanation_when_verdicts_missing() {
+        let db = Db::open_in_memory().await.unwrap();
+        let job = insert_job(
+            &db,
+            "Acme",
+            "Thin Capture",
+            JobStatus::Open,
+            WorkMode::Remote,
+            None,
+            SalaryPeriod::Year,
+            "2026-09-01T00:00:00Z",
+        )
+        .await;
+        let explanation = serde_json::json!([{
+            "requirement_id": jobseeker_core::ids::RequirementId::new(),
+            "status": "gap",
+            "score": 0.2,
+            "weight": 1.0,
+            "evidence": [],
+            "years_have": 1.0,
+            "years_needed": 5.0,
+            "rationale": "1 of 5"
+        }])
+        .to_string();
+        sqlx::query(
+            "INSERT INTO profile (id, name, created_at, updated_at)
+             VALUES ('p1', 'default', 'now', 'now');
+             INSERT INTO match_score (id, job_id, profile_id, algorithm_version, overall,
+                                      weights_json, explanation_json, inputs_hash, computed_at)
+             VALUES ('m1', ?1, 'p1', '1.0.0', 0.74, '{}', ?2, 'h', 'now')",
+        )
+        .bind(job.as_str())
+        .bind(&explanation)
+        .execute(db.writer())
+        .await
+        .unwrap();
+
+        let page = list(&db, &JobFilter::default()).await.unwrap();
+        assert!((page.items[0].match_overall.unwrap() - 0.74).abs() < 1e-6);
+        assert!((page.items[0].skills_coverage.unwrap() - 1.0).abs() < 1e-6);
+        assert!((page.items[0].years_fit.unwrap() - 0.2).abs() < 1e-6);
     }
 }

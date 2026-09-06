@@ -212,10 +212,20 @@ async fn main() -> Result<()> {
             )
             .await?;
             for row in page.items {
-                println!(
+                print!(
                     "{}  {} — {}  [{}]  {}",
                     row.id, row.title, row.company_name, row.work_mode, row.status
                 );
+                if let Some(overall) = row.match_overall {
+                    print!("  {:.0}%", overall * 100.0);
+                    if let Some(skills) = row.skills_coverage {
+                        print!("  skills {:.0}%", skills * 100.0);
+                    }
+                    if let Some(years) = row.years_fit {
+                        print!("  years {:.0}%", years * 100.0);
+                    }
+                }
+                println!();
             }
             if let Some(c) = page.next_cursor {
                 println!("next_cursor={c}");
@@ -231,11 +241,18 @@ async fn main() -> Result<()> {
             if let Some(score) =
                 jobseeker_db::repo::score::latest_for_job(&pipeline.db, &id, None).await?
             {
-                println!(
+                print!(
                     "match {:.0}% ({})",
                     score.overall * 100.0,
                     if score.is_stale { "stale" } else { "fresh" }
                 );
+                if let Some(skills) = score.skills_coverage {
+                    print!("  skills {:.0}%", skills * 100.0);
+                }
+                if let Some(years) = score.years_fit {
+                    print!("  years {:.0}%", years * 100.0);
+                }
+                println!();
             }
         }
         Command::Pair { name, emit_token } => {
