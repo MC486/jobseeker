@@ -63,6 +63,14 @@ one-line rationale, so the UI can show *why* (FR-M-01, AS-07).
 
 All in `[0,1]`, all reported individually.
 
+**`skills_coverage`** and **`years_fit`** — diagnostic splits of the same required
+bars. They are **not** weights in `overall`. `required_coverage` still folds the
+year haircut in (a 2-year bank against a 5-year ask scores `2/5` on that bar).
+`skills_coverage` treats "we have this skill" as a hit and leaves tenure to
+`years_fit`. Postings often mean year counts as a wishlist; some recruiters
+overfit them. Showing both lets you decide which reading matters for this
+role.
+
 **`required_coverage`** — weighted coverage of `necessity = required`:
 
 ```
@@ -119,7 +127,8 @@ explanation, never hidden.
 {
   "overall": 0.81, "algorithm_version": "1.0.0",
   "verdict": "strong_fit_with_gaps",
-  "subscores": { "required_coverage": 0.85, "preferred_coverage": 0.57,
+  "subscores": { "required_coverage": 0.85, "skills_coverage": 0.92,
+                 "years_fit": 0.40, "preferred_coverage": 0.57,
                  "semantic_similarity": 0.79, "seniority_fit": 1.0,
                  "comp_fit": 1.0, "location_fit": 1.0 },
   "weights_used": { "...": 0.45 },

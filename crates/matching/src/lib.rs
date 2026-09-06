@@ -11,7 +11,8 @@ use jobseeker_core::domain::location::JobLocation;
 use jobseeker_core::domain::requirement::Requirement;
 use jobseeker_core::domain::salary::Salary;
 use jobseeker_core::domain::scoring::{
-    Blocker, Evidence, EvidenceKind, MatchScore, RequirementMatch, Subscores, VerdictStatus,
+    weighted_mean, Blocker, Evidence, EvidenceKind, MatchScore, RequirementMatch, Subscores,
+    VerdictStatus,
 };
 use jobseeker_core::hash::hash_parts;
 use jobseeker_core::ids::{JobId, MatchScoreId, ProfileId, SkillId};
@@ -94,6 +95,18 @@ pub fn score(
 
     let required_coverage = coverage(&matches, &job.requirements, |r| r.is_required());
     let preferred_coverage = coverage(&matches, &job.requirements, |r| !r.is_required());
+    let skills_coverage = mapped_coverage(
+        &matches,
+        &job.requirements,
+        |r| r.is_required(),
+        |m| m.skill_only_score(),
+    );
+    let years_fit = mapped_coverage(
+        &matches,
+        &job.requirements,
+        |r| r.is_required(),
+        |m| m.years_only_score(),
+    );
 
     let mut flags = Vec::new();
     let comp_fit = compensation_fit(&job.salary, profile.target_comp_min_cents, &mut flags);
@@ -107,6 +120,8 @@ pub fn score(
         seniority_fit,
         comp_fit,
         location_fit,
+        skills_coverage,
+        years_fit,
     };
     flags.push("semantic_unavailable".into());
 
@@ -344,16 +359,25 @@ fn coverage(
     requirements: &[Requirement],
     pred: impl Fn(&Requirement) -> bool,
 ) -> Option<f32> {
-    let mut num = 0.0;
-    let mut den = 0.0;
-    for (m, r) in matches.iter().zip(requirements) {
-        if !pred(r) || !m.status.counts_toward_coverage() {
-            continue;
+    mapped_coverage(matches, requirements, pred, |m| {
+        m.status
+            .counts_toward_coverage()
+            .then_some(m.score.clamp(0.0, 1.0))
+    })
+}
+
+fn mapped_coverage(
+    matches: &[RequirementMatch],
+    requirements: &[Requirement],
+    pred: impl Fn(&Requirement) -> bool,
+    score_of: impl Fn(&RequirementMatch) -> Option<f32>,
+) -> Option<f32> {
+    weighted_mean(matches.iter().zip(requirements).filter_map(|(m, r)| {
+        if !pred(r) {
+            return None;
         }
-        num += m.weight * m.score;
-        den += m.weight;
-    }
-    (den > 0.0).then_some((num / den).clamp(0.0, 1.0))
+        Some((score_of(m)?, m.weight))
+    }))
 }
 
 fn compensation_fit(
@@ -569,6 +593,46 @@ mod tests {
         assert!(score.blockers.is_empty());
         assert_eq!(score.counts().met, 2);
         assert_eq!(score.verdict_label(), "strong fit");
+    }
+
+    #[test]
+    fn years_and_skills_are_split_without_changing_overall() {
+        let job = job(vec![
+            req(
+                "Production Rust",
+                RequirementKind::Skill,
+                Necessity::Required,
+                Some(5.0),
+            ),
+            req("Python", RequirementKind::Skill, Necessity::Required, None),
+            req(
+                "Kubernetes",
+                RequirementKind::Tool,
+                Necessity::Required,
+                None,
+            ),
+        ]);
+        let profile = profile(&[("rust", 2.0), ("python", 3.0)]);
+        let cfg = MatchingConfig::default();
+        let scored = score(&job, &profile, &cfg).unwrap();
+        let skills = scored.subscores.skills_coverage.expect("skills");
+        let years = scored.subscores.years_fit.expect("years");
+        let required = scored.subscores.required_coverage.expect("required");
+        assert!(
+            skills > required + 0.05,
+            "tenure must not hide the skill hit: skills={skills} required={required}"
+        );
+        assert!(
+            years < skills,
+            "the 5-year bar is the weak portion: years={years} skills={skills}"
+        );
+        let mut without = scored.subscores;
+        without.skills_coverage = None;
+        without.years_fit = None;
+        assert!(
+            (scored.subscores.weighted(&cfg.weights) - without.weighted(&cfg.weights)).abs() < 1e-6
+        );
+        assert!((scored.overall - scored.subscores.weighted(&cfg.weights)).abs() < 1e-6);
     }
 
     #[test]

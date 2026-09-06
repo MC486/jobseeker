@@ -97,6 +97,15 @@ pub struct Subscores {
     pub seniority_fit: Option<f32>,
     pub comp_fit: Option<f32>,
     pub location_fit: Option<f32>,
+    /// Required bars with the year-count haircut removed. A 2-year bank against a
+    /// 5-year ask still counts as a skill hit here; `years_fit` reports the tenure
+    /// gap. Not a weight in `overall` — diagnostic only.
+    #[serde(default)]
+    pub skills_coverage: Option<f32>,
+    /// Tenure bars only (`min_years` on a required demand). Recruiters overfit this;
+    /// postings often mean it as a wishlist. Not a weight in `overall`.
+    #[serde(default)]
+    pub years_fit: Option<f32>,
 }
 
 impl Subscores {
@@ -139,6 +148,48 @@ impl Subscores {
         .filter(|v| v.is_some())
         .count()
     }
+}
+
+impl RequirementMatch {
+    /// Skill/attribute fit with tenure stripped off. Having the skill at all is a
+    /// hit; how many years you have is `years_only_score`.
+    pub fn skill_only_score(&self) -> Option<f32> {
+        if !self.status.counts_toward_coverage() {
+            return None;
+        }
+        if self.years_needed.is_some() {
+            if self.years_have.is_some() {
+                Some(1.0)
+            } else {
+                Some(self.score.clamp(0.0, 1.0))
+            }
+        } else {
+            Some(self.score.clamp(0.0, 1.0))
+        }
+    }
+
+    /// `years_have / years_needed` when the posting stated a year bar.
+    pub fn years_only_score(&self) -> Option<f32> {
+        if !self.status.counts_toward_coverage() {
+            return None;
+        }
+        let needed = self.years_needed.filter(|n| *n > 0.0)?;
+        Some((self.years_have.unwrap_or(0.0) / needed).clamp(0.0, 1.0))
+    }
+}
+
+/// Weighted mean of `(score, weight)` pairs. Empty / zero-weight → `None`.
+pub fn weighted_mean(pairs: impl IntoIterator<Item = (f32, f32)>) -> Option<f32> {
+    let mut num = 0.0;
+    let mut den = 0.0;
+    for (score, weight) in pairs {
+        if weight <= 0.0 {
+            continue;
+        }
+        num += score.clamp(0.0, 1.0) * weight;
+        den += weight;
+    }
+    (den > 0.0).then_some((num / den).clamp(0.0, 1.0))
 }
 
 /// A hard disqualifier, reported separately from graded gaps because it is categorically
@@ -250,6 +301,7 @@ mod tests {
             seniority_fit: Some(v),
             comp_fit: Some(v),
             location_fit: Some(v),
+            ..Default::default()
         }
     }
 
@@ -311,5 +363,48 @@ mod tests {
         assert!(!VerdictStatus::Unknown.counts_toward_coverage());
         assert!(VerdictStatus::Gap.counts_toward_coverage());
         assert!(VerdictStatus::Met.counts_toward_coverage());
+    }
+
+    fn year_bar(have: Option<f32>, needed: Option<f32>, score: f32) -> RequirementMatch {
+        RequirementMatch {
+            requirement_id: crate::ids::RequirementId::new(),
+            status: VerdictStatus::Gap,
+            score,
+            weight: 1.0,
+            evidence: vec![],
+            years_have: have,
+            years_needed: needed,
+            rationale: String::new(),
+        }
+    }
+
+    #[test]
+    fn a_short_tenure_is_a_skill_hit_and_a_years_gap() {
+        let m = year_bar(Some(1.0), Some(5.0), 0.2);
+        assert_eq!(m.skill_only_score(), Some(1.0));
+        assert!((m.years_only_score().unwrap() - 0.2).abs() < 1e-6);
+    }
+
+    #[test]
+    fn diagnostic_subscores_do_not_change_overall() {
+        let w = Weights::default();
+        let with = Subscores {
+            required_coverage: Some(0.36),
+            skills_coverage: Some(0.80),
+            years_fit: Some(0.20),
+            comp_fit: Some(1.0),
+            location_fit: Some(1.0),
+            ..Default::default()
+        };
+        let without = Subscores {
+            required_coverage: Some(0.36),
+            comp_fit: Some(1.0),
+            location_fit: Some(1.0),
+            ..Default::default()
+        };
+        assert!(
+            (with.weighted(&w) - without.weighted(&w)).abs() < 1e-6,
+            "skills/years are explanatory, not a second overall"
+        );
     }
 }

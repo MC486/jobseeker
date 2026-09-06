@@ -403,12 +403,37 @@ function JobPage({ id, live }: { id: string; live: number }) {
             Match {Math.round(match.overall * 100)}%
             {match.is_stale ? " · stale" : ""}
           </h2>
-          <p className="mt-2 text-sm text-zinc-400">
-            required {pct(match.required_coverage)} · preferred {pct(match.preferred_coverage)} ·
-            seniority {pct(match.seniority_fit)} · comp {pct(match.comp_fit)} · location{" "}
-            {pct(match.location_fit)}
-            {match.blocker_count > 0 ? ` · ${match.blocker_count} blocker(s)` : ""}
+          <p className="mt-1 text-xs text-zinc-500">
+            Overall is unchanged. Skills ignore year shortfalls when the skill is on the
+            bank; Years is the tenure bar recruiters overfit and postings often treat as a
+            wishlist.
           </p>
+          <dl className="mt-3 grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
+            <ScoreCell
+              label="Skills"
+              value={match.skills_coverage}
+              hint="required bars, tenure stripped"
+            />
+            <ScoreCell
+              label="Years"
+              value={match.years_fit}
+              hint="required year-count asks"
+            />
+            <ScoreCell
+              label="Required"
+              value={match.required_coverage}
+              hint="feeds overall (includes years)"
+            />
+            <ScoreCell label="Preferred" value={match.preferred_coverage} />
+            <ScoreCell label="Seniority" value={match.seniority_fit} />
+            <ScoreCell label="Comp" value={match.comp_fit} />
+            <ScoreCell label="Location" value={match.location_fit} />
+          </dl>
+          {match.blocker_count > 0 ? (
+            <p className="mt-2 text-sm text-amber-300">
+              {match.blocker_count} blocker(s) — overall is capped
+            </p>
+          ) : null}
         </section>
       )}
       {job.salary_raw && (
@@ -433,6 +458,9 @@ function JobPage({ id, live }: { id: string; live: number }) {
                   {verdict ? (
                     <span className="ml-2 text-zinc-400">
                       · {verdict.status} ({Math.round(verdict.score * 100)}%)
+                      {verdict.years_needed != null
+                        ? ` · ${fmtYears(verdict.years_have)} / ${fmtYears(verdict.years_needed)} yr`
+                        : ""}
                     </span>
                   ) : null}
                 </div>
@@ -452,8 +480,31 @@ function JobPage({ id, live }: { id: string; live: number }) {
   );
 }
 
-function pct(value: number | null) {
+function pct(value: number | null | undefined) {
   return value == null ? "—" : `${Math.round(value * 100)}%`;
+}
+
+function fmtYears(value: number | null | undefined) {
+  if (value == null) return "0";
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
+function ScoreCell({
+  label,
+  value,
+  hint,
+}: {
+  label: string;
+  value: number | null | undefined;
+  hint?: string;
+}) {
+  return (
+    <div className="rounded-lg border border-zinc-800 px-3 py-2">
+      <dt className="text-xs uppercase tracking-wide text-zinc-500">{label}</dt>
+      <dd className="text-lg font-medium text-zinc-100">{pct(value)}</dd>
+      {hint ? <p className="text-[11px] text-zinc-500">{hint}</p> : null}
+    </div>
+  );
 }
 
 function TaskPage({ id, pushed }: { id: string; pushed?: TaskView }) {

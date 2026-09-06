@@ -29,6 +29,13 @@ pair with a hashed, ingest-scoped device token.
 
 ## Just shipped
 
+- **Match breakdown.** Overall is unchanged. The job page now shows Skills
+  (required bars with tenure stripped), Years (required year-count asks), and
+  the existing Required / Preferred / Seniority / Comp / Location portions.
+  A 5-year wishlist no longer hides a real skills match — or a recruiter who
+  will screen on years. Verdicts that stated a year bar also show
+  `have / asked`.
+
 - **Workday adapter.** `ingest_url` on a public `*.myworkdayjobs.com` posting
   fetches the CXS JSON (`/wday/cxs/{tenant}/{site}/job/…`) instead of the SPA
   shell. Requisition ids include product-style ids (`P751219-2`), not only

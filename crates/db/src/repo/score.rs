@@ -1,6 +1,6 @@
 //! Persist and read explainable match scores.
 
-use jobseeker_core::domain::scoring::MatchScore;
+use jobseeker_core::domain::scoring::{weighted_mean, MatchScore, VerdictStatus};
 use jobseeker_core::ids::{JobId, MatchScoreId, ProfileId};
 use jobseeker_core::time::{now, to_rfc3339};
 use jobseeker_core::Result;
@@ -16,6 +16,8 @@ pub struct MatchSummary {
     pub overall: f64,
     pub required_coverage: Option<f64>,
     pub preferred_coverage: Option<f64>,
+    pub skills_coverage: Option<f64>,
+    pub years_fit: Option<f64>,
     pub seniority_fit: Option<f64>,
     pub comp_fit: Option<f64>,
     pub location_fit: Option<f64>,
@@ -33,6 +35,11 @@ pub struct RequirementVerdict {
     pub status: String,
     pub score: f64,
     pub rationale: String,
+    pub years_have: Option<f64>,
+    pub years_needed: Option<f64>,
+    pub required: bool,
+    #[serde(skip_serializing)]
+    pub weight: f64,
 }
 
 /// Insert or replace the score for `(job, profile, algorithm)`.
@@ -175,6 +182,7 @@ pub async fn latest_for_job(
     let Some(row) = row else { return Ok(None) };
     let id: String = row.try_get("id").map_err(db_err)?;
     let verdicts = load_verdicts(db, &id).await?;
+    let (skills_coverage, years_fit) = breakdown_from_verdicts(&verdicts);
     let blockers: String = row.try_get("blockers_json").map_err(db_err)?;
     let flags: Option<String> = row.try_get("flags_json").map_err(db_err)?;
     Ok(Some(MatchSummary {
@@ -183,6 +191,8 @@ pub async fn latest_for_job(
         overall: row.try_get("overall").map_err(db_err)?,
         required_coverage: row.try_get("required_coverage").map_err(db_err)?,
         preferred_coverage: row.try_get("preferred_coverage").map_err(db_err)?,
+        skills_coverage,
+        years_fit,
         seniority_fit: row.try_get("seniority_fit").map_err(db_err)?,
         comp_fit: row.try_get("comp_fit").map_err(db_err)?,
         location_fit: row.try_get("location_fit").map_err(db_err)?,
@@ -208,8 +218,11 @@ pub async fn mark_stale_for_profile(db: &Db, profile_id: &ProfileId) -> Result<u
 
 async fn load_verdicts(db: &Db, match_id: &str) -> Result<Vec<RequirementVerdict>> {
     let rows = sqlx::query(
-        "SELECT requirement_id, status, score, rationale
-           FROM requirement_match WHERE match_score_id = ?1",
+        "SELECT rm.requirement_id, rm.status, rm.score, rm.rationale,
+                rm.years_have, rm.years_needed, rm.weight, r.necessity
+           FROM requirement_match rm
+           LEFT JOIN requirement r ON r.id = rm.requirement_id
+          WHERE rm.match_score_id = ?1",
     )
     .bind(match_id)
     .fetch_all(db.reader())
@@ -217,12 +230,53 @@ async fn load_verdicts(db: &Db, match_id: &str) -> Result<Vec<RequirementVerdict
     .map_err(db_err)?;
     let mut out = Vec::with_capacity(rows.len());
     for r in rows {
+        let necessity: Option<String> = r.try_get("necessity").map_err(db_err)?;
+        let required = matches!(
+            necessity.as_deref(),
+            Some("required") | Some("implied") | None
+        );
+        let weight: f64 = r.try_get("weight").unwrap_or(1.0);
         out.push(RequirementVerdict {
             requirement_id: r.try_get("requirement_id").map_err(db_err)?,
             status: r.try_get("status").map_err(db_err)?,
             score: r.try_get("score").map_err(db_err)?,
             rationale: r.try_get("rationale").map_err(db_err)?,
+            years_have: r.try_get("years_have").map_err(db_err)?,
+            years_needed: r.try_get("years_needed").map_err(db_err)?,
+            required,
+            weight: if weight > 0.0 { weight } else { 1.0 },
         });
     }
     Ok(out)
+}
+
+/// Rebuild the diagnostic split from stored verdicts so older scores (no extra
+/// columns) still show skills vs years. Overall is never recomputed here.
+fn breakdown_from_verdicts(verdicts: &[RequirementVerdict]) -> (Option<f64>, Option<f64>) {
+    let skills = weighted_mean(verdicts.iter().filter_map(|v| {
+        if !v.required || v.status == VerdictStatus::Unknown.as_str() {
+            return None;
+        }
+        let skill = if v.years_needed.is_some() {
+            if v.years_have.is_some() {
+                1.0
+            } else {
+                v.score as f32
+            }
+        } else {
+            v.score as f32
+        };
+        Some((skill, v.weight as f32))
+    }))
+    .map(f64::from);
+    let years = weighted_mean(verdicts.iter().filter_map(|v| {
+        if !v.required || v.status == VerdictStatus::Unknown.as_str() {
+            return None;
+        }
+        let needed = v.years_needed.filter(|n| *n > 0.0)?;
+        let have = v.years_have.unwrap_or(0.0);
+        Some(((have / needed) as f32, v.weight as f32))
+    }))
+    .map(f64::from);
+    (skills, years)
 }
