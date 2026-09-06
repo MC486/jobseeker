@@ -178,11 +178,16 @@ by `normalized_text`; salary conflicts create an `extraction_conflict` row (you 
 that the aggregator's "estimate" was $20k below the ATS's real band). Merges record enough
 information to be reversible (FR-A-11).
 
-**User-initiated merge (implemented).** Stages 1–3 above are still design; the server does
-not silently fold two jobs. `POST /api/v1/jobs/:id/merge {into_job_id}` and
+**User-initiated merge (implemented).** Stages 1–2 auto-merge are still design; the server
+does not silently fold two jobs. `POST /api/v1/jobs/:id/merge {into_job_id}` and
 `jobseeker merge <from> <into>` do the union described above, require the same
 `company_id`, keep the keeper's title and description, soft-delete the donor, and write a
 tombstone `reason = merged_into:{into}`.
+
+**Stage 3 flag (implemented).** `GET /api/v1/jobs/:id/duplicates` lists live jobs at the
+same company whose `title_normalized` Jaccard is ≥ 0.6. A candidate is `strong` when
+Jaccard ≥ 0.8 and both are remote or share a location string. The UI offers Compare /
+Merge; it never merges on its own.
 
 **User-initiated split (FR-A-11).** `POST /api/v1/jobs/:id/split {listing_id}` peels that
 listing into a new job at the same company. The original keeps its fields. The listing is

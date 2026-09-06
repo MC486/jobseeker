@@ -1,4 +1,4 @@
-//! Process entrypoint: `jobseeker serve`, `add`, `list`, `show`, `merge`, `split`, `migrate`, `openapi`, `reconcile`, `profile`.
+//! Process entrypoint: `jobseeker serve`, `add`, `list`, `show`, `merge`, `split`, `duplicates`, `migrate`, `openapi`, `reconcile`, `profile`.
 
 use std::io::{self, Read};
 use std::path::PathBuf;
@@ -68,6 +68,8 @@ enum Command {
         /// Listing to peel off.
         listing: String,
     },
+    /// Flag same-company title matches. Never merges.
+    Duplicates { id: String },
     /// Pair a browser extension: print a one-time code, or emit a device token.
     Pair {
         /// Label stored with the token, e.g. "Firefox on laptop".
@@ -243,6 +245,27 @@ async fn main() -> Result<()> {
             }
             if let Some(c) = page.next_cursor {
                 println!("next_cursor={c}");
+            }
+        }
+        Command::Duplicates { id } => {
+            let pipeline = Pipeline::open(config).await?;
+            let id: jobseeker_core::ids::JobId = id.parse()?;
+            let found = job::duplicates(&pipeline.db, &id).await?;
+            if found.is_empty() {
+                println!("no same-company title matches");
+            }
+            for c in found {
+                println!(
+                    "{}  {} — {}  title {:.0}%  desc {:.0}%  {}  {} reqs{}",
+                    c.job_id,
+                    c.title,
+                    c.company_name,
+                    c.title_jaccard * 100.0,
+                    c.description_cosine * 100.0,
+                    c.strength,
+                    c.requirement_count,
+                    if c.keep_this { "  keep this" } else { "" }
+                );
             }
         }
         Command::Split { from, listing } => {

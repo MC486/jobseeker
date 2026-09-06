@@ -165,6 +165,7 @@ pub struct PageDto<T: Serialize> {
         get_job_match,
         merge_job,
         split_job,
+        list_duplicates,
         get_profile,
         import_resume,
         get_task,
@@ -217,6 +218,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/jobs/{id}/match", get(get_job_match))
         .route("/api/v1/jobs/{id}/merge", post(merge_job))
         .route("/api/v1/jobs/{id}/split", post(split_job))
+        .route("/api/v1/jobs/{id}/duplicates", get(list_duplicates))
         .route("/api/v1/profiles/default", get(get_profile))
         .route(
             "/api/v1/profiles/default/import-resume",
@@ -526,6 +528,18 @@ async fn split_job(
         .await
         .map_err(ApiError)?;
     Ok(Json(report))
+}
+
+#[utoipa::path(get, path = "/api/v1/jobs/{id}/duplicates", responses((status = 200), (status = 404)))]
+async fn list_duplicates(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Vec<jobseeker_db::repo::job::DuplicateCandidate>>> {
+    let id: JobId = id.parse().map_err(ApiError)?;
+    let found = job::duplicates(&state.pipeline.db, &id)
+        .await
+        .map_err(ApiError)?;
+    Ok(Json(found))
 }
 
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
@@ -1103,6 +1117,10 @@ mod tests {
         assert!(
             spec["paths"]["/api/v1/jobs/{id}/split"].is_object(),
             "OpenAPI must document POST /api/v1/jobs/{{id}}/split"
+        );
+        assert!(
+            spec["paths"]["/api/v1/jobs/{id}/duplicates"].is_object(),
+            "OpenAPI must document GET /api/v1/jobs/{{id}}/duplicates"
         );
     }
 
@@ -1789,6 +1807,85 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(after.items.len(), 2);
+        std::mem::forget(dir);
+    }
+
+    #[tokio::test]
+    async fn duplicates_flag_same_company_title_matches() {
+        let dir = tempfile::tempdir().unwrap();
+        let pipe = jobseeker_pipeline::for_test(dir.path().to_path_buf())
+            .await
+            .unwrap();
+        let a = r#"<html><head><script type="application/ld+json">{"@type":"JobPosting","title":"Data Scientist","hiringOrganization":{"name":"Zillow"},"description":"<p>Python</p>"}</script></head></html>"#;
+        let b = r#"<html><head><script type="application/ld+json">{"@type":"JobPosting","title":"Data Scientist","hiringOrganization":{"name":"Zillow"},"description":"<p>SQL</p>"}</script></head></html>"#;
+        let harbor = r#"<html><head><script type="application/ld+json">{"@type":"JobPosting","title":"Applied Data Scientist","hiringOrganization":{"name":"Harbor"},"description":"<p>Python</p>"}</script></head></html>"#;
+        pipe.ingest_paste(a, Some("https://boards.greenhouse.io/zillow/jobs/1"))
+            .await
+            .unwrap();
+        pipe.drain().await.unwrap();
+        pipe.ingest_paste(b, Some("https://boards.greenhouse.io/zillow/jobs/2"))
+            .await
+            .unwrap();
+        pipe.drain().await.unwrap();
+        pipe.ingest_paste(harbor, Some("https://boards.greenhouse.io/harbor/jobs/1"))
+            .await
+            .unwrap();
+        pipe.drain().await.unwrap();
+
+        let page =
+            jobseeker_db::repo::job::list(&pipe.db, &jobseeker_db::repo::job::JobFilter::default())
+                .await
+                .unwrap();
+        let zillow: Vec<_> = page
+            .items
+            .iter()
+            .filter(|row| row.company_name == "Zillow")
+            .collect();
+        assert_eq!(zillow.len(), 2);
+        let harbor_id = page
+            .items
+            .iter()
+            .find(|row| row.company_name == "Harbor")
+            .unwrap()
+            .id
+            .clone();
+
+        let app = router(AppState::new(pipe));
+        let res = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/jobs/{}/duplicates", zillow[0].id))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let found: Vec<serde_json::Value> = body_json(res).await;
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0]["job_id"], zillow[1].id);
+        assert!(
+            found[0]["title_jaccard"].as_f64().unwrap() >= 0.99,
+            "{found:?}"
+        );
+        assert!(
+            found[0]["strength"] == "strong" || found[0]["strength"] == "possible",
+            "{found:?}"
+        );
+
+        let none = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/jobs/{harbor_id}/duplicates"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(none.status(), StatusCode::OK);
+        let empty: Vec<serde_json::Value> = body_json(none).await;
+        assert!(empty.is_empty());
         std::mem::forget(dir);
     }
 }

@@ -81,6 +81,18 @@ export type MatchSummary = {
   verdicts: RequirementVerdict[];
 };
 
+export type DuplicateCandidate = {
+  job_id: string;
+  title: string;
+  company_name: string;
+  title_jaccard: number;
+  description_cosine: number;
+  strength: string;
+  requirement_count: number;
+  listings: { id: string; url: string; source: string; is_canonical: boolean }[];
+  keep_this: boolean;
+};
+
 export type JobPatch = {
   title?: string;
   user_rating?: number;
@@ -202,6 +214,8 @@ export const api = {
       `/api/v1/jobs/${from}/split`,
       { method: "POST", body: JSON.stringify({ listing_id: listingId }) },
     ),
+  duplicates: (id: string) =>
+    request<DuplicateCandidate[]>(`/api/v1/jobs/${id}/duplicates`),
   task: (id: string) => request<TaskView>(`/api/v1/tasks/${id}`),
   ingestUrl: (url: string) =>
     request<Accepted>("/api/v1/ingest/url", { method: "POST", body: JSON.stringify({ url }) }),

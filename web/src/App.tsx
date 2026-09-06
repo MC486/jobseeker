@@ -14,7 +14,7 @@ import {
   useRouterState,
   useSearch,
 } from "@tanstack/react-router";
-import { api, JobDetail, JobListRow, MatchSummary, Me } from "./api";
+import { api, DuplicateCandidate, JobDetail, JobListRow, MatchSummary, Me } from "./api";
 import { MAX_COMPARE, parseCompareIds } from "./compare";
 import { fetchers, keys, subscribeQueryEvents } from "./query";
 
@@ -747,6 +747,91 @@ export function ComparePage() {
   );
 }
 
+function DuplicateRow({
+  currentId,
+  candidate,
+  onMerged,
+}: {
+  currentId: string;
+  candidate: DuplicateCandidate;
+  onMerged: (intoId: string) => void;
+}) {
+  const qc = useQueryClient();
+  const [error, setError] = useState<string | null>(null);
+  const merge = useMutation({
+    mutationFn: ({ from, into }: { from: string; into: string }) =>
+      api.mergeJob(from, into),
+    onSuccess: async (_report, vars) => {
+      await qc.invalidateQueries({ queryKey: ["jobs"] });
+      await qc.invalidateQueries({ queryKey: ["duplicates"] });
+      onMerged(vars.into);
+    },
+    onError: (err) => {
+      setError(err instanceof Error ? err.message : String(err));
+    },
+  });
+  const sources = [...new Set(candidate.listings.map((l) => l.source))].join("+") || "posting";
+  const mergeThisIntoThem = { from: currentId, into: candidate.job_id };
+  const mergeThemIntoThis = { from: candidate.job_id, into: currentId };
+  const recommended = candidate.keep_this ? mergeThisIntoThem : mergeThemIntoThis;
+
+  return (
+    <div className="space-y-2 rounded-lg border border-zinc-800 bg-zinc-950/40 p-3">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <Link
+          to="/jobs/$jobId"
+          params={{ jobId: candidate.job_id }}
+          className="font-medium text-zinc-100 hover:text-indigo-300"
+        >
+          {candidate.title}
+        </Link>
+        <span className="text-xs uppercase tracking-wide text-zinc-500">
+          {candidate.strength}
+        </span>
+      </div>
+      <p className="text-xs text-zinc-500">
+        {candidate.company_name} · {sources} · {candidate.requirement_count} reqs · title{" "}
+        {Math.round(candidate.title_jaccard * 100)}%
+        {candidate.description_cosine > 0
+          ? ` · desc ${Math.round(candidate.description_cosine * 100)}%`
+          : ""}
+      </p>
+      {error && <p className="text-sm text-red-300">{error}</p>}
+      <div className="flex flex-wrap gap-2">
+        <Link
+          to="/jobs/compare"
+          search={{ ids: `${currentId},${candidate.job_id}` }}
+          className="rounded-lg border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300"
+        >
+          Compare
+        </Link>
+        <button
+          type="button"
+          disabled={merge.isPending}
+          onClick={() => merge.mutate(recommended)}
+          className="rounded-lg bg-indigo-400 px-3 py-1.5 text-sm font-semibold text-zinc-950 disabled:opacity-50"
+        >
+          {recommended.from === currentId
+            ? `Merge this into ${sources}`
+            : `Merge ${sources} into this`}
+        </button>
+        <button
+          type="button"
+          disabled={merge.isPending}
+          onClick={() =>
+            merge.mutate(
+              recommended.from === currentId ? mergeThemIntoThis : mergeThisIntoThem,
+            )
+          }
+          className="rounded-lg border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 disabled:opacity-50"
+        >
+          Other direction
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function provenanceDot(job: JobDetail, field: string) {
   const row = job.provenance.find((p) => p.field === field);
   if (!row) return null;
@@ -776,6 +861,10 @@ export function JobPage() {
     queryKey: keys.match(jobId),
     queryFn: () => fetchers.match(jobId),
     retry: false,
+  });
+  const dups = useQuery({
+    queryKey: keys.duplicates(jobId),
+    queryFn: () => fetchers.duplicates(jobId),
   });
   const archive = useMutation({
     mutationFn: (next: boolean) => api.patchJob(jobId, { is_archived: next }),
@@ -835,6 +924,24 @@ export function JobPage() {
           </button>
         </div>
       </div>
+      {(dups.data ?? []).length > 0 && (
+        <section className="space-y-2 rounded-xl border border-amber-900/60 bg-amber-950/20 p-4">
+          <h2 className="text-lg font-medium text-amber-100">Possible duplicates</h2>
+          <p className="text-xs text-zinc-500">
+            Same company, similar title. Nothing is merged until you say so.
+          </p>
+          {(dups.data ?? []).map((c) => (
+            <DuplicateRow
+              key={c.job_id}
+              currentId={jobId}
+              candidate={c}
+              onMerged={(intoId) =>
+                void navigate({ to: "/jobs/$jobId", params: { jobId: intoId } })
+              }
+            />
+          ))}
+        </section>
+      )}
       {score && (
         <section className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
           <h2 className="text-lg font-medium">

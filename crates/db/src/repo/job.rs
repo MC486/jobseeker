@@ -971,6 +971,133 @@ async fn insert_stub(db: &Db, company_id: &str, title: &str) -> Result<JobId> {
     Ok(id)
 }
 
+const TITLE_FLAG: f32 = 0.6;
+const TITLE_STRONG: f32 = 0.8;
+const ATS_SOURCES: &[&str] = &["workday", "greenhouse", "lever", "ashby", "company_site"];
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct DuplicateCandidate {
+    pub job_id: String,
+    pub title: String,
+    pub company_name: String,
+    pub title_jaccard: f64,
+    pub description_cosine: f64,
+    pub strength: String,
+    pub requirement_count: i64,
+    pub listings: Vec<ListingBrief>,
+    /// True when this candidate is the better keeper (more reqs / ATS listing).
+    pub keep_this: bool,
+}
+
+/// Same-company title matches. Flags only — never merges.
+pub async fn duplicates(db: &Db, id: &JobId) -> Result<Vec<DuplicateCandidate>> {
+    let Some(self_row) = get(db, id).await? else {
+        return Err(jobseeker_core::Error::NotFound("job"));
+    };
+    let self_norm: String = sqlx::query_scalar("SELECT title_normalized FROM job WHERE id = ?1")
+        .bind(id.as_str())
+        .fetch_one(db.reader())
+        .await
+        .map_err(db_err)?;
+    let self_desc: String = sqlx::query_scalar("SELECT description_text FROM job WHERE id = ?1")
+        .bind(id.as_str())
+        .fetch_one(db.reader())
+        .await
+        .map_err(db_err)?;
+    let self_title_key = if self_norm.trim().is_empty() {
+        self_row.title.clone()
+    } else {
+        self_norm
+    };
+    let self_rank = keeper_rank(self_row.requirements.len() as i64, &self_row.listings);
+
+    let rows = sqlx::query(
+        "SELECT j.id, j.title, j.title_normalized, j.description_text, j.work_mode
+           FROM job j
+          WHERE j.company_id = ?1 AND j.id != ?2 AND j.deleted_at IS NULL AND j.is_archived = 0
+          ORDER BY j.updated_at DESC",
+    )
+    .bind(&self_row.company_id)
+    .bind(id.as_str())
+    .fetch_all(db.reader())
+    .await
+    .map_err(db_err)?;
+
+    let mut out = Vec::new();
+    for r in rows {
+        let other_id: String = r.try_get("id").map_err(db_err)?;
+        let other_title: String = r.try_get("title").map_err(db_err)?;
+        let other_norm: String = r.try_get("title_normalized").map_err(db_err)?;
+        let other_desc: String = r.try_get("description_text").map_err(db_err)?;
+        let other_mode: String = r.try_get("work_mode").map_err(db_err)?;
+        let other_key = if other_norm.trim().is_empty() {
+            other_title.clone()
+        } else {
+            other_norm
+        };
+        let title_j = jobseeker_normalize::text::jaccard(&self_title_key, &other_key);
+        if title_j < TITLE_FLAG {
+            continue;
+        }
+        let desc_c = jobseeker_normalize::text::token_cosine(&self_desc, &other_desc);
+        let other_job: JobId = other_id.parse()?;
+        let listings = load_listings(db, &other_job).await?;
+        let req_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM requirement WHERE job_id = ?1")
+                .bind(&other_id)
+                .fetch_one(db.reader())
+                .await
+                .map_err(db_err)?;
+        let both_remote = self_row.work_mode == "remote" && other_mode == "remote";
+        let loc_overlap = {
+            let other_locs: Vec<String> =
+                sqlx::query_scalar("SELECT raw FROM job_location WHERE job_id = ?1")
+                    .bind(&other_id)
+                    .fetch_all(db.reader())
+                    .await
+                    .map_err(db_err)?;
+            let self_set: std::collections::HashSet<String> = self_row
+                .locations
+                .iter()
+                .map(|s| s.to_lowercase())
+                .collect();
+            other_locs
+                .iter()
+                .any(|l| self_set.contains(&l.to_lowercase()))
+        };
+        let strength = if title_j >= TITLE_STRONG && (both_remote || loc_overlap) {
+            "strong"
+        } else {
+            "possible"
+        };
+        let keep_this = keeper_rank(req_count, &listings) >= self_rank;
+        out.push(DuplicateCandidate {
+            job_id: other_id,
+            title: other_title,
+            company_name: self_row.company_name.clone(),
+            title_jaccard: title_j as f64,
+            description_cosine: desc_c as f64,
+            strength: strength.into(),
+            requirement_count: req_count,
+            listings,
+            keep_this,
+        });
+    }
+    out.sort_by(|a, b| {
+        b.title_jaccard
+            .partial_cmp(&a.title_jaccard)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    Ok(out)
+}
+
+fn keeper_rank(req_count: i64, listings: &[ListingBrief]) -> i64 {
+    let ats = listings
+        .iter()
+        .any(|l| ATS_SOURCES.contains(&l.source.as_str()));
+    req_count * 10 + i64::from(ats)
+}
+
 async fn load_provenance(db: &Db, id: &JobId) -> Result<Vec<FieldProvenanceRow>> {
     let rows = sqlx::query(
         "SELECT field, provenance, confidence FROM field_provenance
@@ -1979,5 +2106,63 @@ mod tests {
             .await
             .unwrap();
         assert!(split(&db, &job, &listing).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn duplicates_flag_the_same_title_at_the_same_company() {
+        let db = Db::open_in_memory().await.unwrap();
+        let workday = insert_job(
+            &db,
+            "Zillow",
+            "Data Scientist",
+            JobStatus::Open,
+            WorkMode::Remote,
+            None,
+            SalaryPeriod::Year,
+            "2026-09-01T00:00:00Z",
+        )
+        .await;
+        let linkedin = insert_job(
+            &db,
+            "Zillow",
+            "Data Scientist",
+            JobStatus::Open,
+            WorkMode::Remote,
+            None,
+            SalaryPeriod::Year,
+            "2026-09-02T00:00:00Z",
+        )
+        .await;
+        let harbor = insert_job(
+            &db,
+            "Harbor",
+            "Applied Data Scientist",
+            JobStatus::Open,
+            WorkMode::Remote,
+            None,
+            SalaryPeriod::Year,
+            "2026-09-03T00:00:00Z",
+        )
+        .await;
+        let acme = insert_job(
+            &db,
+            "Zillow",
+            "Platform Engineer",
+            JobStatus::Open,
+            WorkMode::Remote,
+            None,
+            SalaryPeriod::Year,
+            "2026-09-04T00:00:00Z",
+        )
+        .await;
+
+        let found = duplicates(&db, &workday).await.unwrap();
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].job_id, linkedin.as_str());
+        assert_eq!(found[0].strength, "strong");
+        assert!((found[0].title_jaccard - 1.0).abs() < 1e-6);
+
+        assert!(duplicates(&db, &harbor).await.unwrap().is_empty());
+        assert!(duplicates(&db, &acme).await.unwrap().is_empty());
     }
 }
