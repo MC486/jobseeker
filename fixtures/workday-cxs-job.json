@@ -1,0 +1,15 @@
+{
+  "hiringOrganization": {
+    "name": "Acme Robotics"
+  },
+  "jobPostingInfo": {
+    "title": "Data Scientist",
+    "jobDescription": "<div><h2>About the role</h2><p>Build models that help people move.</p><h2>Requirements</h2><ul><li>5+ years applying data science or machine learning</li><li>Python and SQL in production</li><li>Experience with Snowflake or a similar cloud warehouse</li><li>Experimentation (A/B testing) and clear communication</li></ul><p>This role has been categorized as a Remote position. U.S. employees may live in any of the 50 United States.</p><p>In California, New York, and Washington the standard base pay range for this role is $125,900.00 - $201,100.00 annually.</p></div>",
+    "location": "Remote-USA",
+    "additionalLocations": ["Seattle, WA"],
+    "remoteType": "Fully Remote",
+    "timeType": "Full time",
+    "jobReqId": "P751219-2",
+    "country": { "descriptor": "United States of America" }
+  }
+}

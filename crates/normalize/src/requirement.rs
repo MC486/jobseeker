@@ -78,7 +78,7 @@ pub fn classify_heading(heading: &str) -> Section {
         Regex::new(r"(?i)\b(requirements?|qualifications?|must[- ]haves?|what (?:you|we)'?ll need|who you are|what we'?re looking for|minimum|basic qualifications|skills? (?:and|&) experience|about you)\b").unwrap()
     });
     static RESPONSIBILITIES: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r"(?i)\b(responsibilit\w+|what you'?ll do|the role|day[- ]to[- ]day|your impact|duties|about the (?:role|job)|in this role)\b").unwrap()
+        Regex::new(r"(?i)\b(responsibilit\w+|what you'?ll do|you will get to|the role|day[- ]to[- ]day|your impact|duties|about the (?:role|job)|in this role)\b").unwrap()
     });
     static BENEFITS: Lazy<Regex> = Lazy::new(|| {
         Regex::new(
@@ -149,7 +149,7 @@ pub fn atomize(description_md: &str) -> Vec<AtomizedRequirement> {
             .get(1)
             .expect("the bullet pattern always captures its body");
         let bullet = group.as_str().trim();
-        if bullet.len() < 8 {
+        if bullet.len() < 8 || is_equivalent_only_bullet(bullet) {
             continue;
         }
 
@@ -325,6 +325,14 @@ pub fn classify_kind(text: &str, has_clearance: bool) -> RequirementKind {
 
 /// Work-authorization demands are blockers in the same way a clearance is: categorical, and
 /// not fixable by being a better engineer.
+fn is_equivalent_only_bullet(text: &str) -> bool {
+    static RE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"(?i)^(?:or\s+)?an?\s+equivalent combination of education and experience\.?$")
+            .unwrap()
+    });
+    RE.is_match(text.trim())
+}
+
 fn is_authorization_demand(text: &str) -> bool {
     static RE: Lazy<Regex> = Lazy::new(|| {
         Regex::new(r"(?i)\b(authorized to work|work authorization|citizen(?:ship)?|permanent resident|green card|no (?:visa )?sponsorship|us person)\b").unwrap()
@@ -399,6 +407,29 @@ You will own the ingestion platform.
 
         let robotics = a.iter().find(|r| r.text.contains("robotics")).unwrap();
         assert_eq!(robotics.necessity, Necessity::NiceToHave);
+    }
+
+    #[test]
+    fn you_will_get_to_is_a_responsibility_heading() {
+        assert_eq!(
+            classify_heading("You will get to"),
+            Section::Responsibilities
+        );
+        let a = atomize(
+            "## About the role\n\n**You will get to**\n\n- Partner with product to frame hypotheses\n\n## Who you are\n\n- 5+ years applying data science\n- Or an equivalent combination of education and experience\n",
+        );
+        assert!(
+            !a.iter().any(|r| r.text.contains("Partner with product")),
+            "you-will-get-to bullets are the job, not the bar: {a:#?}"
+        );
+        assert!(a.iter().any(|r| r.text.contains("5+ years")));
+        assert!(
+            !a.iter().any(|r| r
+                .text
+                .to_ascii_lowercase()
+                .contains("equivalent combination")),
+            "the or-equivalent line is an escape hatch, not a sixth demand: {a:#?}"
+        );
     }
 
     #[test]

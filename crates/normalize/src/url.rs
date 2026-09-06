@@ -184,7 +184,6 @@ fn site_identity(host: &str, path: &str, url: &Url) -> Option<Identity> {
         Regex::new(r"^/([^/]+)/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})")
             .unwrap()
     });
-    static WORKDAY: Lazy<Regex> = Lazy::new(|| Regex::new(r"_((?:R|REQ|JR)[-_]?\d{3,})$").unwrap());
     static SMARTRECRUITERS: Lazy<Regex> = Lazy::new(|| Regex::new(r"^/([^/]+)/(\d{9,})").unwrap());
 
     let param = |k: &str| {
@@ -256,14 +255,14 @@ fn site_identity(host: &str, path: &str, url: &Url) -> Option<Identity> {
 
     if h.ends_with("myworkdayjobs.com") {
         // Workday paths carry a locale segment that varies by visitor:
-        // /en-US/<site>/job/<location>/<slug>_R-12345. The requisition id is the identity.
-        let id = WORKDAY.captures(path).map(|c| c[1].to_string())?;
-        let tenant = h.split('.').next().unwrap_or_default().to_string();
+        // /en-US/<site>/job/<location>/<slug>_P751219-2. The requisition id is the
+        // identity; the career-site slug is the board (needed to build the CXS URL).
+        let parsed = workday_path(path)?;
         return Some(Identity {
-            canonical: format!("https://{h}/job/{id}"),
+            canonical: format!("https://{h}/{}/job/{}", parsed.site, parsed.req_id),
             source: SourceKind::Workday,
-            job_id: Some(id),
-            board: Some(tenant),
+            job_id: Some(parsed.req_id),
+            board: Some(parsed.site),
         });
     }
 
@@ -336,9 +335,79 @@ fn strip_tracking_params(url: &mut Url) {
     }
 }
 
+/// Requisition ids Workday appends to the last path segment: `R-12345`, `JR1234`,
+/// `P751219-2`. Zillow and several other tenants use a letter + digits + optional `-N`
+/// suffix, not only `R` / `REQ` / `JR`.
+static WORKDAY_REQ: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?:^|_)((?:[A-Z]{1,6}[-_]?)?\d{3,}(?:-\d+)?)$").unwrap());
+
+static WORKDAY_LOCALE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^[A-Za-z]{2}(?:-[A-Za-z]{2})?$").unwrap());
+
+struct WorkdayPath {
+    site: String,
+    /// Path after `/job/`, including the location slug. Needed to build the CXS URL.
+    job_path: String,
+    req_id: String,
+}
+
+fn workday_path(path: &str) -> Option<WorkdayPath> {
+    let mut segs: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    if segs.first().is_some_and(|s| WORKDAY_LOCALE.is_match(s)) {
+        segs.remove(0);
+    }
+    // A CXS URL is `/wday/cxs/<tenant>/<site>/job/...`.
+    if segs.first().copied() == Some("wday")
+        && segs.get(1).copied() == Some("cxs")
+        && segs.len() >= 5
+    {
+        segs.drain(..3);
+    }
+    let site = (*segs.first()?).to_string();
+    let job_idx = segs.iter().position(|s| *s == "job")?;
+    let job_segs = &segs[job_idx + 1..];
+    if job_segs.is_empty() {
+        return None;
+    }
+    let last = *job_segs.last()?;
+    let req_id = WORKDAY_REQ.captures(last).map(|c| c[1].to_string())?;
+    Some(WorkdayPath {
+        site,
+        job_path: job_segs.join("/"),
+        req_id,
+    })
+}
+
+/// Workday's own CXS JSON endpoint — the same payload the careers SPA loads.
+///
+/// `https://{host}/wday/cxs/{tenant}/{site}/job/{location}/{slug}_{reqId}`
+///
+/// Built from the *original* URL so the location slug is preserved. Identity
+/// canonicalization drops locale and location; the API cannot.
+pub fn workday_cxs_url(original: &str) -> Option<String> {
+    let url = Url::parse(original.trim()).ok()?;
+    let host = url.host_str()?.to_ascii_lowercase();
+    if !host.ends_with("myworkdayjobs.com") {
+        return None;
+    }
+    let path = url.path();
+    if path.contains("/wday/cxs/") {
+        return Some(format!("https://{host}{}", path.trim_end_matches('/')));
+    }
+    let tenant = host.split('.').next()?;
+    let parsed = workday_path(path)?;
+    Some(format!(
+        "https://{host}/wday/cxs/{tenant}/{}/job/{}",
+        parsed.site, parsed.job_path
+    ))
+}
+
 /// The public ATS JSON endpoint for a canonical URL, when one exists. Preferring it over the
 /// HTML is both higher fidelity and cheaper (`docs/05-ingestion.md` §3).
 pub fn ats_api_url(c: &CanonicalUrl) -> Option<String> {
+    if c.source == SourceKind::Workday {
+        return workday_cxs_url(&c.original);
+    }
     let (board, id) = (c.board.as_deref()?, c.source_job_id.as_deref()?);
     Some(match c.source {
         SourceKind::Greenhouse => {
@@ -437,8 +506,37 @@ mod tests {
         let a = canon("https://acme.wd1.myworkdayjobs.com/en-US/acme_careers/job/San-Francisco/Senior-Platform-Engineer_R-12345");
         let b = canon("https://acme.wd1.myworkdayjobs.com/de-DE/acme_careers/job/Berlin/Senior-Platform-Engineer_R-12345");
         assert_eq!(a.canonical, b.canonical, "locale must not fork identity");
+        assert_eq!(
+            a.canonical,
+            "https://acme.wd1.myworkdayjobs.com/acme_careers/job/R-12345"
+        );
         assert_eq!(a.source_job_id.as_deref(), Some("R-12345"));
+        assert_eq!(a.board.as_deref(), Some("acme_careers"));
         assert_eq!(a.source, SourceKind::Workday);
+    }
+
+    #[test]
+    fn workday_accepts_product_style_req_ids_and_builds_cxs() {
+        let url = "https://zillow.wd5.myworkdayjobs.com/en-US/Zillow_Group_External/job/Remote-USA/Data-Scientist_P751219-2";
+        let c = canon(url);
+        assert_eq!(c.source, SourceKind::Workday);
+        assert_eq!(c.source_job_id.as_deref(), Some("P751219-2"));
+        assert_eq!(c.board.as_deref(), Some("Zillow_Group_External"));
+        assert_eq!(
+            c.canonical,
+            "https://zillow.wd5.myworkdayjobs.com/Zillow_Group_External/job/P751219-2"
+        );
+        assert_eq!(
+            ats_api_url(&c).as_deref(),
+            Some("https://zillow.wd5.myworkdayjobs.com/wday/cxs/zillow/Zillow_Group_External/job/Remote-USA/Data-Scientist_P751219-2")
+        );
+        let seattle = canon(
+            "https://zillow.wd5.myworkdayjobs.com/en-US/Zillow_Group_External/job/Seattle-WA/Data-Scientist_P751219-2",
+        );
+        assert_eq!(
+            seattle.canonical, c.canonical,
+            "location options of the same req must share identity"
+        );
     }
 
     #[test]

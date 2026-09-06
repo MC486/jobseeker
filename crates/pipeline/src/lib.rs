@@ -476,7 +476,10 @@ impl Pipeline {
             .unwrap_or(SourceKind::Manual);
 
         let input = ExtractInput {
-            url: row.url.clone(),
+            // Prefer the listing URL the user asked for. The capture URL is often an
+            // ATS JSON endpoint (Workday CXS, Greenhouse board API) and must not become
+            // the apply link.
+            url: listing.as_ref().map(|l| l.url.clone()).or(row.url.clone()),
             body,
             content_type: row.content_type.clone(),
             method: row.method,

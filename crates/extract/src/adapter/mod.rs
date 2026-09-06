@@ -9,6 +9,7 @@ mod greenhouse;
 mod indeed;
 mod lever;
 mod linkedin;
+mod workday;
 
 use jobseeker_core::domain::enums::SourceKind;
 use jobseeker_core::domain::job::ExtractedJob;
@@ -41,6 +42,7 @@ const REGISTRY: &[&dyn SiteAdapter] = &[
     &greenhouse::Greenhouse,
     &lever::Lever,
     &ashby::Ashby,
+    &workday::Workday,
 ];
 
 /// Run the first matching adapter. No match is a no-op.
@@ -67,6 +69,34 @@ fn host_matches(url: &str, suffixes: &[&str]) -> bool {
     suffixes
         .iter()
         .any(|s| host == *s || host.ends_with(&format!(".{s}")))
+}
+
+fn all_texts(document: &Html, selectors: &[&str]) -> Vec<String> {
+    let mut out = Vec::new();
+    for sel in selectors {
+        let Ok(selector) = Selector::parse(sel) else {
+            continue;
+        };
+        for node in document.select(&selector) {
+            let text = node
+                .text()
+                .map(str::trim)
+                .filter(|t| !t.is_empty())
+                .collect::<Vec<_>>()
+                .join(" ");
+            if !text.is_empty()
+                && !out
+                    .iter()
+                    .any(|existing: &String| existing.eq_ignore_ascii_case(&text))
+            {
+                out.push(text);
+            }
+        }
+        if !out.is_empty() {
+            break;
+        }
+    }
+    out
 }
 
 fn first_text(document: &Html, selectors: &[&str]) -> Option<String> {
@@ -154,12 +184,20 @@ fn set_description_html(job: &mut ExtractedJob, html: &str) {
 }
 
 fn set_location(job: &mut ExtractedJob, text: impl Into<String>) {
+    add_location(job, text);
+}
+
+fn add_location(job: &mut ExtractedJob, text: impl Into<String>) {
     let text = text.into();
     if text.is_empty() {
         return;
     }
     let mode = infer_work_mode(&text);
-    if job.locations.is_empty() {
+    if !job
+        .locations
+        .iter()
+        .any(|existing| existing.value.text.eq_ignore_ascii_case(&text))
+    {
         job.locations.push(Sourced::new(
             RawLocation {
                 text: text.clone(),

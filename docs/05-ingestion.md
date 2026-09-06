@@ -42,7 +42,7 @@ recognized once:
 | `job-boards.greenhouse.io/<board>/jobs/<id>` | canonical | `(board, id)` |
 | `jobs.lever.co/<board>/<uuid>` | canonical | `(board, uuid)` |
 | `jobs.ashbyhq.com/<board>/<uuid>` | canonical | `(board, uuid)` |
-| `*.myworkdayjobs.com/…/job/…/<slug>_<reqid>` | strip locale segment | `reqid` |
+| `*.myworkdayjobs.com/…/job/…/<slug>_<reqid>` | strip locale + location; keep site | `reqid` (`R-12345`, `P751219-2`, …) |
 | `*.smartrecruiters.com/…/<id>-<slug>` | canonical | `id` |
 | `*.applytojob.com` (Workable) | canonical | shortcode |
 
@@ -86,6 +86,7 @@ fidelity, stable schema, cheaper, and explicitly published for programmatic use:
 | SmartRecruiters | `https://api.smartrecruiters.com/v1/companies/<company>/postings/<id>` |
 | Workable | `https://apply.workable.com/api/v1/widget/accounts/<account>?details=true` |
 | Recruitee | `https://<company>.recruitee.com/api/offers/` |
+| Workday | `https://<host>/wday/cxs/<tenant>/<site>/job/<location>/<slug>_<reqid>` |
 
 These return `provenance = api` fields with confidence 0.95+ and generally make the LLM stage
 unnecessary. Endpoint shapes drift; each client owns a fixture test so breakage is loud.

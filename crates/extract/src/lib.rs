@@ -326,6 +326,64 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn workday_cxs_json_fills_both_location_options() {
+        let body = include_str!("../../../fixtures/workday-cxs-job.json");
+        let inp = ExtractInput {
+            url: Some(
+                "https://zillow.wd5.myworkdayjobs.com/en-US/Zillow_Group_External/job/Remote-USA/Data-Scientist_P751219-2"
+                    .into(),
+            ),
+            body: body.to_string(),
+            content_type: Some("application/json".into()),
+            method: CaptureMethod::Api,
+            source: SourceKind::Workday,
+            page_meta: None,
+        };
+        let out = extract(&inp, None, 16_000).await.unwrap();
+        assert_eq!(out.job.title.as_ref().unwrap().value, "Data Scientist");
+        assert_eq!(out.job.title.as_ref().unwrap().provenance, Provenance::Api);
+        assert_eq!(
+            out.job.company_name.as_ref().unwrap().value,
+            "Acme Robotics"
+        );
+        assert_eq!(out.job.source_job_id.as_ref().unwrap().value, "P751219-2");
+        assert_eq!(out.job.work_mode.as_ref().unwrap().value, WorkMode::Remote);
+        assert_eq!(out.job.locations.len(), 2, "Remote-USA and Seattle");
+        assert!(out
+            .requirements
+            .iter()
+            .any(|r| r.text.contains("Python") || r.text.contains("Snowflake")));
+    }
+
+    #[tokio::test]
+    async fn workday_html_without_cxs_uses_the_adapter() {
+        let html = include_str!("../../../fixtures/workday-job-capture.html");
+        let inp = ExtractInput {
+            url: Some(
+                "https://acme.wd1.myworkdayjobs.com/en-US/acme_careers/job/Remote-USA/Data-Scientist_P751219-2"
+                    .into(),
+            ),
+            body: html.to_string(),
+            content_type: Some("text/html".into()),
+            method: CaptureMethod::Extension,
+            source: SourceKind::Workday,
+            page_meta: None,
+        };
+        let out = extract(&inp, None, 16_000).await.unwrap();
+        assert_eq!(out.job.title.as_ref().unwrap().value, "Data Scientist");
+        assert_eq!(
+            out.job.title.as_ref().unwrap().provenance,
+            Provenance::Adapter
+        );
+        assert_eq!(
+            out.job.company_name.as_ref().unwrap().value,
+            "Acme Robotics"
+        );
+        assert_eq!(out.job.locations.len(), 2);
+        assert_eq!(out.job.source_job_id.as_ref().unwrap().value, "P751219-2");
+    }
+
+    #[tokio::test]
     async fn json_ld_outranks_the_greenhouse_html_adapter() {
         let out = extract(&input(GREENHOUSE_HTML), None, 16_000)
             .await
