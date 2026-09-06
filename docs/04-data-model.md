@@ -190,6 +190,10 @@ sprawling special case, and it powers the confidence badges in the UI.
 
 `id`, `job_id`, `field`, `value_a`, `provenance_a`, `listing_a_id`, `value_b`,
 `provenance_b`, `listing_b_id`, `resolved_value`, `resolution` (`auto_precedence|manual|unresolved`), `created_at`.
+Merge writes `unresolved` when salary raw strings differ (listing source in
+`provenance_*`). `POST /conflicts/:id/resolve` sets `manual` and
+`resolved_value`; `auto_precedence` is reserved for Stage 1–2 and is not
+written today.
 
 ### 2.3 Requirements and skills
 

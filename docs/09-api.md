@@ -88,6 +88,14 @@ DELETE /api/v1/requirements/:id
 GET  /api/v1/jobs/:id/raw/:capture_id       sanitized original capture (restrictive CSP)
 GET  /api/v1/jobs/:id/revisions             change history
 GET  /api/v1/jobs/:id/conflicts             cross-source disagreements
+                                    → unresolved first. Today: salary after
+                                      a same-company merge whose raw strings
+                                      differ. Never auto-resolved.
+POST /api/v1/jobs/:id/conflicts/:cid/resolve {choice: a|b|keep}
+                                    → `a`/`b` apply that side and write
+                                      provenance `manual`. `keep` dismisses
+                                      without changing the field. 409 if
+                                      already resolved.
 POST /api/v1/jobs/:id/merge      {into_job_id}
                                     → `:id` is the donor (soft-deleted + tombstoned
                                       `merged_into:{into}`). `into` keeps title and

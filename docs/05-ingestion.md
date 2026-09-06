@@ -194,6 +194,12 @@ listing into a new job at the same company. The original keeps its fields. The l
 re-extracted from its latest capture when one exists so the new job is not a clone of the
 unioned requirement set. The only listing on a job cannot be split.
 
+**Conflict resolve (implemented).** `GET /api/v1/jobs/:id/conflicts` lists disagreements
+written on merge (salary raw strings today). `POST
+/api/v1/jobs/:id/conflicts/:id/resolve {choice}` applies `a`, `b`, or `keep`. A pick
+re-parses the salary and stamps provenance `manual`; `keep` only marks the row resolved.
+The server never chooses a side.
+
 ## 7. Error taxonomy
 
 | Code | HTTP | Meaning | Retry |

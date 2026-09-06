@@ -860,21 +860,28 @@ pub async fn merge(db: &Db, from: &JobId, into: &JobId) -> Result<MergeReport> {
         .map_err(db_err)?;
     } else if let (Some(a), Some(b)) = (&into_row.salary_raw, &from_row.salary_raw) {
         if a != b {
-            let cid = uuid::Uuid::now_v7().to_string();
-            sqlx::query(
-                "INSERT INTO extraction_conflict
-                    (id, job_id, field, value_a, provenance_a, value_b, provenance_b,
-                     resolution, created_at)
-                 VALUES (?1, ?2, 'salary', ?3, 'keeper', ?4, 'merged', 'unresolved', ?5)",
+            let keep_src = into_row
+                .listings
+                .iter()
+                .find(|l| l.is_canonical)
+                .or_else(|| into_row.listings.first());
+            let donor_src = from_row
+                .listings
+                .iter()
+                .find(|l| l.is_canonical)
+                .or_else(|| from_row.listings.first());
+            crate::repo::conflict::insert(
+                db,
+                into,
+                "salary",
+                a,
+                Some(keep_src.map(|l| l.source.as_str()).unwrap_or("keeper")),
+                keep_src.map(|l| l.id.as_str()),
+                b,
+                Some(donor_src.map(|l| l.source.as_str()).unwrap_or("merged")),
+                donor_src.map(|l| l.id.as_str()),
             )
-            .bind(&cid)
-            .bind(into.as_str())
-            .bind(a)
-            .bind(b)
-            .bind(&ts)
-            .execute(db.writer())
-            .await
-            .map_err(db_err)?;
+            .await?;
         }
     }
 
