@@ -454,6 +454,21 @@ function listingHint(job: JobDetail): string {
   return `${src} · ${job.requirements.length} reqs`;
 }
 
+const ATS_SOURCES = new Set([
+  "workday",
+  "greenhouse",
+  "lever",
+  "ashby",
+  "company_site",
+]);
+
+function keeperRank(job: JobDetail): number {
+  const ats = (job.listings ?? []).some((l) => ATS_SOURCES.has(l.source))
+    ? 1
+    : 0;
+  return job.requirements.length * 10 + ats;
+}
+
 export function ComparePage() {
   const navigate = useNavigate({ from: "/jobs/compare" });
   const search = useSearch({ from: "/jobs/compare" });
@@ -529,7 +544,7 @@ export function ComparePage() {
       .map((into) => ({
         from,
         into,
-        recommended: into.requirements.length >= from.requirements.length,
+        recommended: keeperRank(into) >= keeperRank(from),
       })),
   );
   mergePairs.sort((a, b) => Number(b.recommended) - Number(a.recommended));
