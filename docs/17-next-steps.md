@@ -16,7 +16,7 @@ pair with a hashed, ingest-scoped device token.
 - Field provenance rows; PATCH `/api/v1/jobs/{id}` is sticky `manual`
 - HTTP API: health, ready, meta, ingest, jobs, match, tasks, OpenAPI, SPA fallback
 - Auth: pairing tokens, plus password sessions (`jobseeker user set-password`)
-- CLI: `serve`, `migrate`, `add`, `list`, `show`, `merge`, `pair`, `user set-password`,
+- CLI: `serve`, `migrate`, `add`, `list`, `show`, `merge`, `split`, `pair`, `user set-password`,
   `profile import|show`, `reconcile`, `openapi`
 - React/Vite/Tailwind shell in `web/` (score + confidence dots)
 - MV3 extension with pairing in `extension/`
@@ -24,10 +24,18 @@ pair with a hashed, ingest-scoped device token.
 
 ## Do next (M0 remaining → M1)
 
-1. **File-based routes + virtualized job table.** Merge is in. Next is
+1. **File-based routes + virtualized job table.** Split is in. Next is
    file-based routes and TanStack Table.
 
 ## Just shipped
+
+- **Split (FR-A-11).** `POST /api/v1/jobs/:id/split {listing_id}` and
+  `jobseeker split <job> <listing>` peel one listing off a merged job into a
+  new stub at the same company. The original keeps its title, description, and
+  unioned requirements. The peeled listing is re-extracted from its latest
+  capture when one exists, so the new job is not a clone of the unioned bars.
+  Cannot split the only listing. Job detail shows **Split off** next to each
+  source when there are two or more.
 
 - **Merge.** User-initiated only. `POST /api/v1/jobs/:id/merge {into_job_id}`
   (`:id` is the donor) and `jobseeker merge <from> <into>` absorb a cross-post
@@ -38,8 +46,7 @@ pair with a hashed, ingest-scoped device token.
   bands become an unresolved `extraction_conflict`. The donor is soft-deleted
   and tombstoned `merged_into:{into}`. The keeper is rescored in-process.
   Compare shows merge actions when two columns share a company — keep the
-  fuller ATS posting. Split is still later (FR-A-11). Silent auto-merge is
-  not this slice.
+  fuller ATS posting. Silent auto-merge is not this slice.
 
 - **Compare.** `/jobs/compare?ids=` lines 2–4 jobs up: location, mode, comp,
   Overall / Skills / Years / Required / Preferred / Seniority / Comp /

@@ -81,7 +81,7 @@ Location, then each posting's requirement verdicts. Highest value in a score row
 is highlighted. Numbers are not recomputed. When two columns share a company,
 merge actions absorb the thinner capture into the keeper (same-company API
 guard). The job detail page lists attached source URLs and which listing is
-canonical.
+canonical, and offers **Split off** when there are two or more listings.
 
 **Job detail** is the center of the product. Left: structured facts (comp, location, mode,
 dates, seniority, blockers) each with a subtle provenance dot — hover shows "from Greenhouse

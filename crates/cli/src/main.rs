@@ -1,4 +1,4 @@
-//! Process entrypoint: `jobseeker serve`, `add`, `list`, `show`, `merge`, `migrate`, `openapi`, `reconcile`, `profile`.
+//! Process entrypoint: `jobseeker serve`, `add`, `list`, `show`, `merge`, `split`, `migrate`, `openapi`, `reconcile`, `profile`.
 
 use std::io::{self, Read};
 use std::path::PathBuf;
@@ -60,6 +60,13 @@ enum Command {
         from: String,
         /// Job that keeps its title and description.
         into: String,
+    },
+    /// Peel one listing off a merged job into a new job.
+    Split {
+        /// Job that currently holds the listing.
+        from: String,
+        /// Listing to peel off.
+        listing: String,
     },
     /// Pair a browser extension: print a one-time code, or emit a device token.
     Pair {
@@ -237,6 +244,16 @@ async fn main() -> Result<()> {
             if let Some(c) = page.next_cursor {
                 println!("next_cursor={c}");
             }
+        }
+        Command::Split { from, listing } => {
+            let pipeline = Pipeline::open(config).await?;
+            let from: jobseeker_core::ids::JobId = from.parse()?;
+            let listing: jobseeker_core::ids::ListingId = listing.parse()?;
+            let report = pipeline.split_job(&from, &listing).await?;
+            println!(
+                "split {} off {}  new_job={}",
+                report.listing_id, report.from_id, report.new_id
+            );
         }
         Command::Merge { from, into } => {
             let pipeline = Pipeline::open(config).await?;

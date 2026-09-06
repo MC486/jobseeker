@@ -134,8 +134,47 @@ pub async fn attach_to_job(db: &Db, listing_id: &ListingId, job_id: &JobId) -> R
         .execute(&mut *tx)
         .await
         .map_err(db_err)?;
+    promote_best_canonical(&mut tx, job_id, &ts).await?;
+    tx.commit().await.map_err(db_err)?;
+    Ok(())
+}
 
-    // Whichever attached listing has the highest source fidelity becomes canonical.
+/// Peel a listing off its job. Returns the job it left, if any.
+pub async fn detach(db: &Db, listing_id: &ListingId) -> Result<Option<JobId>> {
+    let row = get(db, listing_id)
+        .await?
+        .ok_or(jobseeker_core::Error::NotFound("listing"))?;
+    let ts = to_rfc3339(&now());
+    sqlx::query(
+        "UPDATE job_source_listing
+            SET job_id = NULL, is_canonical = 0, updated_at = ?1
+          WHERE id = ?2",
+    )
+    .bind(&ts)
+    .bind(listing_id.as_str())
+    .execute(db.writer())
+    .await
+    .map_err(db_err)?;
+    if let Some(job_id) = &row.job_id {
+        recompute_canonical(db, job_id).await?;
+    }
+    Ok(row.job_id)
+}
+
+/// Re-pick the highest-fidelity listing as canonical after a merge or split.
+pub async fn recompute_canonical(db: &Db, job_id: &JobId) -> Result<()> {
+    let mut tx = db.writer().begin().await.map_err(db_err)?;
+    let ts = to_rfc3339(&now());
+    promote_best_canonical(&mut tx, job_id, &ts).await?;
+    tx.commit().await.map_err(db_err)?;
+    Ok(())
+}
+
+async fn promote_best_canonical(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    job_id: &JobId,
+    ts: &str,
+) -> Result<()> {
     let best: Option<String> = sqlx::query_scalar(
         "SELECT l.id FROM job_source_listing l
            JOIN source s ON s.id = l.source_id
@@ -144,31 +183,36 @@ pub async fn attach_to_job(db: &Db, listing_id: &ListingId, job_id: &JobId) -> R
           LIMIT 1",
     )
     .bind(job_id.as_str())
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut **tx)
     .await
     .map_err(db_err)?;
 
+    sqlx::query("UPDATE job_source_listing SET is_canonical = 0 WHERE job_id = ?1")
+        .bind(job_id.as_str())
+        .execute(&mut **tx)
+        .await
+        .map_err(db_err)?;
     if let Some(best) = best {
-        sqlx::query("UPDATE job_source_listing SET is_canonical = 0 WHERE job_id = ?1")
-            .bind(job_id.as_str())
-            .execute(&mut *tx)
-            .await
-            .map_err(db_err)?;
         sqlx::query("UPDATE job_source_listing SET is_canonical = 1 WHERE id = ?1")
             .bind(&best)
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await
             .map_err(db_err)?;
         sqlx::query("UPDATE job SET canonical_listing_id = ?1, updated_at = ?2 WHERE id = ?3")
             .bind(&best)
-            .bind(&ts)
+            .bind(ts)
             .bind(job_id.as_str())
-            .execute(&mut *tx)
+            .execute(&mut **tx)
+            .await
+            .map_err(db_err)?;
+    } else {
+        sqlx::query("UPDATE job SET canonical_listing_id = NULL, updated_at = ?1 WHERE id = ?2")
+            .bind(ts)
+            .bind(job_id.as_str())
+            .execute(&mut **tx)
             .await
             .map_err(db_err)?;
     }
-
-    tx.commit().await.map_err(db_err)?;
     Ok(())
 }
 

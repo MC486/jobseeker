@@ -449,63 +449,10 @@ impl Pipeline {
     async fn handle_extract(&self, payload: &serde_json::Value) -> Result<()> {
         let p: ExtractPayload = serde_json::from_value(payload.clone())?;
         let capture_id: CaptureId = p.capture_id.parse()?;
-        let row = capture::get(&self.db, &capture_id)
-            .await?
-            .ok_or(Error::NotFound("capture"))?;
-        let abs = self.data_dir().join(&row.storage_path);
-        let bytes = read_blob(&abs)?;
-        let body = String::from_utf8_lossy(&bytes).into_owned();
-
-        let listing_id = match &row.listing_id {
-            Some(id) => Some(id.clone()),
-            None => p.listing_id.as_deref().and_then(|s| s.parse().ok()),
-        };
-        let listing = match listing_id.as_ref() {
-            Some(id) => listing::get(&self.db, id).await?,
-            None => None,
-        };
-        let source = listing
-            .as_ref()
-            .map(|l| l.source)
-            .or_else(|| {
-                row.url
-                    .as_deref()
-                    .and_then(|u| canonicalize(u).ok())
-                    .map(|c| c.source)
-            })
-            .unwrap_or(SourceKind::Manual);
-
-        let input = ExtractInput {
-            // Prefer the listing URL the user asked for. The capture URL is often an
-            // ATS JSON endpoint (Workday CXS, Greenhouse board API) and must not become
-            // the apply link.
-            url: listing.as_ref().map(|l| l.url.clone()).or(row.url.clone()),
-            body,
-            content_type: row.content_type.clone(),
-            method: row.method,
-            source,
-            page_meta: p.page_meta,
-        };
-        let llm = self.llm.as_deref();
-        let out = extract(&input, llm, self.config.llm.max_input_tokens).await?;
-
-        let listing_id = listing.as_ref().map(|l| l.id.clone());
-        let persisted = persist::persist_extracted(
-            &self.db,
-            PersistExtracted {
-                listing_id: listing_id.as_ref(),
-                job: &out.job,
-                requirements: &out.requirements,
-                description_md: &out.description_md,
-                description_text: &out.description_text,
-                content_hash: &row.content_hash,
-                partial: out.partial,
-                model: out.model.as_deref(),
-            },
-        )
-        .await?;
-
-        capture::set_extract_status(&self.db, &capture_id, ExtractStatus::Ok, None).await?;
+        let listing_hint = p.listing_id.as_deref().and_then(|s| s.parse().ok());
+        let persisted = self
+            .extract_capture(&capture_id, listing_hint, p.page_meta)
+            .await?;
 
         self.queue()
             .enqueue(
@@ -543,6 +490,72 @@ impl Pipeline {
             tracing::warn!(error = %e, "failed to emit job event");
         }
         Ok(())
+    }
+
+    async fn extract_capture(
+        &self,
+        capture_id: &CaptureId,
+        listing_hint: Option<ListingId>,
+        page_meta: Option<serde_json::Value>,
+    ) -> Result<persist::PersistOutcome> {
+        let row = capture::get(&self.db, capture_id)
+            .await?
+            .ok_or(Error::NotFound("capture"))?;
+        let abs = self.data_dir().join(&row.storage_path);
+        let bytes = read_blob(&abs)?;
+        let body = String::from_utf8_lossy(&bytes).into_owned();
+
+        let listing_id = match &row.listing_id {
+            Some(id) => Some(id.clone()),
+            None => listing_hint,
+        };
+        let listing = match listing_id.as_ref() {
+            Some(id) => listing::get(&self.db, id).await?,
+            None => None,
+        };
+        let source = listing
+            .as_ref()
+            .map(|l| l.source)
+            .or_else(|| {
+                row.url
+                    .as_deref()
+                    .and_then(|u| canonicalize(u).ok())
+                    .map(|c| c.source)
+            })
+            .unwrap_or(SourceKind::Manual);
+
+        let input = ExtractInput {
+            // Prefer the listing URL the user asked for. The capture URL is often an
+            // ATS JSON endpoint (Workday CXS, Greenhouse board API) and must not become
+            // the apply link.
+            url: listing.as_ref().map(|l| l.url.clone()).or(row.url.clone()),
+            body,
+            content_type: row.content_type.clone(),
+            method: row.method,
+            source,
+            page_meta,
+        };
+        let llm = self.llm.as_deref();
+        let out = extract(&input, llm, self.config.llm.max_input_tokens).await?;
+
+        let listing_id = listing.as_ref().map(|l| l.id.clone());
+        let persisted = persist::persist_extracted(
+            &self.db,
+            PersistExtracted {
+                listing_id: listing_id.as_ref(),
+                job: &out.job,
+                requirements: &out.requirements,
+                description_md: &out.description_md,
+                description_text: &out.description_text,
+                content_hash: &row.content_hash,
+                partial: out.partial,
+                model: out.model.as_deref(),
+            },
+        )
+        .await?;
+
+        capture::set_extract_status(&self.db, capture_id, ExtractStatus::Ok, None).await?;
+        Ok(persisted)
     }
 
     /// Write `job.md` / `job.json` / `requirements.json` for one job.
@@ -793,6 +806,59 @@ impl Pipeline {
                 "job",
                 from.as_str(),
                 json!({ "source": "merge", "merged_into": into.as_str() }),
+            )
+            .await;
+        Ok(report)
+    }
+
+    /// Peel a listing off a merged job. The original keeps its fields; the
+    /// listing becomes its own job. Re-extracts the listing's latest capture
+    /// when one exists so the new job is not a clone of the unioned bars.
+    pub async fn split_job(
+        &self,
+        from: &jobseeker_core::ids::JobId,
+        listing_id: &jobseeker_core::ids::ListingId,
+    ) -> Result<jobseeker_db::repo::job::SplitReport> {
+        let report = jobseeker_db::repo::job::split(&self.db, from, listing_id).await?;
+        let new_id: jobseeker_core::ids::JobId = report.new_id.parse()?;
+        if let Some(capture_id) = capture::latest_for_listing(&self.db, listing_id).await? {
+            if let Err(e) = self
+                .extract_capture(&capture_id, Some(listing_id.clone()), None)
+                .await
+            {
+                tracing::warn!(error = %e, "re-extract after split failed");
+            }
+        }
+        for id in [from, &new_id] {
+            if let Err(e) = self
+                .handle_score_match(&json!({ "job_id": id.as_str() }))
+                .await
+            {
+                tracing::warn!(error = %e, "rescore after split failed");
+            }
+        }
+        let _ = self
+            .emit(
+                DomainEvent::JOB_UPDATED,
+                "job",
+                from.as_str(),
+                json!({
+                    "source": "split",
+                    "listing_id": listing_id.as_str(),
+                    "split_into": new_id.as_str(),
+                }),
+            )
+            .await;
+        let _ = self
+            .emit(
+                DomainEvent::JOB_CREATED,
+                "job",
+                new_id.as_str(),
+                json!({
+                    "source": "split",
+                    "split_from": from.as_str(),
+                    "listing_id": listing_id.as_str(),
+                }),
             )
             .await;
         Ok(report)

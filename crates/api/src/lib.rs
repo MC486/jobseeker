@@ -164,6 +164,7 @@ pub struct PageDto<T: Serialize> {
         patch_job,
         get_job_match,
         merge_job,
+        split_job,
         get_profile,
         import_resume,
         get_task,
@@ -184,6 +185,7 @@ pub struct PageDto<T: Serialize> {
         MetaResponse,
         PatchJobRequest,
         MergeJobRequest,
+        SplitJobRequest,
         PairRequest,
         LoginRequest,
         CreateTokenRequest,
@@ -214,6 +216,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/jobs/{id}", get(get_job).patch(patch_job))
         .route("/api/v1/jobs/{id}/match", get(get_job_match))
         .route("/api/v1/jobs/{id}/merge", post(merge_job))
+        .route("/api/v1/jobs/{id}/split", post(split_job))
         .route("/api/v1/profiles/default", get(get_profile))
         .route(
             "/api/v1/profiles/default/import-resume",
@@ -499,6 +502,27 @@ async fn merge_job(
     let report = state
         .pipeline
         .merge_jobs(&from, &into)
+        .await
+        .map_err(ApiError)?;
+    Ok(Json(report))
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct SplitJobRequest {
+    pub listing_id: String,
+}
+
+#[utoipa::path(post, path = "/api/v1/jobs/{id}/split", request_body = SplitJobRequest, responses((status = 200), (status = 400), (status = 404)))]
+async fn split_job(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<SplitJobRequest>,
+) -> ApiResult<Json<jobseeker_db::repo::job::SplitReport>> {
+    let from: JobId = id.parse().map_err(ApiError)?;
+    let listing: jobseeker_core::ids::ListingId = body.listing_id.parse().map_err(ApiError)?;
+    let report = state
+        .pipeline
+        .split_job(&from, &listing)
         .await
         .map_err(ApiError)?;
     Ok(Json(report))
@@ -1075,6 +1099,10 @@ mod tests {
         assert!(
             spec["paths"]["/api/v1/jobs/{id}/merge"].is_object(),
             "OpenAPI must document POST /api/v1/jobs/{{id}}/merge"
+        );
+        assert!(
+            spec["paths"]["/api/v1/jobs/{id}/split"].is_object(),
+            "OpenAPI must document POST /api/v1/jobs/{{id}}/split"
         );
     }
 
@@ -1675,6 +1703,92 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+        std::mem::forget(dir);
+    }
+
+    #[tokio::test]
+    async fn split_peels_a_listing_back_off_after_merge() {
+        let dir = tempfile::tempdir().unwrap();
+        let pipe = jobseeker_pipeline::for_test(dir.path().to_path_buf())
+            .await
+            .unwrap();
+        let fuller = r#"<html><head><script type="application/ld+json">{"@type":"JobPosting","title":"Data Scientist","hiringOrganization":{"name":"Zillow"},"description":"<ul><li>5+ years data science</li><li>Python</li><li>SQL</li></ul>"}</script></head></html>"#;
+        let thinner = r#"<html><head><script type="application/ld+json">{"@type":"JobPosting","title":"Platform Engineer","hiringOrganization":{"name":"Zillow"},"description":"<ul><li>Python</li></ul>"}</script></head></html>"#;
+        pipe.ingest_paste(fuller, Some("https://boards.greenhouse.io/zillow/jobs/1"))
+            .await
+            .unwrap();
+        pipe.drain().await.unwrap();
+        pipe.ingest_paste(thinner, Some("https://boards.greenhouse.io/zillow/jobs/2"))
+            .await
+            .unwrap();
+        pipe.drain().await.unwrap();
+
+        let page =
+            jobseeker_db::repo::job::list(&pipe.db, &jobseeker_db::repo::job::JobFilter::default())
+                .await
+                .unwrap();
+        let into = page
+            .items
+            .iter()
+            .find(|row| row.title == "Data Scientist")
+            .unwrap()
+            .id
+            .clone();
+        let from = page
+            .items
+            .iter()
+            .find(|row| row.title == "Platform Engineer")
+            .unwrap()
+            .id
+            .clone();
+        let donor: jobseeker_core::ids::JobId = from.parse().unwrap();
+        let donor_detail = jobseeker_db::repo::job::get(&pipe.db, &donor)
+            .await
+            .unwrap()
+            .unwrap();
+        let listing_id = donor_detail.listings[0].id.clone();
+
+        let app = router(AppState::new(pipe.clone()));
+        let merged = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/v1/jobs/{from}/merge"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "into_job_id": into }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(merged.status(), StatusCode::OK);
+
+        let split = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/v1/jobs/{into}/split"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "listing_id": listing_id }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(split.status(), StatusCode::OK);
+        let report: serde_json::Value = body_json(split).await;
+        assert_ne!(report["new_id"], into);
+        assert_eq!(report["listing_id"], listing_id);
+
+        let after =
+            jobseeker_db::repo::job::list(&pipe.db, &jobseeker_db::repo::job::JobFilter::default())
+                .await
+                .unwrap();
+        assert_eq!(after.items.len(), 2);
         std::mem::forget(dir);
     }
 }

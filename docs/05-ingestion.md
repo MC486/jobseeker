@@ -182,7 +182,12 @@ information to be reversible (FR-A-11).
 not silently fold two jobs. `POST /api/v1/jobs/:id/merge {into_job_id}` and
 `jobseeker merge <from> <into>` do the union described above, require the same
 `company_id`, keep the keeper's title and description, soft-delete the donor, and write a
-tombstone `reason = merged_into:{into}`. Split is not in this slice.
+tombstone `reason = merged_into:{into}`.
+
+**User-initiated split (FR-A-11).** `POST /api/v1/jobs/:id/split {listing_id}` peels that
+listing into a new job at the same company. The original keeps its fields. The listing is
+re-extracted from its latest capture when one exists so the new job is not a clone of the
+unioned requirement set. The only listing on a job cannot be split.
 
 ## 7. Error taxonomy
 
