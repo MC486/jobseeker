@@ -155,7 +155,7 @@ pub async fn latest_for_job(
         sqlx::query(
             "SELECT id, profile_id, overall, required_coverage, preferred_coverage,
                     seniority_fit, comp_fit, location_fit, blocker_count, blockers_json,
-                    flags_json, is_stale, computed_at
+                    flags_json, is_stale, computed_at, explanation_json
                FROM match_score
               WHERE job_id = ?1 AND profile_id = ?2
               ORDER BY computed_at DESC LIMIT 1",
@@ -169,7 +169,7 @@ pub async fn latest_for_job(
         sqlx::query(
             "SELECT id, profile_id, overall, required_coverage, preferred_coverage,
                     seniority_fit, comp_fit, location_fit, blocker_count, blockers_json,
-                    flags_json, is_stale, computed_at
+                    flags_json, is_stale, computed_at, explanation_json
                FROM match_score
               WHERE job_id = ?1
               ORDER BY computed_at DESC LIMIT 1",
@@ -181,7 +181,11 @@ pub async fn latest_for_job(
     };
     let Some(row) = row else { return Ok(None) };
     let id: String = row.try_get("id").map_err(db_err)?;
-    let verdicts = load_verdicts(db, &id).await?;
+    let mut verdicts = load_verdicts(db, &id).await?;
+    if verdicts.is_empty() {
+        let blob: Option<String> = row.try_get("explanation_json").map_err(db_err)?;
+        verdicts = verdicts_from_explanation(blob.as_deref());
+    }
     let (skills_coverage, years_fit) = breakdown_from_verdicts(&verdicts);
     let blockers: String = row.try_get("blockers_json").map_err(db_err)?;
     let flags: Option<String> = row.try_get("flags_json").map_err(db_err)?;
@@ -248,6 +252,30 @@ async fn load_verdicts(db: &Db, match_id: &str) -> Result<Vec<RequirementVerdict
         });
     }
     Ok(out)
+}
+
+fn verdicts_from_explanation(blob: Option<&str>) -> Vec<RequirementVerdict> {
+    let Some(blob) = blob else {
+        return Vec::new();
+    };
+    let Ok(matches) =
+        serde_json::from_str::<Vec<jobseeker_core::domain::scoring::RequirementMatch>>(blob)
+    else {
+        return Vec::new();
+    };
+    matches
+        .into_iter()
+        .map(|m| RequirementVerdict {
+            requirement_id: m.requirement_id.as_str().to_string(),
+            status: m.status.as_str().to_string(),
+            score: f64::from(m.score),
+            rationale: m.rationale,
+            years_have: m.years_have.map(f64::from),
+            years_needed: m.years_needed.map(f64::from),
+            required: true,
+            weight: f64::from(if m.weight > 0.0 { m.weight } else { 1.0 }),
+        })
+        .collect()
 }
 
 /// Rebuild the diagnostic split from stored verdicts so older scores (no extra
