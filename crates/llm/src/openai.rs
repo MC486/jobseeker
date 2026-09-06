@@ -379,6 +379,11 @@ fn classify(error: reqwest::Error) -> Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    /// The environment is process-global. Every test that reads or writes API keys takes
+    /// this lock so a parallel sibling cannot resurrect `OPENAI_API_KEY` mid-assert.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn cfg(provider: LlmProvider) -> LlmConfig {
         LlmConfig {
@@ -388,10 +393,9 @@ mod tests {
         }
     }
 
-    /// The environment is process-global, so key-dependent cases are exercised in one test
-    /// to keep them from racing each other.
     #[test]
     fn a_missing_api_key_is_a_configuration_error_that_names_the_local_alternative() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let saved = std::env::var("OPENAI_API_KEY").ok();
         std::env::remove_var("OPENAI_API_KEY");
 
@@ -410,6 +414,18 @@ mod tests {
         assert_eq!(client.provider(), LlmProvider::OpenAi);
         assert!(client.supports_embeddings());
 
+        let plain = client.chat_body(&Request::new(crate::Purpose::Narrate, "s", "u"));
+        assert!(plain.get("response_format").is_none());
+        let constrained = client.chat_body(
+            &Request::new(crate::Purpose::ExtractFields, "s", "u")
+                .with_schema(serde_json::json!({"type": "object"})),
+        );
+        assert_eq!(constrained["response_format"]["type"], "json_schema");
+        assert_eq!(
+            constrained["response_format"]["json_schema"]["name"], "extract_fields",
+            "the purpose names the schema, which shows up in provider logs"
+        );
+
         match saved {
             Some(v) => std::env::set_var("OPENAI_API_KEY", v),
             None => std::env::remove_var("OPENAI_API_KEY"),
@@ -418,6 +434,7 @@ mod tests {
 
     #[test]
     fn each_dialect_targets_its_own_endpoint_and_shapes_its_own_body() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let saved = std::env::var("ANTHROPIC_API_KEY").ok();
         std::env::set_var("ANTHROPIC_API_KEY", "sk-ant-test");
 
@@ -447,31 +464,6 @@ mod tests {
         match saved {
             Some(v) => std::env::set_var("ANTHROPIC_API_KEY", v),
             None => std::env::remove_var("ANTHROPIC_API_KEY"),
-        }
-    }
-
-    #[test]
-    fn openai_requests_use_structured_output_when_a_schema_is_given() {
-        let saved = std::env::var("OPENAI_API_KEY").ok();
-        std::env::set_var("OPENAI_API_KEY", "sk-test");
-
-        let client = OpenAiClient::openai(&cfg(LlmProvider::OpenAi)).unwrap();
-        let plain = client.chat_body(&Request::new(crate::Purpose::Narrate, "s", "u"));
-        assert!(plain.get("response_format").is_none());
-
-        let constrained = client.chat_body(
-            &Request::new(crate::Purpose::ExtractFields, "s", "u")
-                .with_schema(serde_json::json!({"type": "object"})),
-        );
-        assert_eq!(constrained["response_format"]["type"], "json_schema");
-        assert_eq!(
-            constrained["response_format"]["json_schema"]["name"], "extract_fields",
-            "the purpose names the schema, which shows up in provider logs"
-        );
-
-        match saved {
-            Some(v) => std::env::set_var("OPENAI_API_KEY", v),
-            None => std::env::remove_var("OPENAI_API_KEY"),
         }
     }
 }
