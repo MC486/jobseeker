@@ -5,25 +5,32 @@
 
 mod auth;
 
+use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use axum::extract::{Path, Query, State};
 use axum::http::{header, HeaderValue, StatusCode};
 use axum::middleware;
+use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Extension, Json, Router};
+use futures::{Stream, StreamExt};
 use jobseeker_core::config::AuthMode;
 use jobseeker_core::domain::capture::CaptureSubmission;
+use jobseeker_core::domain::event::DomainEvent;
 use jobseeker_core::ids::{JobId, TaskId};
 use jobseeker_core::{Error, Result};
 use jobseeker_db::queue::Queue;
+use jobseeker_db::repo::event;
 use jobseeker_db::repo::job::{self, JobFilter, JobPatch};
 use jobseeker_db::repo::score;
 use jobseeker_db::repo::token;
 use jobseeker_pipeline::{IngestAccepted, Pipeline};
 use serde::{Deserialize, Serialize};
+use tokio::sync::broadcast;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 use utoipa::OpenApi;
@@ -143,6 +150,7 @@ pub struct PageDto<T: Serialize> {
         patch_job,
         get_job_match,
         get_task,
+        events,
         auth_me,
         auth_pair,
         list_tokens,
@@ -156,7 +164,8 @@ pub struct PageDto<T: Serialize> {
         MetaResponse,
         PatchJobRequest,
         PairRequest,
-        CreateTokenRequest
+        CreateTokenRequest,
+        DomainEventDto
     )),
     info(
         title = "jobseeker",
@@ -183,6 +192,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/jobs/{id}", get(get_job).patch(patch_job))
         .route("/api/v1/jobs/{id}/match", get(get_job_match))
         .route("/api/v1/tasks/{id}", get(get_task))
+        .route("/api/v1/events", get(events))
         .route("/api/v1/auth/me", get(auth_me))
         .route("/api/v1/auth/pair", post(auth_pair))
         .route("/api/v1/auth/tokens", get(list_tokens).post(create_token))
@@ -270,8 +280,14 @@ async fn meta(State(state): State<AppState>) -> Json<MetaResponse> {
     })
 }
 
+/// OpenAPI 3 document derived from the handlers. The CLI dumps this without
+/// opening a database so `just gen-client` does not need a running server.
+pub fn openapi_spec() -> utoipa::openapi::OpenApi {
+    ApiDoc::openapi()
+}
+
 async fn openapi() -> impl IntoResponse {
-    Json(ApiDoc::openapi())
+    Json(openapi_spec())
 }
 
 #[utoipa::path(post, path = "/api/v1/ingest/url", request_body = IngestUrlRequest, responses((status = 202, body = Accepted)))]
@@ -399,6 +415,15 @@ async fn patch_job(
         .await
         .map_err(ApiError)?
         .ok_or(ApiError(Error::NotFound("job")))?;
+    let _ = state
+        .pipeline
+        .emit(
+            DomainEvent::JOB_UPDATED,
+            "job",
+            id.as_str(),
+            serde_json::json!({ "source": "manual" }),
+        )
+        .await;
     Ok(Json(job))
 }
 
@@ -436,6 +461,82 @@ async fn get_task(
         .map_err(ApiError)?
         .ok_or(ApiError(Error::NotFound("task")))?;
     Ok(Json(task))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct EventsQuery {
+    pub since: Option<i64>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct DomainEventDto {
+    pub id: i64,
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub entity_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub entity_id: Option<String>,
+    pub payload: serde_json::Value,
+    pub created_at: String,
+}
+
+fn parse_since(q: &EventsQuery, headers: &axum::http::HeaderMap) -> i64 {
+    if let Some(n) = q.since {
+        return n.max(0);
+    }
+    headers
+        .get("last-event-id")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0)
+}
+
+fn sse_event(ev: &DomainEvent) -> Result<Event, Infallible> {
+    let data = serde_json::to_string(ev).unwrap_or_else(|_| "{}".into());
+    Ok(Event::default()
+        .id(ev.id.to_string())
+        .event(ev.kind.clone())
+        .data(data))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/events",
+    params(("since" = Option<i64>, Query, description = "Replay events with id greater than this")),
+    responses((status = 200, description = "text/event-stream of DomainEvent"))
+)]
+async fn events(
+    State(state): State<AppState>,
+    Query(q): Query<EventsQuery>,
+    headers: axum::http::HeaderMap,
+) -> ApiResult<Sse<impl Stream<Item = Result<Event, Infallible>>>> {
+    let since = parse_since(&q, &headers);
+    let rx = state.pipeline.subscribe();
+    let backfill = event::since(&state.pipeline.db, since, 200)
+        .await
+        .map_err(ApiError)?;
+    let sent_upto = backfill.last().map(|e| e.id).unwrap_or(since);
+
+    let backfill_stream = futures::stream::iter(backfill.into_iter().map(|ev| sse_event(&ev)));
+    let live = futures::stream::unfold((rx, sent_upto), |(mut rx, sent_upto)| async move {
+        loop {
+            match rx.recv().await {
+                Ok(ev) if ev.id > sent_upto => {
+                    let next_upto = sent_upto.max(ev.id);
+                    return Some((sse_event(&ev), (rx, next_upto)));
+                }
+                Ok(_) => continue,
+                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(broadcast::error::RecvError::Closed) => return None,
+            }
+        }
+    });
+
+    Ok(Sse::new(backfill_stream.chain(live)).keep_alive(
+        KeepAlive::new()
+            .interval(Duration::from_secs(15))
+            .event(Event::default().comment("ping")),
+    ))
 }
 
 #[derive(Debug, Serialize)]
@@ -785,6 +886,93 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(res.status(), StatusCode::OK);
+        let spec: serde_json::Value = body_json(res).await;
+        assert!(
+            spec["paths"]["/api/v1/events"].is_object(),
+            "OpenAPI must document GET /api/v1/events"
+        );
+    }
+
+    #[tokio::test]
+    async fn events_backfill_job_created_after_drain() {
+        use futures::StreamExt;
+        use tokio::time::{timeout, Duration};
+
+        let dir = tempfile::tempdir().unwrap();
+        let pipe = jobseeker_pipeline::for_test(dir.path().to_path_buf())
+            .await
+            .unwrap();
+        let html = include_str!("../../../fixtures/greenhouse-platform-engineer.html");
+        pipe.ingest_paste(html, None).await.unwrap();
+        pipe.drain().await.unwrap();
+
+        let app = router(AppState {
+            pipeline: pipe.clone(),
+        });
+        let res = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/events?since=0")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let ctype = res
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        assert!(
+            ctype.contains("text/event-stream"),
+            "expected SSE content type, got {ctype}"
+        );
+
+        let mut stream = res.into_body().into_data_stream();
+        let mut buf = Vec::new();
+        let _ = timeout(Duration::from_secs(2), async {
+            while let Some(chunk) = stream.next().await {
+                buf.extend_from_slice(&chunk.unwrap());
+                let so_far = String::from_utf8_lossy(&buf);
+                if so_far.contains("job.created") && so_far.contains("task.updated") {
+                    break;
+                }
+            }
+        })
+        .await;
+        let text = String::from_utf8_lossy(&buf);
+        assert!(
+            text.contains("job.created"),
+            "SSE backfill must include job.created, got: {text}"
+        );
+        assert!(
+            text.contains("task.updated"),
+            "SSE backfill must include task.updated, got: {text}"
+        );
+        std::mem::forget(dir);
+    }
+
+    #[tokio::test]
+    async fn token_mode_refuses_events_without_a_bearer() {
+        let dir = tempfile::tempdir().unwrap();
+        let pipe = jobseeker_pipeline::for_test_with(dir.path().to_path_buf(), |c| {
+            c.auth.mode = AuthMode::Token;
+        })
+        .await
+        .unwrap();
+        let app = router(AppState { pipeline: pipe });
+        let res = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/events")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+        std::mem::forget(dir);
     }
 
     async fn body_json<T: serde::de::DeserializeOwned>(res: Response) -> T {

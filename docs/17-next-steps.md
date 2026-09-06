@@ -22,14 +22,19 @@ pair with a hashed, ingest-scoped device token.
 
 ## Do next (M0 remaining → M1)
 
-1. **Generated TS client.** Dump `/openapi.json` and run `openapi-typescript`
-   into `web/src/api/schema.d.ts` (gitignored until CI generates it).
-2. **SSE `/api/v1/events`.** The UI currently polls a task; replace with the
-   event stream described in `docs/10-frontend.md`.
-3. **Reconcile.** `jobseeker reconcile --from-files` / `--to-files` / `--check`.
-4. **Site adapters.** LinkedIn / Indeed (from extension HTML), Greenhouse /
+1. **Reconcile.** `jobseeker reconcile --from-files` / `--to-files` / `--check`.
+2. **Site adapters.** LinkedIn / Indeed (from extension HTML), Greenhouse /
    Lever / Ashby JSON already partially works via `acquire::plan`.
-5. **Password auth.** Session cookie + Argon2id when `auth.mode = password`.
+3. **Password auth.** Session cookie + Argon2id when `auth.mode = password`.
+4. **TanStack Router + Query.** The shell still uses a hand-rolled router; SSE
+   already invalidates the job list / task / match views.
+
+## Just shipped
+
+- **SSE `GET /api/v1/events?since=`** — `event_log` + in-process broadcast;
+  TaskPage no longer polls.
+- **Generated TS client.** `jobseeker openapi [--out]` dumps the spec without a
+  server; `just gen-client` writes committed `web/src/api/generated.ts` (ADR-0009).
 
 ## Acceptance for the current spine
 

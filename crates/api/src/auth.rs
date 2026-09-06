@@ -150,5 +150,6 @@ mod tests {
         );
         assert_eq!(need_for(&Method::GET, "/api/v1/jobs"), Need::Owner);
         assert_eq!(need_for(&Method::PATCH, "/api/v1/jobs/abc"), Need::Owner);
+        assert_eq!(need_for(&Method::GET, "/api/v1/events"), Need::Owner);
     }
 }

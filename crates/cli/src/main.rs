@@ -1,4 +1,4 @@
-//! Process entrypoint: `jobseeker serve`, `add`, `list`, `show`, `migrate`.
+//! Process entrypoint: `jobseeker serve`, `add`, `list`, `show`, `migrate`, `openapi`.
 
 use std::io::{self, Read};
 use std::path::PathBuf;
@@ -69,6 +69,12 @@ enum Command {
     Revoke { id: String },
     /// Rebuild files from the database (M1). Currently a status check.
     Reconcile,
+    /// Dump the OpenAPI document (no database, no server).
+    Openapi {
+        /// Write JSON to this path instead of stdout.
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
 }
 
 #[tokio::main]
@@ -236,6 +242,16 @@ async fn main() -> Result<()> {
         }
         Command::Reconcile => {
             anyhow::bail!("reconcile is scheduled for M1; files are written on extract today");
+        }
+        Command::Openapi { out } => {
+            let spec = jobseeker_api::openapi_spec();
+            let pretty = serde_json::to_string_pretty(&spec)?;
+            if let Some(path) = out {
+                std::fs::write(&path, pretty)
+                    .with_context(|| format!("write {}", path.display()))?;
+            } else {
+                println!("{pretty}");
+            }
         }
     }
     Ok(())
