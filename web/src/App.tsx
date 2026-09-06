@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, Outlet, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { api, JobDetail, JobListRow, Me } from "./api";
 import { fetchers, keys, subscribeQueryEvents } from "./query";
@@ -247,6 +247,7 @@ export function JobList() {
   const jobs = useQuery({
     queryKey: keys.jobs(search.q),
     queryFn: () => fetchers.jobs(search.q),
+    placeholderData: keepPreviousData,
   });
 
   const rows = useMemo(() => {
@@ -340,7 +341,7 @@ function SortChip({
       replace
       className={
         active
-          ? "rounded-md bg-zinc-800 px-2 py-0.5 text-zinc-100"
+          ? "rounded-md bg-zinc-700 px-2 py-0.5 text-zinc-50 ring-1 ring-zinc-400"
           : "rounded-md px-2 py-0.5 text-zinc-400 hover:text-zinc-200"
       }
     >
