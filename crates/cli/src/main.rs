@@ -85,6 +85,23 @@ enum Command {
         #[arg(long)]
         out: Option<PathBuf>,
     },
+    /// Create or rotate the owner password used when `auth.mode = password`.
+    User {
+        #[command(subcommand)]
+        command: UserCommand,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum UserCommand {
+    /// Hash a password with Argon2id and store it on the owner account.
+    SetPassword {
+        #[arg(long, default_value = "owner")]
+        username: String,
+        /// If omitted, read a single line from stdin.
+        #[arg(long)]
+        password: Option<String>,
+    },
 }
 
 #[tokio::main]
@@ -289,6 +306,24 @@ async fn main() -> Result<()> {
                 std::process::exit(1);
             }
         }
+        Command::User { command } => match command {
+            UserCommand::SetPassword { username, password } => {
+                let pipeline = Pipeline::open(config).await?;
+                let password = match password {
+                    Some(p) => p,
+                    None => {
+                        eprint!("password: ");
+                        let mut buf = String::new();
+                        io::stdin().read_line(&mut buf)?;
+                        buf.trim_end_matches(['\n', '\r']).to_string()
+                    }
+                };
+                let user =
+                    jobseeker_db::repo::user::upsert_owner(&pipeline.db, &username, &password)
+                        .await?;
+                println!("owner {} ready ({})", user.username, user.id);
+            }
+        },
         Command::Openapi { out } => {
             let spec = jobseeker_api::openapi_spec();
             let pretty = serde_json::to_string_pretty(&spec)?;

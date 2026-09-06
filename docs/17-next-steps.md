@@ -14,21 +14,27 @@ pair with a hashed, ingest-scoped device token.
 - Default profile (Rust 8y, Kubernetes 5y) seeded on `Pipeline::open`
 - Field provenance rows; PATCH `/api/v1/jobs/{id}` is sticky `manual`
 - HTTP API: health, ready, meta, ingest, jobs, match, tasks, OpenAPI, SPA fallback
-- Auth: `POST /api/v1/auth/pair`, hashed `device_token`, `jobseeker pair` / `tokens` / `revoke`
-- CLI: `serve`, `migrate`, `add`, `list`, `show`, `pair`, `reconcile`, `openapi`
+- Auth: pairing tokens, plus password sessions (`jobseeker user set-password`)
+- CLI: `serve`, `migrate`, `add`, `list`, `show`, `pair`, `user set-password`, `reconcile`, `openapi`
 - React/Vite/Tailwind shell in `web/` (score + confidence dots)
 - MV3 extension with pairing in `extension/`
 - Paste fixture: `fixtures/greenhouse-platform-engineer.html`
 
 ## Do next (M0 remaining → M1)
 
-1. **Password auth.** Session cookie + Argon2id when `auth.mode = password`.
-2. **TanStack Router + Query.** The shell still uses a hand-rolled router; SSE
+1. **TanStack Router + Query.** The shell still uses a hand-rolled router; SSE
    already invalidates the job list / task / match views.
-3. **Workday adapter.** SPA; extension path. Location lives in
+2. **Workday adapter.** SPA; extension path. Location lives in
    `data-automation-id`; `reqId` is the durable identifier.
 
 ## Just shipped
+
+- **Password auth.** `auth.mode = password` gates the API. Login is
+  `POST /api/v1/auth/login` → `js_session` cookie (HttpOnly, SameSite=Lax,
+  Secure behind TLS). Passwords are Argon2id (m=19 MiB, t=2, p=1). Sessions
+  are 256-bit `jss_` tokens stored as BLAKE3 hashes. Failed logins are
+  rate-limited per IP. Bootstrap: `jobseeker user set-password`. Bearer
+  owner tokens still work for the CLI.
 
 - **Site adapters.** LinkedIn / Indeed / Greenhouse / Lever / Ashby fill only
   empty fields (`Provenance::Adapter`, 0.85) after JSON-LD and before rules.

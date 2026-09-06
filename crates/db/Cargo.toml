@@ -18,6 +18,7 @@ tracing.workspace = true
 tokio.workspace = true
 uuid.workspace = true
 blake3.workspace = true
+argon2.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

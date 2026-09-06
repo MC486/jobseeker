@@ -76,7 +76,7 @@ clap = { version = "4", features = ["derive", "env"] }
 figment = { version = "0.10", features = ["toml", "env"] }
 deunicode = "1"
 zstd = "0.14"
-argon2 = "0.6"
+argon2 = "0.5"
 rand = "0.9"
 scraper = "0.27"
 rust-embed = "8"
