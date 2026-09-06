@@ -241,10 +241,13 @@ impl<'a> Queue<'a> {
 
     pub async fn complete(&self, id: &TaskId) -> Result<()> {
         let ts = to_rfc3339(&now());
+        // Drop the dedupe key once the work is done so a later extract can
+        // enqueue `score:{job}` / `materialize:{job}` again. UNIQUE(dedupe_key)
+        // treats NULL as distinct, so completed history stays queryable.
         sqlx::query(
             "UPDATE task
                 SET status = 'done', finished_at = ?1, lease_expires_at = NULL,
-                    progress = 1.0, updated_at = ?1
+                    progress = 1.0, updated_at = ?1, dedupe_key = NULL
               WHERE id = ?2",
         )
         .bind(&ts)
@@ -471,6 +474,26 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(count, 1);
+    }
+
+    #[tokio::test]
+    async fn a_completed_dedupe_key_can_be_enqueued_again() {
+        let db = queue_fixture().await;
+        let q = Queue::new(&db, 120, 5);
+        let first = q
+            .enqueue(NewTask::new(TaskKind::ScoreMatch, json!({"job": 1})).dedupe("score:job1"))
+            .await
+            .unwrap();
+        let claimed = q.claim().await.unwrap().unwrap();
+        q.complete(&claimed.id).await.unwrap();
+        let second = q
+            .enqueue(NewTask::new(TaskKind::ScoreMatch, json!({"job": 1})).dedupe("score:job1"))
+            .await
+            .unwrap();
+        assert_ne!(
+            first, second,
+            "a finished score must not block the next extract"
+        );
     }
 
     #[tokio::test]

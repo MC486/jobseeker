@@ -156,7 +156,7 @@ pub fn apply_html(job: &mut ExtractedJob, document: &Html, source: SourceKind) {
 fn find_salary(text: &str) -> Option<String> {
     static RE: Lazy<Regex> = Lazy::new(|| {
         Regex::new(
-            r"(?i)(?:salary|compensation|pay|base)[:\s]+(.{0,80}\d[\d,.]{2,}.{0,40}(?:year|yr|hour|hr|annum|month))",
+            r"(?i)(?:salary|compensation|pay|base)[:\s]+(.{0,80}\d[\d,.]{2,}.{0,40}(?:year|yr|hour|hr|annum|annually|month))",
         )
         .unwrap()
     });
@@ -202,6 +202,10 @@ mod tests {
     #[test]
     fn a_salary_line_is_lifted_out_of_prose() {
         assert!(find_salary("Salary: $185,000 - $225,000 per year plus equity").is_some());
+        assert!(find_salary(
+            "the standard base pay range for this role is $125,900.00 - $201,100.00 annually"
+        )
+        .is_some());
         assert!(find_salary("Compensation $60/hr").is_some());
         assert_eq!(find_salary("Great benefits and a strong team"), None);
     }
