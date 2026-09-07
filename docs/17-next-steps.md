@@ -16,7 +16,7 @@ pair with a hashed, ingest-scoped device token.
 - Field provenance rows; PATCH `/api/v1/jobs/{id}` is sticky `manual`
 - HTTP API: health, ready, meta, ingest, jobs, match, tasks, OpenAPI, SPA fallback
 - Auth: pairing tokens, plus password sessions (`jobseeker user set-password`)
-- CLI: `serve`, `migrate`, `add`, `list`, `show`, `merge`, `split`, `duplicates`,
+- CLI: `serve`, `migrate`, `add`, `list`, `show`, `triage`, `merge`, `split`, `duplicates`,
   `conflicts`, `resolve-conflict`, `pair`,
   `user set-password`, `profile import|show`, `reconcile`, `openapi`
 - React/Vite/Tailwind shell in `web/` (score + confidence dots)
@@ -25,10 +25,17 @@ pair with a hashed, ingest-scoped device token.
 
 ## Do next (M0 remaining → M1)
 
-1. **File-based routes + virtualized job table.** Conflicts are in. Next is
+1. **File-based routes + virtualized job table.** Triage is in. Next is
    file-based routes and TanStack Table.
 
 ## Just shipped
+
+- **Job triage.** `PATCH /api/v1/jobs/:id` already stored posting `status`,
+  `user_rating` (0–5), `user_notes_md`, and `is_archived` as provenance
+  `manual`. The job page now exposes them: posting lifecycle (open / closed /
+  filled / expired / removed), stars, notes, archive. This is not an
+  application pipeline — `applied` is rejected. List rows show stars when
+  rated. CLI: `jobseeker triage <id> --rating 4 --note "…" --status closed`.
 
 - **Extraction conflicts.** Merge already wrote an unresolved
   `extraction_conflict` when salary raw strings differed. `GET

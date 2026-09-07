@@ -1290,6 +1290,16 @@ pub struct JobPatch {
 
 /// User edits. Fields written here become provenance `manual`.
 pub async fn patch(db: &Db, id: &JobId, patch: &JobPatch) -> Result<u64> {
+    if let Some(status) = &patch.status {
+        let _: JobStatus = status.parse()?;
+    }
+    if let Some(rating) = patch.user_rating {
+        if !(0..=5).contains(&rating) {
+            return Err(jobseeker_core::Error::BadRequest(
+                "user_rating must be between 0 and 5".into(),
+            ));
+        }
+    }
     let ts = jobseeker_core::time::to_rfc3339(&jobseeker_core::time::now());
     if let Some(title) = &patch.title {
         let slug = jobseeker_core::slug::slugify(title);
@@ -2171,5 +2181,57 @@ mod tests {
 
         assert!(duplicates(&db, &harbor).await.unwrap().is_empty());
         assert!(duplicates(&db, &acme).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn patch_records_rating_notes_and_posting_status() {
+        let db = Db::open_in_memory().await.unwrap();
+        let id = insert_job(
+            &db,
+            "Zillow",
+            "Data Scientist",
+            JobStatus::Open,
+            WorkMode::Remote,
+            None,
+            SalaryPeriod::Year,
+            "2026-09-01T00:00:00Z",
+        )
+        .await;
+        patch(
+            &db,
+            &id,
+            &JobPatch {
+                user_rating: Some(4),
+                user_notes_md: Some("target 145k, remote, 2y DS".into()),
+                status: Some("closed".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let row = get(&db, &id).await.unwrap().unwrap();
+        assert_eq!(row.user_rating, Some(4));
+        assert_eq!(
+            row.user_notes_md.as_deref(),
+            Some("target 145k, remote, 2y DS")
+        );
+        assert_eq!(row.status, "closed");
+        assert!(row
+            .provenance
+            .iter()
+            .any(|p| p.field == "user_rating" && p.provenance == "manual"));
+
+        let bad = patch(
+            &db,
+            &id,
+            &JobPatch {
+                status: Some("applied".into()),
+                ..Default::default()
+            },
+        )
+        .await;
+        assert!(matches!(bad, Err(jobseeker_core::Error::BadRequest(_))));
+        let still = get(&db, &id).await.unwrap().unwrap();
+        assert_eq!(still.status, "closed");
     }
 }

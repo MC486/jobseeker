@@ -18,6 +18,7 @@ export type JobListRow = {
   match_overall: number | null;
   skills_coverage: number | null;
   years_fit: number | null;
+  user_rating: number | null;
   updated_at: string;
 };
 

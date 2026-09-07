@@ -87,6 +87,10 @@ a recommended Merge — nothing is folded automatically. After a merge whose
 salary strings disagreed, **Extraction conflicts** offers Use A / Use B /
 Keep current; the chosen wording becomes provenance `manual`.
 
+The job page **Your call** block sets posting status, a 0–5 rating, notes,
+and archive. Stars also show on the list. This is not applied / interviewing
+— that lives on `application` and is not wired yet.
+
 **Job detail** is the center of the product. Left: structured facts (comp, location, mode,
 dates, seniority, blockers) each with a subtle provenance dot — hover shows "from Greenhouse
 API, 0.98" or "edited by you". Center: requirement table, one row per requirement, with
