@@ -1,4 +1,4 @@
-//! Process entrypoint: `jobseeker serve`, `add`, `list`, `show`, `merge`, `split`, `duplicates`, `conflicts`, `migrate`, `openapi`, `reconcile`, `profile`.
+//! Process entrypoint: `jobseeker serve`, `add`, `list`, `show`, `triage`, `merge`, `split`, `duplicates`, `conflicts`, `migrate`, `openapi`, `reconcile`, `profile`.
 
 use std::io::{self, Read};
 use std::path::PathBuf;
@@ -54,6 +54,23 @@ enum Command {
     },
     /// Show one job by id.
     Show { id: String },
+    /// Set posting status, star rating, or notes. This is not an application pipeline.
+    Triage {
+        id: String,
+        /// Posting lifecycle: open, closed, filled, expired, removed.
+        #[arg(long)]
+        status: Option<String>,
+        /// 0–5. Your judgment, not the match score.
+        #[arg(long)]
+        rating: Option<i32>,
+        /// Replace `user_notes_md`.
+        #[arg(long)]
+        note: Option<String>,
+        #[arg(long)]
+        archive: bool,
+        #[arg(long)]
+        unarchive: bool,
+    },
     /// Merge a cross-post into another job of the same company.
     Merge {
         /// Job to absorb (soft-deleted).
@@ -339,6 +356,55 @@ async fn main() -> Result<()> {
             println!(
                 "merged {} into {}  listings_moved={}  requirements_added={}",
                 report.from_id, report.into_id, report.listings_moved, report.requirements_added
+            );
+        }
+        Command::Triage {
+            id,
+            status,
+            rating,
+            note,
+            archive,
+            unarchive,
+        } => {
+            if archive && unarchive {
+                anyhow::bail!("pass --archive or --unarchive, not both");
+            }
+            let pipeline = Pipeline::open(config).await?;
+            let id: jobseeker_core::ids::JobId = id.parse()?;
+            let changing =
+                status.is_some() || rating.is_some() || note.is_some() || archive || unarchive;
+            if changing {
+                job::patch(
+                    &pipeline.db,
+                    &id,
+                    &job::JobPatch {
+                        status,
+                        user_rating: rating,
+                        user_notes_md: note,
+                        is_archived: if archive {
+                            Some(true)
+                        } else if unarchive {
+                            Some(false)
+                        } else {
+                            None
+                        },
+                        ..Default::default()
+                    },
+                )
+                .await?;
+            }
+            let job = job::get(&pipeline.db, &id)
+                .await?
+                .with_context(|| format!("no job {id}"))?;
+            println!(
+                "{}  {}  rating={}  archived={}  notes={}",
+                job.status,
+                job.title,
+                job.user_rating
+                    .map(|n| n.to_string())
+                    .unwrap_or_else(|| "-".into()),
+                job.is_archived,
+                job.user_notes_md.as_deref().unwrap_or("-")
             );
         }
         Command::Show { id } => {

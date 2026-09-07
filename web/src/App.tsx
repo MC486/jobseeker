@@ -20,6 +20,7 @@ import {
   ExtractionConflict,
   JobDetail,
   JobListRow,
+  JobPatch,
   MatchSummary,
   Me,
 } from "./api";
@@ -345,6 +346,7 @@ export function JobList() {
                 <div className="text-sm text-zinc-400">
                   {row.company_name} · {row.work_mode} · {row.status}
                   {row.primary_location ? ` · ${row.primary_location}` : ""}
+                  {row.user_rating != null ? ` · ${"★".repeat(row.user_rating)}` : ""}
                 </div>
                 {row.match_overall != null ? (
                   <div className="mt-1 flex flex-wrap gap-x-3 text-xs text-zinc-400">
@@ -908,6 +910,123 @@ function ConflictRow({
   );
 }
 
+const POSTING_STATUSES = ["open", "closed", "filled", "expired", "removed", "unknown"] as const;
+
+function JobTriage({ jobId, detail }: { jobId: string; detail: JobDetail }) {
+  const qc = useQueryClient();
+  const [notes, setNotes] = useState(detail.user_notes_md ?? "");
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    setNotes(detail.user_notes_md ?? "");
+  }, [detail.user_notes_md, detail.updated_at]);
+  const patch = useMutation({
+    mutationFn: (body: JobPatch) => api.patchJob(jobId, body),
+    onSuccess: (next) => {
+      qc.setQueryData(keys.job(jobId), next);
+      qc.invalidateQueries({ queryKey: ["jobs"] });
+      setError(null);
+    },
+    onError: (err) => {
+      setError(err instanceof Error ? err.message : String(err));
+    },
+  });
+  const notesDirty = notes !== (detail.user_notes_md ?? "");
+
+  return (
+    <section className="space-y-3 rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+      <div>
+        <h2 className="text-lg font-medium">Your call</h2>
+        <p className="text-xs text-zinc-500">
+          Posting status is whether the requisition is still live — not applied /
+          interviewing. Application tracking is a later slice.
+        </p>
+      </div>
+      <div className="flex flex-wrap items-end gap-4">
+        <label className="text-sm text-zinc-300">
+          Posting
+          {provenanceDot(detail, "status")}
+          <select
+            className="mt-1 block rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-sm"
+            value={detail.status}
+            disabled={patch.isPending}
+            onChange={(e) => patch.mutate({ status: e.target.value })}
+          >
+            {POSTING_STATUSES.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+            {!POSTING_STATUSES.includes(
+              detail.status as (typeof POSTING_STATUSES)[number],
+            ) ? (
+              <option value={detail.status}>{detail.status}</option>
+            ) : null}
+          </select>
+        </label>
+        <div>
+          <p className="text-sm text-zinc-300">
+            Rating
+            {provenanceDot(detail, "user_rating")}
+          </p>
+          <div className="mt-1 flex gap-1">
+            {[1, 2, 3, 4, 5].map((n) => {
+              const on = (detail.user_rating ?? 0) >= n;
+              return (
+                <button
+                  key={n}
+                  type="button"
+                  disabled={patch.isPending}
+                  aria-label={`Rate ${n} of 5`}
+                  onClick={() =>
+                    patch.mutate({
+                      user_rating: detail.user_rating === n ? 0 : n,
+                    })
+                  }
+                  className={`px-1 text-lg leading-none disabled:opacity-50 ${
+                    on ? "text-amber-300" : "text-zinc-600"
+                  }`}
+                >
+                  ★
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        <button
+          type="button"
+          disabled={patch.isPending}
+          onClick={() => patch.mutate({ is_archived: !detail.is_archived })}
+          className="rounded-lg border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 disabled:opacity-50"
+        >
+          {detail.is_archived ? "Unarchive" : "Archive"}
+        </button>
+      </div>
+      <label className="block text-sm text-zinc-300">
+        Notes
+        {provenanceDot(detail, "user_notes_md")}
+        <textarea
+          className="mt-1 min-h-24 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          placeholder="Why this one, target comp, people, caveats…"
+        />
+      </label>
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          disabled={patch.isPending || !notesDirty}
+          onClick={() => patch.mutate({ user_notes_md: notes })}
+          className="rounded-lg bg-indigo-400 px-3 py-1.5 text-sm font-semibold text-zinc-950 disabled:opacity-50"
+        >
+          Save notes
+        </button>
+        {notesDirty ? <span className="text-xs text-zinc-500">unsaved</span> : null}
+      </div>
+      {error && <p className="text-sm text-red-300">{error}</p>}
+    </section>
+  );
+}
+
 function provenanceDot(job: JobDetail, field: string) {
   const row = job.provenance.find((p) => p.field === field);
   if (!row) return null;
@@ -945,13 +1064,6 @@ export function JobPage() {
   const conflicts = useQuery({
     queryKey: keys.conflicts(jobId),
     queryFn: () => fetchers.conflicts(jobId),
-  });
-  const archive = useMutation({
-    mutationFn: (next: boolean) => api.patchJob(jobId, { is_archived: next }),
-    onSuccess: (detail) => {
-      qc.setQueryData(keys.job(jobId), detail);
-      qc.invalidateQueries({ queryKey: ["jobs"] });
-    },
   });
   const split = useMutation({
     mutationFn: (listingId: string) => api.splitJob(jobId, listingId),
@@ -994,16 +1106,8 @@ export function JobPage() {
             Apply
           </a>
         )}
-        <div className="mt-3">
-          <button
-            disabled={archive.isPending}
-            onClick={() => archive.mutate(!detail.is_archived)}
-            className="rounded-lg border border-zinc-700 px-3 py-1 text-sm text-zinc-300 disabled:opacity-50"
-          >
-            {detail.is_archived ? "Unarchive" : "Archive"}
-          </button>
-        </div>
       </div>
+      <JobTriage jobId={jobId} detail={detail} />
       {(conflicts.data ?? []).some((c) => c.resolution === "unresolved") && (
         <section className="space-y-2 rounded-xl border border-sky-900/60 bg-sky-950/20 p-4">
           <h2 className="text-lg font-medium text-sky-100">Extraction conflicts</h2>

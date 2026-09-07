@@ -78,8 +78,12 @@ GET  /api/v1/jobs                 → {items: JobListRow[], next_cursor}
      &sort=posted_at|match|salary|updated_at|relevance   &order=asc|desc
      &cursor=&limit=
 GET  /api/v1/jobs/:id             → full job + company + locations + listings + counts
-PATCH /api/v1/jobs/:id            {title?, salary?, user_rating?, user_notes_md?, status?, is_archived?, …}
-                                    → fields set here become provenance `manual`
+PATCH /api/v1/jobs/:id            {title?, user_rating?, user_notes_md?, status?, is_archived?}
+                                    → fields set here become provenance `manual`.
+                                      `status` is posting lifecycle
+                                      (open|closed|filled|expired|removed|unknown),
+                                      not an application stage. `applied` → 400.
+                                      `user_rating` is 0–5.
 DELETE /api/v1/jobs/:id           ?purge_files=true  → soft delete by default
 GET  /api/v1/jobs/:id/requirements
 POST /api/v1/jobs/:id/requirements          create manual requirement

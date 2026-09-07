@@ -2105,4 +2105,77 @@ mod tests {
         assert_eq!(again.status(), StatusCode::CONFLICT);
         std::mem::forget(dir);
     }
+
+    #[tokio::test]
+    async fn patch_job_sets_rating_notes_and_posting_status() {
+        let dir = tempfile::tempdir().unwrap();
+        let pipe = jobseeker_pipeline::for_test(dir.path().to_path_buf())
+            .await
+            .unwrap();
+        let html = r#"<html><head><script type="application/ld+json">{"@type":"JobPosting","title":"Data Scientist","hiringOrganization":{"name":"Zillow"},"description":"<p>Python</p>"}</script></head></html>"#;
+        pipe.ingest_paste(html, Some("https://boards.greenhouse.io/zillow/jobs/1"))
+            .await
+            .unwrap();
+        pipe.drain().await.unwrap();
+        let page =
+            jobseeker_db::repo::job::list(&pipe.db, &jobseeker_db::repo::job::JobFilter::default())
+                .await
+                .unwrap();
+        let id = page.items[0].id.clone();
+
+        let app = router(AppState::new(pipe));
+        let patched = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PATCH")
+                    .uri(format!("/api/v1/jobs/{id}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "user_rating": 4,
+                            "user_notes_md": "target 145k, remote",
+                            "status": "closed"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(patched.status(), StatusCode::OK);
+        let detail: serde_json::Value = body_json(patched).await;
+        assert_eq!(detail["user_rating"], 4);
+        assert_eq!(detail["user_notes_md"], "target 145k, remote");
+        assert_eq!(detail["status"], "closed");
+
+        let listed = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/jobs")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let page: serde_json::Value = body_json(listed).await;
+        assert_eq!(page["items"][0]["user_rating"], 4);
+
+        let bad = app
+            .oneshot(
+                Request::builder()
+                    .method("PATCH")
+                    .uri(format!("/api/v1/jobs/{id}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "status": "applied" }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(bad.status(), StatusCode::BAD_REQUEST);
+        std::mem::forget(dir);
+    }
 }
