@@ -313,7 +313,10 @@ thousands of scores instantly (FR-F-09) without deleting the last-known values.
 `salary_asked_cents`, `salary_offered_cents`, `offer_details_json`,
 `next_action`, `next_action_due`, `priority` INTEGER, `rejection_reason`, `rejection_stage`,
 `notes_md`, `last_activity_at`, `created_at`, `updated_at`.
-UNIQUE `(job_id, profile_id)`.
+UNIQUE `(job_id, profile_id)`. `GET/PATCH /api/v1/jobs/:id/application` is the
+wired write path for the default profile. `applied_at` is set the first time
+status reaches `applied` or later. Each status change appends
+`application_event`.
 
 **`application_event`** — append-only. `id`, `application_id` FK CASCADE, `kind`
 (`status_change|email_sent|email_received|call|interview|assessment|offer|note|reminder|document_sent`),

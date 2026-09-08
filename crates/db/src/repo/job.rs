@@ -31,6 +31,9 @@ pub struct JobListRow {
     pub closes_at: Option<String>,
     pub primary_location: Option<String>,
     pub user_rating: Option<i64>,
+    /// Pipeline status on the default profile, if any. Not `job.status`.
+    #[serde(default)]
+    pub application_status: Option<String>,
     pub is_archived: bool,
     pub extraction_partial: bool,
     pub match_overall: Option<f64>,
@@ -103,6 +106,10 @@ pub async fn list(db: &Db, filter: &JobFilter) -> Result<Page<JobListRow>> {
                 j.salary_currency, j.salary_period, j.salary_is_estimate,
                 j.posted_at, j.closes_at, j.user_rating, j.is_archived,
                 j.extraction_partial, j.updated_at,
+                (SELECT a.status FROM application a
+                  WHERE a.job_id = j.id
+                    AND a.profile_id = (SELECT id FROM profile WHERE is_default = 1 LIMIT 1)
+                  LIMIT 1) AS application_status,
                 (SELECT m.overall FROM match_score m
                   WHERE m.job_id = j.id
                   ORDER BY m.computed_at DESC LIMIT 1) AS match_overall,
@@ -230,6 +237,7 @@ pub async fn list(db: &Db, filter: &JobFilter) -> Result<Page<JobListRow>> {
             closes_at: row.try_get("closes_at").map_err(db_err)?,
             primary_location: row.try_get("primary_location").map_err(db_err)?,
             user_rating: row.try_get("user_rating").map_err(db_err)?,
+            application_status: row.try_get("application_status").map_err(db_err)?,
             is_archived: row.try_get::<i64, _>("is_archived").map_err(db_err)? != 0,
             extraction_partial: row
                 .try_get::<i64, _>("extraction_partial")

@@ -9,6 +9,7 @@
 //!   * filters compose in SQL, never in Rust;
 //!   * cursor pagination, never `OFFSET`, on tables that grow.
 
+pub mod application;
 pub mod capture;
 pub mod company;
 pub mod conflict;

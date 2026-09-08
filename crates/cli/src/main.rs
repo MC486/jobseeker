@@ -1,4 +1,4 @@
-//! Process entrypoint: `jobseeker serve`, `add`, `list`, `show`, `triage`, `merge`, `split`, `duplicates`, `conflicts`, `migrate`, `openapi`, `reconcile`, `profile`.
+//! Process entrypoint: `jobseeker serve`, `add`, `list`, `show`, `triage`, `track`, `merge`, `split`, `duplicates`, `conflicts`, `migrate`, `openapi`, `reconcile`, `profile`.
 
 use std::io::{self, Read};
 use std::path::PathBuf;
@@ -70,6 +70,13 @@ enum Command {
         archive: bool,
         #[arg(long)]
         unarchive: bool,
+    },
+    /// Application pipeline status (interested, applied, interviewing, …).
+    Track {
+        id: String,
+        /// interested|preparing|applied|screening|interviewing|offer|accepted|rejected|withdrawn|ghosted
+        #[arg(long)]
+        status: Option<String>,
     },
     /// Merge a cross-post into another job of the same company.
     Merge {
@@ -270,6 +277,9 @@ async fn main() -> Result<()> {
                         print!("  years {:.0}%", years * 100.0);
                     }
                 }
+                if let Some(app) = &row.application_status {
+                    print!("  pipeline {app}");
+                }
                 println!();
             }
             if let Some(c) = page.next_cursor {
@@ -406,6 +416,30 @@ async fn main() -> Result<()> {
                 job.is_archived,
                 job.user_notes_md.as_deref().unwrap_or("-")
             );
+        }
+        Command::Track { id, status } => {
+            let pipeline = Pipeline::open(config).await?;
+            let id: jobseeker_core::ids::JobId = id.parse()?;
+            if let Some(status) = status {
+                let status: jobseeker_core::domain::enums::ApplicationStatus = status.parse()?;
+                let row = pipeline.set_application_status(&id, status).await?;
+                println!(
+                    "{}  {}  applied_at={}",
+                    row.status,
+                    row.job_id,
+                    row.applied_at.as_deref().unwrap_or("-")
+                );
+            } else {
+                match jobseeker_db::repo::application::get_for_job(&pipeline.db, &id).await? {
+                    Some(row) => println!(
+                        "{}  {}  applied_at={}",
+                        row.status,
+                        row.job_id,
+                        row.applied_at.as_deref().unwrap_or("-")
+                    ),
+                    None => println!("no application yet"),
+                }
+            }
         }
         Command::Show { id } => {
             let pipeline = Pipeline::open(config).await?;

@@ -345,6 +345,7 @@ export function JobList() {
                 <div className="font-medium">{row.title}</div>
                 <div className="text-sm text-zinc-400">
                   {row.company_name} · {row.work_mode} · {row.status}
+                  {row.application_status ? ` · ${row.application_status}` : ""}
                   {row.primary_location ? ` · ${row.primary_location}` : ""}
                   {row.user_rating != null ? ` · ${"★".repeat(row.user_rating)}` : ""}
                 </div>
@@ -911,11 +912,27 @@ function ConflictRow({
 }
 
 const POSTING_STATUSES = ["open", "closed", "filled", "expired", "removed", "unknown"] as const;
+const PIPELINE_STATUSES = [
+  "interested",
+  "preparing",
+  "applied",
+  "screening",
+  "interviewing",
+  "offer",
+  "accepted",
+  "rejected",
+  "withdrawn",
+  "ghosted",
+] as const;
 
 function JobTriage({ jobId, detail }: { jobId: string; detail: JobDetail }) {
   const qc = useQueryClient();
   const [notes, setNotes] = useState(detail.user_notes_md ?? "");
   const [error, setError] = useState<string | null>(null);
+  const application = useQuery({
+    queryKey: keys.application(jobId),
+    queryFn: () => fetchers.application(jobId),
+  });
   useEffect(() => {
     setNotes(detail.user_notes_md ?? "");
   }, [detail.user_notes_md, detail.updated_at]);
@@ -930,18 +947,48 @@ function JobTriage({ jobId, detail }: { jobId: string; detail: JobDetail }) {
       setError(err instanceof Error ? err.message : String(err));
     },
   });
+  const track = useMutation({
+    mutationFn: (status: string) => api.patchApplication(jobId, status),
+    onSuccess: (row) => {
+      qc.setQueryData(keys.application(jobId), row);
+      qc.invalidateQueries({ queryKey: ["jobs"] });
+      setError(null);
+    },
+    onError: (err) => {
+      setError(err instanceof Error ? err.message : String(err));
+    },
+  });
   const notesDirty = notes !== (detail.user_notes_md ?? "");
+  const pipeline = application.data?.status ?? "";
 
   return (
     <section className="space-y-3 rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
       <div>
         <h2 className="text-lg font-medium">Your call</h2>
         <p className="text-xs text-zinc-500">
-          Posting status is whether the requisition is still live — not applied /
-          interviewing. Application tracking is a later slice.
+          Pipeline is whether you applied. Posting is whether the requisition is
+          still live.
         </p>
       </div>
       <div className="flex flex-wrap items-end gap-4">
+        <label className="text-sm text-zinc-300">
+          Pipeline
+          <select
+            className="mt-1 block rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-sm"
+            value={pipeline}
+            disabled={track.isPending}
+            onChange={(e) => {
+              if (e.target.value) track.mutate(e.target.value);
+            }}
+          >
+            <option value="">not tracking</option>
+            {PIPELINE_STATUSES.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </select>
+        </label>
         <label className="text-sm text-zinc-300">
           Posting
           {provenanceDot(detail, "status")}
@@ -1000,6 +1047,9 @@ function JobTriage({ jobId, detail }: { jobId: string; detail: JobDetail }) {
         >
           {detail.is_archived ? "Unarchive" : "Archive"}
         </button>
+        {application.data?.applied_at ? (
+          <p className="text-xs text-zinc-500">Applied {application.data.applied_at.slice(0, 10)}</p>
+        ) : null}
       </div>
       <label className="block text-sm text-zinc-300">
         Notes
