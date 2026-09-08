@@ -18,6 +18,7 @@ export const keys = {
   match: (id: string) => ["match", id] as const,
   duplicates: (id: string) => ["duplicates", id] as const,
   conflicts: (id: string) => ["conflicts", id] as const,
+  application: (id: string) => ["application", id] as const,
   profile: ["profile"] as const,
   task: (id: string) => ["task", id] as const,
 };
@@ -37,6 +38,7 @@ export function subscribeQueryEvents(): () => void {
           queryClient.invalidateQueries({ queryKey: keys.job(event.entity_id) });
           queryClient.invalidateQueries({ queryKey: ["duplicates"] });
           queryClient.invalidateQueries({ queryKey: ["conflicts"] });
+          queryClient.invalidateQueries({ queryKey: ["application"] });
         }
         break;
       case "match.updated":
@@ -61,6 +63,7 @@ export const fetchers = {
   match: (id: string) => api.jobMatch(id),
   duplicates: (id: string) => api.duplicates(id),
   conflicts: (id: string) => api.conflicts(id),
+  application: (id: string) => api.application(id),
   profile: () => api.profile(),
   task: (id: string) => api.task(id),
 };

@@ -172,11 +172,13 @@ GET  /api/v1/templates                           available resume templates
 ### Applications
 
 ```
-GET/POST/PATCH/DELETE  /api/v1/applications[/:id]
-POST /api/v1/applications/:id/events   {kind, occurred_at, title, body_md}
-GET  /api/v1/applications/:id/events
-GET  /api/v1/applications/board                  kanban: statuses → items
-GET  /api/v1/applications/next-actions?window=7d overdue + upcoming
+GET  /api/v1/jobs/:id/application           default-profile row, or null
+PATCH /api/v1/jobs/:id/application {status}
+                                    → interested|preparing|applied|screening|
+                                      interviewing|offer|accepted|rejected|
+                                      withdrawn|ghosted. Creates the row.
+                                      Stamps applied_at the first time status
+                                      is applied or later. Not job.status.
 GET/POST/PATCH/DELETE  /api/v1/contacts[/:id]
 ```
 

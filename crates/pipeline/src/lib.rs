@@ -19,7 +19,8 @@ use jobseeker_core::{Error, Result};
 use jobseeker_db::persist::{self, PersistExtracted};
 use jobseeker_db::queue::{ClaimedTask, NewTask, Queue};
 use jobseeker_db::repo::{
-    capture, company, conflict, event, experience, listing, listing::UpsertListing, profile, score,
+    application, capture, company, conflict, event, experience, listing, listing::UpsertListing,
+    profile, score,
 };
 use jobseeker_db::Db;
 use jobseeker_extract::{extract, ExtractInput};
@@ -892,6 +893,28 @@ impl Pipeline {
                     "field": row.field,
                     "choice": choice.as_str(),
                     "resolution": row.resolution,
+                }),
+            )
+            .await;
+        Ok(row)
+    }
+
+    /// Set pipeline status for the default profile. Not posting liveness.
+    pub async fn set_application_status(
+        &self,
+        job_id: &jobseeker_core::ids::JobId,
+        status: jobseeker_core::domain::enums::ApplicationStatus,
+    ) -> Result<application::ApplicationView> {
+        let row = application::set_status(&self.db, job_id, status).await?;
+        let _ = self
+            .emit(
+                DomainEvent::JOB_UPDATED,
+                "job",
+                job_id.as_str(),
+                json!({
+                    "source": "application",
+                    "application_id": row.id,
+                    "status": row.status,
                 }),
             )
             .await;

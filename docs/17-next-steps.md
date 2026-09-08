@@ -16,7 +16,7 @@ pair with a hashed, ingest-scoped device token.
 - Field provenance rows; PATCH `/api/v1/jobs/{id}` is sticky `manual`
 - HTTP API: health, ready, meta, ingest, jobs, match, tasks, OpenAPI, SPA fallback
 - Auth: pairing tokens, plus password sessions (`jobseeker user set-password`)
-- CLI: `serve`, `migrate`, `add`, `list`, `show`, `triage`, `merge`, `split`, `duplicates`,
+- CLI: `serve`, `migrate`, `add`, `list`, `show`, `triage`, `track`, `merge`, `split`, `duplicates`,
   `conflicts`, `resolve-conflict`, `pair`,
   `user set-password`, `profile import|show`, `reconcile`, `openapi`
 - React/Vite/Tailwind shell in `web/` (score + confidence dots)
@@ -25,10 +25,18 @@ pair with a hashed, ingest-scoped device token.
 
 ## Do next (M0 remaining → M1)
 
-1. **File-based routes + virtualized job table.** Triage is in. Next is
+1. **File-based routes + virtualized job table.** Pipeline status is in. Next is
    file-based routes and TanStack Table.
 
 ## Just shipped
+
+- **Application pipeline.** `GET/PATCH /api/v1/jobs/:id/application` upserts
+  one row on the default profile (`interested` … `ghosted`). First time
+  status reaches `applied` or later, `applied_at` is stamped. Each change
+  appends `application_event` (`status_change`). Job `status` stays posting
+  liveness — `PATCH` job with `applied` is still 400. List rows show the
+  pipeline label. CLI: `jobseeker track <id> --status applied`. Kanban /
+  next actions / events UI are not this slice.
 
 - **Job triage.** `PATCH /api/v1/jobs/:id` already stored posting `status`,
   `user_rating` (0–5), `user_notes_md`, and `is_archived` as provenance

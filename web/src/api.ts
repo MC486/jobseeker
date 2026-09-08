@@ -19,6 +19,7 @@ export type JobListRow = {
   skills_coverage: number | null;
   years_fit: number | null;
   user_rating: number | null;
+  application_status: string | null;
   updated_at: string;
 };
 
@@ -107,6 +108,16 @@ export type DuplicateCandidate = {
   requirement_count: number;
   listings: { id: string; url: string; source: string; is_canonical: boolean }[];
   keep_this: boolean;
+};
+
+export type ApplicationView = {
+  id: string;
+  job_id: string;
+  profile_id: string;
+  status: string;
+  applied_at: string | null;
+  last_activity_at: string;
+  updated_at: string;
 };
 
 export type JobPatch = {
@@ -238,6 +249,13 @@ export const api = {
     request<ExtractionConflict>(`/api/v1/jobs/${jobId}/conflicts/${conflictId}/resolve`, {
       method: "POST",
       body: JSON.stringify({ choice }),
+    }),
+  application: (id: string) =>
+    request<ApplicationView | null>(`/api/v1/jobs/${id}/application`),
+  patchApplication: (id: string, status: string) =>
+    request<ApplicationView>(`/api/v1/jobs/${id}/application`, {
+      method: "PATCH",
+      body: JSON.stringify({ status }),
     }),
   task: (id: string) => request<TaskView>(`/api/v1/tasks/${id}`),
   ingestUrl: (url: string) =>

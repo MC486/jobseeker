@@ -21,10 +21,12 @@ use axum::{Extension, Json, Router};
 use futures::{Stream, StreamExt};
 use jobseeker_core::config::AuthMode;
 use jobseeker_core::domain::capture::CaptureSubmission;
+use jobseeker_core::domain::enums::ApplicationStatus;
 use jobseeker_core::domain::event::DomainEvent;
 use jobseeker_core::ids::{JobId, TaskId};
 use jobseeker_core::{Error, Result};
 use jobseeker_db::queue::Queue;
+use jobseeker_db::repo::application;
 use jobseeker_db::repo::conflict;
 use jobseeker_db::repo::event;
 use jobseeker_db::repo::job::{self, JobFilter, JobPatch};
@@ -169,6 +171,8 @@ pub struct PageDto<T: Serialize> {
         list_duplicates,
         list_conflicts,
         resolve_conflict,
+        get_application,
+        patch_application,
         get_profile,
         import_resume,
         get_task,
@@ -191,6 +195,7 @@ pub struct PageDto<T: Serialize> {
         MergeJobRequest,
         SplitJobRequest,
         ResolveConflictRequest,
+        PatchApplicationRequest,
         PairRequest,
         LoginRequest,
         CreateTokenRequest,
@@ -227,6 +232,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/v1/jobs/{id}/conflicts/{conflict_id}/resolve",
             post(resolve_conflict),
+        )
+        .route(
+            "/api/v1/jobs/{id}/application",
+            get(get_application).patch(patch_application),
         )
         .route("/api/v1/profiles/default", get(get_profile))
         .route(
@@ -585,6 +594,44 @@ async fn resolve_conflict(
     let row = state
         .pipeline
         .resolve_conflict(&id, &conflict_id, choice)
+        .await
+        .map_err(ApiError)?;
+    Ok(Json(row))
+}
+
+#[utoipa::path(get, path = "/api/v1/jobs/{id}/application", responses((status = 200), (status = 404)))]
+async fn get_application(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Option<application::ApplicationView>>> {
+    let id: JobId = id.parse().map_err(ApiError)?;
+    let found = application::get_for_job(&state.pipeline.db, &id)
+        .await
+        .map_err(ApiError)?;
+    Ok(Json(found))
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct PatchApplicationRequest {
+    pub status: String,
+}
+
+#[utoipa::path(
+    patch,
+    path = "/api/v1/jobs/{id}/application",
+    request_body = PatchApplicationRequest,
+    responses((status = 200), (status = 400), (status = 404))
+)]
+async fn patch_application(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<PatchApplicationRequest>,
+) -> ApiResult<Json<application::ApplicationView>> {
+    let id: JobId = id.parse().map_err(ApiError)?;
+    let status: ApplicationStatus = body.status.parse().map_err(ApiError)?;
+    let row = state
+        .pipeline
+        .set_application_status(&id, status)
         .await
         .map_err(ApiError)?;
     Ok(Json(row))
@@ -1177,6 +1224,10 @@ mod tests {
         assert!(
             spec["paths"]["/api/v1/jobs/{id}/conflicts/{conflict_id}/resolve"].is_object(),
             "OpenAPI must document POST /api/v1/jobs/{{id}}/conflicts/{{conflict_id}}/resolve"
+        );
+        assert!(
+            spec["paths"]["/api/v1/jobs/{id}/application"].is_object(),
+            "OpenAPI must document GET/PATCH /api/v1/jobs/{{id}}/application"
         );
     }
 
@@ -2176,6 +2227,85 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(bad.status(), StatusCode::BAD_REQUEST);
+        std::mem::forget(dir);
+    }
+
+    #[tokio::test]
+    async fn application_status_is_separate_from_posting_status() {
+        let dir = tempfile::tempdir().unwrap();
+        let pipe = jobseeker_pipeline::for_test(dir.path().to_path_buf())
+            .await
+            .unwrap();
+        let html = r#"<html><head><script type="application/ld+json">{"@type":"JobPosting","title":"Data Scientist","hiringOrganization":{"name":"Zillow"},"description":"<p>Python</p>"}</script></head></html>"#;
+        pipe.ingest_paste(html, Some("https://boards.greenhouse.io/zillow/jobs/1"))
+            .await
+            .unwrap();
+        pipe.drain().await.unwrap();
+        let page =
+            jobseeker_db::repo::job::list(&pipe.db, &jobseeker_db::repo::job::JobFilter::default())
+                .await
+                .unwrap();
+        let id = page.items[0].id.clone();
+
+        let app = router(AppState::new(pipe));
+        let empty = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/jobs/{id}/application"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(empty.status(), StatusCode::OK);
+        let none: serde_json::Value = body_json(empty).await;
+        assert!(none.is_null());
+
+        let set = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PATCH")
+                    .uri(format!("/api/v1/jobs/{id}/application"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "status": "applied" }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(set.status(), StatusCode::OK);
+        let row: serde_json::Value = body_json(set).await;
+        assert_eq!(row["status"], "applied");
+        assert!(row["applied_at"].as_str().is_some());
+
+        let listed = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/jobs")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let page: serde_json::Value = body_json(listed).await;
+        assert_eq!(page["items"][0]["application_status"], "applied");
+        assert_eq!(page["items"][0]["status"], "open");
+
+        let job = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/jobs/{id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let detail: serde_json::Value = body_json(job).await;
+        assert_eq!(detail["status"], "open");
         std::mem::forget(dir);
     }
 }
