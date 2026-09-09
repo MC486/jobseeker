@@ -21,7 +21,6 @@ use axum::{Extension, Json, Router};
 use futures::{Stream, StreamExt};
 use jobseeker_core::config::AuthMode;
 use jobseeker_core::domain::capture::CaptureSubmission;
-use jobseeker_core::domain::enums::ApplicationStatus;
 use jobseeker_core::domain::event::DomainEvent;
 use jobseeker_core::ids::{JobId, TaskId};
 use jobseeker_core::{Error, Result};
@@ -613,7 +612,9 @@ async fn get_application(
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct PatchApplicationRequest {
-    pub status: String,
+    pub status: Option<String>,
+    pub next_action: Option<String>,
+    pub next_action_due: Option<String>,
 }
 
 #[utoipa::path(
@@ -628,10 +629,20 @@ async fn patch_application(
     Json(body): Json<PatchApplicationRequest>,
 ) -> ApiResult<Json<application::ApplicationView>> {
     let id: JobId = id.parse().map_err(ApiError)?;
-    let status: ApplicationStatus = body.status.parse().map_err(ApiError)?;
+    let status = match body.status {
+        Some(s) => Some(s.parse().map_err(ApiError)?),
+        None => None,
+    };
     let row = state
         .pipeline
-        .set_application_status(&id, status)
+        .patch_application(
+            &id,
+            application::ApplicationPatch {
+                status,
+                next_action: body.next_action,
+                next_action_due: body.next_action_due,
+            },
+        )
         .await
         .map_err(ApiError)?;
     Ok(Json(row))
@@ -2293,6 +2304,45 @@ mod tests {
             .unwrap();
         let page: serde_json::Value = body_json(listed).await;
         assert_eq!(page["items"][0]["application_status"], "applied");
+        assert_eq!(page["items"][0]["status"], "open");
+
+        let next = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PATCH")
+                    .uri(format!("/api/v1/jobs/{id}/application"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "next_action": "email recruiter",
+                            "next_action_due": "2026-09-01"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(next.status(), StatusCode::OK);
+        let tracked: serde_json::Value = body_json(next).await;
+        assert_eq!(tracked["status"], "applied");
+        assert_eq!(tracked["next_action"], "email recruiter");
+        assert_eq!(tracked["next_action_due"], "2026-09-01");
+
+        let listed = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/jobs")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let page: serde_json::Value = body_json(listed).await;
+        assert_eq!(page["items"][0]["next_action"], "email recruiter");
+        assert_eq!(page["items"][0]["next_action_due"], "2026-09-01");
         assert_eq!(page["items"][0]["status"], "open");
 
         let job = app

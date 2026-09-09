@@ -905,7 +905,23 @@ impl Pipeline {
         job_id: &jobseeker_core::ids::JobId,
         status: jobseeker_core::domain::enums::ApplicationStatus,
     ) -> Result<application::ApplicationView> {
-        let row = application::set_status(&self.db, job_id, status).await?;
+        self.patch_application(
+            job_id,
+            application::ApplicationPatch {
+                status: Some(status),
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    /// Create or update pipeline status and/or next action.
+    pub async fn patch_application(
+        &self,
+        job_id: &jobseeker_core::ids::JobId,
+        patch: application::ApplicationPatch,
+    ) -> Result<application::ApplicationView> {
+        let row = application::patch(&self.db, job_id, patch).await?;
         let _ = self
             .emit(
                 DomainEvent::JOB_UPDATED,
@@ -915,6 +931,8 @@ impl Pipeline {
                     "source": "application",
                     "application_id": row.id,
                     "status": row.status,
+                    "next_action": row.next_action,
+                    "next_action_due": row.next_action_due,
                 }),
             )
             .await;

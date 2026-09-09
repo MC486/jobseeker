@@ -173,12 +173,15 @@ GET  /api/v1/templates                           available resume templates
 
 ```
 GET  /api/v1/jobs/:id/application           default-profile row, or null
-PATCH /api/v1/jobs/:id/application {status}
+PATCH /api/v1/jobs/:id/application {status?, next_action?, next_action_due?}
                                     → interested|preparing|applied|screening|
                                       interviewing|offer|accepted|rejected|
                                       withdrawn|ghosted. Creates the row.
                                       Stamps applied_at the first time status
                                       is applied or later. Not job.status.
+                                      next_action_due is YYYY-MM-DD. Empty
+                                      string clears next-action fields.
+                                      At least one field required.
 GET/POST/PATCH/DELETE  /api/v1/contacts[/:id]
 ```
 

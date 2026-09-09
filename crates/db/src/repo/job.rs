@@ -34,6 +34,12 @@ pub struct JobListRow {
     /// Pipeline status on the default profile, if any. Not `job.status`.
     #[serde(default)]
     pub application_status: Option<String>,
+    /// What the user will do next on this application, if set.
+    #[serde(default)]
+    pub next_action: Option<String>,
+    /// Calendar date `YYYY-MM-DD`, if set.
+    #[serde(default)]
+    pub next_action_due: Option<String>,
     pub is_archived: bool,
     pub extraction_partial: bool,
     pub match_overall: Option<f64>,
@@ -110,6 +116,14 @@ pub async fn list(db: &Db, filter: &JobFilter) -> Result<Page<JobListRow>> {
                   WHERE a.job_id = j.id
                     AND a.profile_id = (SELECT id FROM profile WHERE is_default = 1 LIMIT 1)
                   LIMIT 1) AS application_status,
+                (SELECT a.next_action FROM application a
+                  WHERE a.job_id = j.id
+                    AND a.profile_id = (SELECT id FROM profile WHERE is_default = 1 LIMIT 1)
+                  LIMIT 1) AS next_action,
+                (SELECT a.next_action_due FROM application a
+                  WHERE a.job_id = j.id
+                    AND a.profile_id = (SELECT id FROM profile WHERE is_default = 1 LIMIT 1)
+                  LIMIT 1) AS next_action_due,
                 (SELECT m.overall FROM match_score m
                   WHERE m.job_id = j.id
                   ORDER BY m.computed_at DESC LIMIT 1) AS match_overall,
@@ -238,6 +252,8 @@ pub async fn list(db: &Db, filter: &JobFilter) -> Result<Page<JobListRow>> {
             primary_location: row.try_get("primary_location").map_err(db_err)?,
             user_rating: row.try_get("user_rating").map_err(db_err)?,
             application_status: row.try_get("application_status").map_err(db_err)?,
+            next_action: row.try_get("next_action").map_err(db_err)?,
+            next_action_due: row.try_get("next_action_due").map_err(db_err)?,
             is_archived: row.try_get::<i64, _>("is_archived").map_err(db_err)? != 0,
             extraction_partial: row
                 .try_get::<i64, _>("extraction_partial")

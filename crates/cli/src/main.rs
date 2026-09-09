@@ -71,12 +71,18 @@ enum Command {
         #[arg(long)]
         unarchive: bool,
     },
-    /// Application pipeline status (interested, applied, interviewing, …).
+    /// Application pipeline status and next action.
     Track {
         id: String,
         /// interested|preparing|applied|screening|interviewing|offer|accepted|rejected|withdrawn|ghosted
         #[arg(long)]
         status: Option<String>,
+        /// What you will do next (empty string clears).
+        #[arg(long = "next")]
+        next_action: Option<String>,
+        /// Calendar date YYYY-MM-DD (empty string clears).
+        #[arg(long)]
+        due: Option<String>,
     },
     /// Merge a cross-post into another job of the same company.
     Merge {
@@ -280,6 +286,12 @@ async fn main() -> Result<()> {
                 if let Some(app) = &row.application_status {
                     print!("  pipeline {app}");
                 }
+                if let Some(due) = &row.next_action_due {
+                    print!("  due {due}");
+                }
+                if let Some(act) = &row.next_action {
+                    print!("  next {act}");
+                }
                 println!();
             }
             if let Some(c) = page.next_cursor {
@@ -417,26 +429,33 @@ async fn main() -> Result<()> {
                 job.user_notes_md.as_deref().unwrap_or("-")
             );
         }
-        Command::Track { id, status } => {
+        Command::Track {
+            id,
+            status,
+            next_action,
+            due,
+        } => {
             let pipeline = Pipeline::open(config).await?;
             let id: jobseeker_core::ids::JobId = id.parse()?;
-            if let Some(status) = status {
-                let status: jobseeker_core::domain::enums::ApplicationStatus = status.parse()?;
-                let row = pipeline.set_application_status(&id, status).await?;
-                println!(
-                    "{}  {}  applied_at={}",
-                    row.status,
-                    row.job_id,
-                    row.applied_at.as_deref().unwrap_or("-")
-                );
+            if status.is_some() || next_action.is_some() || due.is_some() {
+                let status = match status {
+                    Some(s) => Some(s.parse()?),
+                    None => None,
+                };
+                let row = pipeline
+                    .patch_application(
+                        &id,
+                        jobseeker_db::repo::application::ApplicationPatch {
+                            status,
+                            next_action,
+                            next_action_due: due,
+                        },
+                    )
+                    .await?;
+                print_application(&row);
             } else {
                 match jobseeker_db::repo::application::get_for_job(&pipeline.db, &id).await? {
-                    Some(row) => println!(
-                        "{}  {}  applied_at={}",
-                        row.status,
-                        row.job_id,
-                        row.applied_at.as_deref().unwrap_or("-")
-                    ),
+                    Some(row) => print_application(&row),
                     None => println!("no application yet"),
                 }
             }
@@ -606,6 +625,26 @@ async fn main() -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn print_application(row: &jobseeker_db::repo::application::ApplicationView) {
+    print!(
+        "{}  {}  applied_at={}",
+        row.status,
+        row.job_id,
+        row.applied_at.as_deref().unwrap_or("-")
+    );
+    if let Some(due) = &row.next_action_due {
+        print!("  due={due}");
+    } else {
+        print!("  due=-");
+    }
+    if let Some(act) = &row.next_action {
+        print!("  next={act}");
+    } else {
+        print!("  next=-");
+    }
+    println!();
 }
 
 fn read_paste(path: &PathBuf) -> Result<String> {
