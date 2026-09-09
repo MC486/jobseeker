@@ -23,6 +23,7 @@ import {
   JobPatch,
   MatchSummary,
   Me,
+  ApplicationPatch,
 } from "./api";
 import { MAX_COMPARE, parseCompareIds } from "./compare";
 import { fetchers, keys, subscribeQueryEvents } from "./query";
@@ -282,6 +283,10 @@ export function JobList() {
     return [...items].sort((a, b) => scoreOf(b, sort) - scoreOf(a, sort));
   }, [jobs.data, sort]);
   const [picked, setPicked] = useState<string[]>([]);
+  const today = utcToday();
+  const overdueCount = rows.filter(
+    (row) => row.next_action_due && row.next_action_due < today,
+  ).length;
 
   function togglePick(id: string) {
     setPicked((prev) => {
@@ -322,6 +327,11 @@ export function JobList() {
           client-side on this page · does not change overall
         </span>
       </div>
+      {overdueCount > 0 ? (
+        <p className="text-sm text-red-300">
+          {overdueCount} overdue next action{overdueCount === 1 ? "" : "s"}
+        </p>
+      ) : null}
       {jobs.isError && (
         <p className="text-sm text-red-300">
           {jobs.error instanceof Error ? jobs.error.message : "failed"}
@@ -349,6 +359,11 @@ export function JobList() {
                   {row.primary_location ? ` · ${row.primary_location}` : ""}
                   {row.user_rating != null ? ` · ${"★".repeat(row.user_rating)}` : ""}
                 </div>
+                {nextActionLine(row) ? (
+                  <div className={`mt-0.5 text-xs ${dueTone(row.next_action_due)}`}>
+                    {nextActionLine(row)}
+                  </div>
+                ) : null}
                 {row.match_overall != null ? (
                   <div className="mt-1 flex flex-wrap gap-x-3 text-xs text-zinc-400">
                     <span className={sort === "overall" ? "text-zinc-100" : "text-zinc-200"}>
@@ -925,9 +940,34 @@ const PIPELINE_STATUSES = [
   "ghosted",
 ] as const;
 
+function utcToday(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function dueTone(due: string | null | undefined): string {
+  if (!due) return "text-zinc-500";
+  const today = utcToday();
+  if (due < today) return "text-red-300";
+  if (due === today) return "text-amber-300";
+  return "text-zinc-500";
+}
+
+function nextActionLine(row: Pick<JobListRow, "next_action" | "next_action_due">): string | null {
+  if (!row.next_action && !row.next_action_due) return null;
+  const action = row.next_action ?? "next";
+  const due = row.next_action_due;
+  if (!due) return action;
+  const today = utcToday();
+  if (due < today) return `overdue ${due} · ${action}`;
+  if (due === today) return `due today · ${action}`;
+  return `due ${due} · ${action}`;
+}
+
 function JobTriage({ jobId, detail }: { jobId: string; detail: JobDetail }) {
   const qc = useQueryClient();
   const [notes, setNotes] = useState(detail.user_notes_md ?? "");
+  const [nextAction, setNextAction] = useState("");
+  const [nextDue, setNextDue] = useState("");
   const [error, setError] = useState<string | null>(null);
   const application = useQuery({
     queryKey: keys.application(jobId),
@@ -936,6 +976,10 @@ function JobTriage({ jobId, detail }: { jobId: string; detail: JobDetail }) {
   useEffect(() => {
     setNotes(detail.user_notes_md ?? "");
   }, [detail.user_notes_md, detail.updated_at]);
+  useEffect(() => {
+    setNextAction(application.data?.next_action ?? "");
+    setNextDue((application.data?.next_action_due ?? "").slice(0, 10));
+  }, [application.data]);
   const patch = useMutation({
     mutationFn: (body: JobPatch) => api.patchJob(jobId, body),
     onSuccess: (next) => {
@@ -948,7 +992,7 @@ function JobTriage({ jobId, detail }: { jobId: string; detail: JobDetail }) {
     },
   });
   const track = useMutation({
-    mutationFn: (status: string) => api.patchApplication(jobId, status),
+    mutationFn: (body: ApplicationPatch) => api.patchApplication(jobId, body),
     onSuccess: (row) => {
       qc.setQueryData(keys.application(jobId), row);
       qc.invalidateQueries({ queryKey: ["jobs"] });
@@ -960,6 +1004,9 @@ function JobTriage({ jobId, detail }: { jobId: string; detail: JobDetail }) {
   });
   const notesDirty = notes !== (detail.user_notes_md ?? "");
   const pipeline = application.data?.status ?? "";
+  const savedAction = application.data?.next_action ?? "";
+  const savedDue = (application.data?.next_action_due ?? "").slice(0, 10);
+  const nextDirty = nextAction !== savedAction || nextDue !== savedDue;
 
   return (
     <section className="space-y-3 rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
@@ -978,7 +1025,7 @@ function JobTriage({ jobId, detail }: { jobId: string; detail: JobDetail }) {
             value={pipeline}
             disabled={track.isPending}
             onChange={(e) => {
-              if (e.target.value) track.mutate(e.target.value);
+              if (e.target.value) track.mutate({ status: e.target.value });
             }}
           >
             <option value="">not tracking</option>
@@ -1050,6 +1097,40 @@ function JobTriage({ jobId, detail }: { jobId: string; detail: JobDetail }) {
         {application.data?.applied_at ? (
           <p className="text-xs text-zinc-500">Applied {application.data.applied_at.slice(0, 10)}</p>
         ) : null}
+      </div>
+      <div className="flex flex-wrap items-end gap-3">
+        <label className="min-w-56 flex-1 text-sm text-zinc-300">
+          Next action
+          <input
+            className="mt-1 block w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-sm"
+            value={nextAction}
+            onChange={(e) => setNextAction(e.target.value)}
+            placeholder="follow up, thank-you, prep loop…"
+          />
+        </label>
+        <label className="text-sm text-zinc-300">
+          Due
+          <input
+            type="date"
+            className="mt-1 block rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-sm"
+            value={nextDue}
+            onChange={(e) => setNextDue(e.target.value)}
+          />
+        </label>
+        <button
+          type="button"
+          disabled={track.isPending || !nextDirty}
+          onClick={() =>
+            track.mutate({
+              next_action: nextAction,
+              next_action_due: nextDue,
+            })
+          }
+          className="rounded-lg bg-indigo-400 px-3 py-1.5 text-sm font-semibold text-zinc-950 disabled:opacity-50"
+        >
+          Save next
+        </button>
+        {nextDirty ? <span className="text-xs text-zinc-500">unsaved</span> : null}
       </div>
       <label className="block text-sm text-zinc-300">
         Notes

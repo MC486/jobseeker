@@ -88,8 +88,9 @@ salary strings disagreed, **Extraction conflicts** offers Use A / Use B /
 Keep current; the chosen wording becomes provenance `manual`.
 
 The job page **Your call** block sets pipeline status (applied /
-interviewing / …), posting status, a 0–5 rating, notes, and archive.
-Stars and pipeline label also show on the list. Kanban is not wired.
+interviewing / …), a next action with a due date, posting status, a 0–5
+rating, notes, and archive. Stars, pipeline label, and overdue next
+actions also show on the list. Kanban is not wired.
 
 **Job detail** is the center of the product. Left: structured facts (comp, location, mode,
 dates, seniority, blockers) each with a subtle provenance dot — hover shows "from Greenhouse

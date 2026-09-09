@@ -20,6 +20,8 @@ export type JobListRow = {
   years_fit: number | null;
   user_rating: number | null;
   application_status: string | null;
+  next_action: string | null;
+  next_action_due: string | null;
   updated_at: string;
 };
 
@@ -116,8 +118,16 @@ export type ApplicationView = {
   profile_id: string;
   status: string;
   applied_at: string | null;
+  next_action: string | null;
+  next_action_due: string | null;
   last_activity_at: string;
   updated_at: string;
+};
+
+export type ApplicationPatch = {
+  status?: string;
+  next_action?: string | null;
+  next_action_due?: string | null;
 };
 
 export type JobPatch = {
@@ -252,10 +262,10 @@ export const api = {
     }),
   application: (id: string) =>
     request<ApplicationView | null>(`/api/v1/jobs/${id}/application`),
-  patchApplication: (id: string, status: string) =>
+  patchApplication: (id: string, body: ApplicationPatch) =>
     request<ApplicationView>(`/api/v1/jobs/${id}/application`, {
       method: "PATCH",
-      body: JSON.stringify({ status }),
+      body: JSON.stringify(body),
     }),
   task: (id: string) => request<TaskView>(`/api/v1/tasks/${id}`),
   ingestUrl: (url: string) =>

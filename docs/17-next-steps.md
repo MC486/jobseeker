@@ -25,18 +25,26 @@ pair with a hashed, ingest-scoped device token.
 
 ## Do next (M0 remaining → M1)
 
-1. **File-based routes + virtualized job table.** Pipeline status is in. Next is
+1. **File-based routes + virtualized job table.** Next action is in. Next is
    file-based routes and TanStack Table.
 
 ## Just shipped
+
+- **Next action.** `PATCH /api/v1/jobs/:id/application` accepts `next_action`
+  and `next_action_due` (`YYYY-MM-DD`) without touching posting liveness.
+  Missing application row is created as `interested`. Each change appends
+  `application_event` (`reminder`). List rows show the due date (overdue in
+  red) and a count of overdue actions on the loaded page. Job page **Your
+  call** has Next action + Due. CLI: `jobseeker track <id> --next "email
+  recruiter" --due 2026-09-12`. Kanban / events UI are not this slice.
 
 - **Application pipeline.** `GET/PATCH /api/v1/jobs/:id/application` upserts
   one row on the default profile (`interested` … `ghosted`). First time
   status reaches `applied` or later, `applied_at` is stamped. Each change
   appends `application_event` (`status_change`). Job `status` stays posting
   liveness — `PATCH` job with `applied` is still 400. List rows show the
-  pipeline label. CLI: `jobseeker track <id> --status applied`. Kanban /
-  next actions / events UI are not this slice.
+  pipeline label. CLI: `jobseeker track <id> --status applied`. Next action
+  shipped after this.
 
 - **Job triage.** `PATCH /api/v1/jobs/:id` already stored posting `status`,
   `user_rating` (0–5), `user_notes_md`, and `is_archived` as provenance
