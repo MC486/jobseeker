@@ -25,11 +25,18 @@ pair with a hashed, ingest-scoped device token.
 
 ## Do next (M0 remaining → M1)
 
-1. **Closing-soon with no application (FR-T-04).** Open jobs whose close date
-   is within N days and that have no application row. Possibly-ghosted is in.
-   Kanban and file-based routes are not this slice.
+1. **Kanban `/pipeline`.** Closing-soon and possibly-ghosted are in. File-based
+   routes are not this slice.
 
 ## Just shipped
+
+- **Closing soon with no application (FR-T-04).** Open jobs whose close date
+  is within 7 days and that have no application — or are still `interested` /
+  `preparing` — get `closing_soon_unapplied: true` on the list row and job
+  detail. Applied-or-later is not nagged. Jobs list shows the close date plus
+  a count on the loaded page. Job page **Your call** shows an amber banner.
+  CLI `list` prints `closing soon`. `job::closing_soon` now excludes applied
+  jobs. Kanban is not this slice.
 
 - **Possibly ghosted (FR-T-03).** Applications in `applied` / `screening` /
   `interviewing` with no activity for 14 days get `possibly_ghosted: true` on

@@ -2353,6 +2353,7 @@ mod tests {
         assert_eq!(page["items"][0]["next_action_due"], "2026-09-01");
         assert_eq!(page["items"][0]["status"], "open");
         assert_eq!(page["items"][0]["possibly_ghosted"], false);
+        assert_eq!(page["items"][0]["closing_soon_unapplied"], false);
         assert_eq!(tracked["possibly_ghosted"], false);
 
         let job = app
@@ -2366,6 +2367,7 @@ mod tests {
             .unwrap();
         let detail: serde_json::Value = body_json(job).await;
         assert_eq!(detail["status"], "open");
+        assert_eq!(detail["closing_soon_unapplied"], false);
         std::mem::forget(dir);
     }
 }

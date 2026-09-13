@@ -43,6 +43,9 @@ pub struct JobListRow {
     /// Waiting on the employer and idle ≥ 14 days. Derived; not a stored status.
     #[serde(default)]
     pub possibly_ghosted: bool,
+    /// Open, closes within 7 days, and not yet applied. Derived; not a stored status.
+    #[serde(default)]
+    pub closing_soon_unapplied: bool,
     pub is_archived: bool,
     pub extraction_partial: bool,
     pub match_overall: Option<f64>,
@@ -271,6 +274,16 @@ pub async fn list(db: &Db, filter: &JobFilter) -> Result<Page<JobListRow>> {
                     _ => false,
                 }
             },
+            closing_soon_unapplied: {
+                let job_status: String = row.try_get("status").map_err(db_err)?;
+                let closes_at: Option<String> = row.try_get("closes_at").map_err(db_err)?;
+                let app: Option<String> = row.try_get("application_status").map_err(db_err)?;
+                jobseeker_core::domain::is_closing_soon_unapplied(
+                    &job_status,
+                    closes_at.as_deref(),
+                    app.as_deref(),
+                )
+            },
             is_archived: row.try_get::<i64, _>("is_archived").map_err(db_err)? != 0,
             extraction_partial: row
                 .try_get::<i64, _>("extraction_partial")
@@ -408,22 +421,34 @@ pub async fn count_by_status(db: &Db) -> Result<Vec<(String, i64)>> {
     .map_err(db_err)
 }
 
-/// Open jobs closing within `days` — the nag list.
+/// Open jobs closing within `days` that are not yet applied — the nag list.
 pub async fn closing_soon(db: &Db, days: i64, limit: i64) -> Result<Vec<JobListRow>> {
-    let cutoff = jobseeker_core::time::to_rfc3339(
-        &(jobseeker_core::time::now() + chrono::Duration::days(days)),
-    );
-    list(
+    let now = jobseeker_core::time::now();
+    let cutoff = jobseeker_core::time::to_rfc3339(&(now + chrono::Duration::days(days)));
+    let page = list(
         db,
         &JobFilter {
             status: Some(JobStatus::Open),
             closes_before: Some(cutoff),
-            limit: Some(limit),
+            limit: Some(200),
             ..Default::default()
         },
     )
-    .await
-    .map(|page| page.items)
+    .await?;
+    Ok(page
+        .items
+        .into_iter()
+        .filter(|row| {
+            jobseeker_core::domain::job::is_closing_soon_unapplied_within(
+                &row.status,
+                row.closes_at.as_deref(),
+                row.application_status.as_deref(),
+                now,
+                days,
+            )
+        })
+        .take(limit as usize)
+        .collect())
 }
 
 /// Allocate this job's FTS surrogate rowid and (re)index it.
@@ -584,6 +609,9 @@ pub struct JobDetail {
     #[serde(default)]
     pub listings: Vec<ListingBrief>,
     pub provenance: Vec<FieldProvenanceRow>,
+    /// Open, closes within 7 days, and not yet applied. Derived; not a stored status.
+    #[serde(default)]
+    pub closing_soon_unapplied: bool,
     pub updated_at: String,
 }
 
@@ -630,6 +658,24 @@ pub async fn get(db: &Db, id: &JobId) -> Result<Option<JobDetail>> {
     .map_err(db_err)?;
     let Some(row) = row else { return Ok(None) };
 
+    let status: String = row.try_get("status").map_err(db_err)?;
+    let closes_at: Option<String> = row.try_get("closes_at").map_err(db_err)?;
+    let application_status: Option<String> = sqlx::query_scalar(
+        "SELECT a.status FROM application a
+          WHERE a.job_id = ?1
+            AND a.profile_id = (SELECT id FROM profile WHERE is_default = 1 LIMIT 1)
+          LIMIT 1",
+    )
+    .bind(id.as_str())
+    .fetch_optional(db.reader())
+    .await
+    .map_err(db_err)?;
+    let closing_soon_unapplied = jobseeker_core::domain::is_closing_soon_unapplied(
+        &status,
+        closes_at.as_deref(),
+        application_status.as_deref(),
+    );
+
     let locations: Vec<String> = sqlx::query_scalar(
         "SELECT raw FROM job_location WHERE job_id = ?1 ORDER BY is_primary DESC, ordinal ASC",
     )
@@ -665,7 +711,7 @@ pub async fn get(db: &Db, id: &JobId) -> Result<Option<JobDetail>> {
         company_name: row.try_get("company_name").map_err(db_err)?,
         company_slug: row.try_get("company_slug").map_err(db_err)?,
         title: row.try_get("title").map_err(db_err)?,
-        status: row.try_get("status").map_err(db_err)?,
+        status,
         work_mode: row.try_get("work_mode").map_err(db_err)?,
         seniority: row.try_get("seniority").map_err(db_err)?,
         employment_type: row.try_get("employment_type").map_err(db_err)?,
@@ -679,7 +725,7 @@ pub async fn get(db: &Db, id: &JobId) -> Result<Option<JobDetail>> {
             != 0,
         salary_raw: row.try_get("salary_raw").map_err(db_err)?,
         posted_at: row.try_get("posted_at").map_err(db_err)?,
-        closes_at: row.try_get("closes_at").map_err(db_err)?,
+        closes_at,
         apply_url: row.try_get("apply_url").map_err(db_err)?,
         description_md: row.try_get("description_md").map_err(db_err)?,
         file_path: row.try_get("file_path").map_err(db_err)?,
@@ -701,6 +747,7 @@ pub async fn get(db: &Db, id: &JobId) -> Result<Option<JobDetail>> {
         user_notes_md: row.try_get("user_notes_md").map_err(db_err)?,
         is_archived: row.try_get::<i64, _>("is_archived").map_err(db_err)? != 0,
         provenance: load_provenance(db, id).await?,
+        closing_soon_unapplied,
         updated_at: row.try_get("updated_at").map_err(db_err)?,
     }))
 }
@@ -1438,6 +1485,7 @@ pub async fn mark_scores_stale(db: &Db, job_id: &JobId) -> Result<u64> {
 mod tests {
     use super::*;
     use crate::repo::company;
+    use jobseeker_core::domain::enums::ApplicationStatus;
     use jobseeker_core::domain::salary::SalaryPeriod;
 
     /// Insert a job directly; the full write path lives in `jobseeker-pipeline`, and these
@@ -2281,5 +2329,93 @@ mod tests {
         assert!(matches!(bad, Err(jobseeker_core::Error::BadRequest(_))));
         let still = get(&db, &id).await.unwrap().unwrap();
         assert_eq!(still.status, "closed");
+    }
+
+    #[tokio::test]
+    async fn closing_soon_unapplied_nags_open_jobs_without_an_application() {
+        let db = Db::open_in_memory().await.unwrap();
+        let soon = insert_job(
+            &db,
+            "Acme",
+            "Closing Soon",
+            JobStatus::Open,
+            WorkMode::Remote,
+            None,
+            SalaryPeriod::Year,
+            "2026-09-01T00:00:00Z",
+        )
+        .await;
+        let later = insert_job(
+            &db,
+            "Acme",
+            "Closes Next Month",
+            JobStatus::Open,
+            WorkMode::Remote,
+            None,
+            SalaryPeriod::Year,
+            "2026-09-01T00:00:00Z",
+        )
+        .await;
+        let applied_soon = insert_job(
+            &db,
+            "Acme",
+            "Already Applied",
+            JobStatus::Open,
+            WorkMode::Remote,
+            None,
+            SalaryPeriod::Year,
+            "2026-09-01T00:00:00Z",
+        )
+        .await;
+
+        let in_three = jobseeker_core::time::to_rfc3339(
+            &(jobseeker_core::time::now() + chrono::Duration::days(3)),
+        );
+        let in_thirty = jobseeker_core::time::to_rfc3339(
+            &(jobseeker_core::time::now() + chrono::Duration::days(30)),
+        );
+        for (id, at) in [
+            (soon.as_str(), in_three.as_str()),
+            (later.as_str(), in_thirty.as_str()),
+            (applied_soon.as_str(), in_three.as_str()),
+        ] {
+            sqlx::query("UPDATE job SET closes_at = ?1 WHERE id = ?2")
+                .bind(at)
+                .bind(id)
+                .execute(db.writer())
+                .await
+                .unwrap();
+        }
+
+        crate::repo::application::set_status(&db, &applied_soon, ApplicationStatus::Applied)
+            .await
+            .unwrap();
+
+        let page = list(&db, &JobFilter::default()).await.unwrap();
+        let by_title: std::collections::HashMap<_, _> = page
+            .items
+            .iter()
+            .map(|r| (r.title.as_str(), r.closing_soon_unapplied))
+            .collect();
+        assert_eq!(by_title.get("Closing Soon"), Some(&true));
+        assert_eq!(by_title.get("Closes Next Month"), Some(&false));
+        assert_eq!(by_title.get("Already Applied"), Some(&false));
+
+        let detail = get(&db, &soon).await.unwrap().unwrap();
+        assert!(detail.closing_soon_unapplied);
+        let applied_detail = get(&db, &applied_soon).await.unwrap().unwrap();
+        assert!(!applied_detail.closing_soon_unapplied);
+
+        crate::repo::application::set_status(&db, &soon, ApplicationStatus::Interested)
+            .await
+            .unwrap();
+        let interested = get(&db, &soon).await.unwrap().unwrap();
+        assert!(interested.closing_soon_unapplied);
+
+        let nag = closing_soon(&db, 7, 20).await.unwrap();
+        let titles: Vec<_> = nag.iter().map(|r| r.title.as_str()).collect();
+        assert!(titles.contains(&"Closing Soon"), "{titles:?}");
+        assert!(!titles.contains(&"Already Applied"), "{titles:?}");
+        assert!(!titles.contains(&"Closes Next Month"), "{titles:?}");
     }
 }

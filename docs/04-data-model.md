@@ -120,7 +120,7 @@ listing during dedupe: ATS APIs 90, ATS HTML 70, aggregators 40, manual 100).
 | `equity_offered`, `bonus_note`, `comp_notes` | INTEGER / TEXT | |
 | `posted_at`, `posted_at_precision` | TEXT | |
 | `updated_at_source` | TEXT | source's own last-modified |
-| `closes_at`, `closes_at_precision` | TEXT | `validThrough` or "applications close" |
+| `closes_at`, `closes_at_precision` | TEXT | `validThrough` or "applications close". `closing_soon_unapplied` is derived (open, within 7 days, not yet applied) — not a column. |
 | `first_seen_at`, `last_seen_at` | TEXT NOT NULL | ours |
 | `closed_at` | TEXT | when we observed closure |
 | `status` | TEXT CHECK | `open|closed|filled|expired|removed|unknown` |

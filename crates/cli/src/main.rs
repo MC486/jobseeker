@@ -295,6 +295,9 @@ async fn main() -> Result<()> {
                 if row.possibly_ghosted {
                     print!("  possibly ghosted");
                 }
+                if row.closing_soon_unapplied {
+                    print!("  closing soon");
+                }
                 println!();
             }
             if let Some(c) = page.next_cursor {

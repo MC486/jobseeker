@@ -288,6 +288,7 @@ export function JobList() {
     (row) => row.next_action_due && row.next_action_due < today,
   ).length;
   const ghostedCount = rows.filter((row) => row.possibly_ghosted).length;
+  const closingSoonCount = rows.filter((row) => row.closing_soon_unapplied).length;
 
   function togglePick(id: string) {
     setPicked((prev) => {
@@ -338,6 +339,11 @@ export function JobList() {
           {ghostedCount} possibly ghosted
         </p>
       ) : null}
+      {closingSoonCount > 0 ? (
+        <p className="text-sm text-amber-300">
+          {closingSoonCount} closing soon with no application
+        </p>
+      ) : null}
       {jobs.isError && (
         <p className="text-sm text-red-300">
           {jobs.error instanceof Error ? jobs.error.message : "failed"}
@@ -364,6 +370,12 @@ export function JobList() {
                   {row.application_status ? ` · ${row.application_status}` : ""}
                   {row.possibly_ghosted ? (
                     <span className="text-amber-300"> · possibly ghosted</span>
+                  ) : null}
+                  {row.closing_soon_unapplied ? (
+                    <span className="text-amber-300">
+                      {" "}
+                      · closes {(row.closes_at ?? "").slice(0, 10) || "soon"}
+                    </span>
                   ) : null}
                   {row.primary_location ? ` · ${row.primary_location}` : ""}
                   {row.user_rating != null ? ` · ${"★".repeat(row.user_rating)}` : ""}
@@ -962,6 +974,23 @@ function dueTone(due: string | null | undefined): string {
   return "text-zinc-500";
 }
 
+const CLOSING_SOON_MS = 7 * 24 * 60 * 60 * 1000;
+
+function closingSoonUnapplied(
+  detail: Pick<JobDetail, "status" | "closes_at">,
+  application: { status: string } | null | undefined,
+): boolean {
+  if (detail.status !== "open" || !detail.closes_at) return false;
+  const pipeline = application?.status;
+  if (pipeline && pipeline !== "interested" && pipeline !== "preparing") {
+    return false;
+  }
+  const closes = Date.parse(detail.closes_at);
+  if (Number.isNaN(closes)) return false;
+  const now = Date.now();
+  return closes >= now && closes <= now + CLOSING_SOON_MS;
+}
+
 function nextActionLine(row: Pick<JobListRow, "next_action" | "next_action_due">): string | null {
   if (!row.next_action && !row.next_action_due) return null;
   const action = row.next_action ?? "next";
@@ -1006,6 +1035,7 @@ function JobTriage({ jobId, detail }: { jobId: string; detail: JobDetail }) {
     onSuccess: (row) => {
       qc.setQueryData(keys.application(jobId), row);
       qc.invalidateQueries({ queryKey: ["jobs"] });
+      qc.invalidateQueries({ queryKey: keys.job(jobId) });
       setError(null);
     },
     onError: (err) => {
@@ -1027,6 +1057,14 @@ function JobTriage({ jobId, detail }: { jobId: string; detail: JobDetail }) {
           still live.
         </p>
       </div>
+      {closingSoonUnapplied(detail, application.data) ? (
+        <div className="rounded-lg border border-amber-700/50 bg-amber-950/40 px-3 py-2">
+          <p className="text-sm text-amber-200">
+            Closes {(detail.closes_at ?? "").slice(0, 10)} —{" "}
+            {application.data?.status ? "not applied yet" : "no application yet"}
+          </p>
+        </div>
+      ) : null}
       {application.data?.possibly_ghosted ? (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-700/50 bg-amber-950/40 px-3 py-2">
           <p className="text-sm text-amber-200">
@@ -1275,6 +1313,16 @@ export function JobPage() {
           {detail.extraction_partial ? " · partial extraction" : ""}
           {detail.is_archived ? " · archived" : ""}
         </p>
+        {detail.closes_at ? (
+          <p
+            className={`mt-1 text-sm ${
+              detail.closing_soon_unapplied ? "text-amber-300" : "text-zinc-400"
+            }`}
+          >
+            Closes {detail.closes_at.slice(0, 10)}
+            {detail.closing_soon_unapplied ? " · no application yet" : ""}
+          </p>
+        ) : null}
         {detail.requires_clearance ? (
           <p className="mt-1 text-sm text-zinc-400">
             Clearance type: {detail.requires_clearance}

@@ -98,6 +98,51 @@ impl Job {
     }
 }
 
+/// FR-T-04: close date within this many days is "closing soon".
+pub const CLOSING_SOON_DAYS: i64 = 7;
+
+/// Open posting, close date in `[now, now+days]`, and not yet applied.
+///
+/// "No application" here means no row, or still `interested` / `preparing`.
+/// Applied-or-later (including rejected / withdrawn / ghosted) is not nagged.
+pub fn is_closing_soon_unapplied(
+    job_status: &str,
+    closes_at: Option<&str>,
+    application_status: Option<&str>,
+) -> bool {
+    is_closing_soon_unapplied_within(
+        job_status,
+        closes_at,
+        application_status,
+        crate::time::now(),
+        CLOSING_SOON_DAYS,
+    )
+}
+
+pub fn is_closing_soon_unapplied_within(
+    job_status: &str,
+    closes_at: Option<&str>,
+    application_status: Option<&str>,
+    now: crate::time::Timestamp,
+    days: i64,
+) -> bool {
+    if job_status != JobStatus::Open.as_str() {
+        return false;
+    }
+    if !still_unapplied(application_status) {
+        return false;
+    }
+    let Some(closes) = closes_at.and_then(|s| crate::time::parse_rfc3339(s).ok()) else {
+        return false;
+    };
+    let window_end = now + chrono::Duration::days(days);
+    closes >= now && closes <= window_end
+}
+
+fn still_unapplied(application_status: Option<&str>) -> bool {
+    matches!(application_status, None | Some("interested" | "preparing"))
+}
+
 /// What extraction produces: every field optional and provenance-tagged, so nothing is ever
 /// guessed into a non-null value (FR-E-04).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -253,6 +298,55 @@ mod tests {
         let mut e = ExtractedJob::default();
         e.work_mode = Some(Sourced::new(WorkMode::Remote, Provenance::Jsonld));
         assert!(!e.missing_fields().contains(&"locations"));
+    }
+
+    #[test]
+    fn closing_soon_unapplied_only_for_open_unapplied_in_window() {
+        let now = crate::time::parse_rfc3339("2026-09-13T12:00:00Z").unwrap();
+        let soon = Some("2026-09-16T12:00:00Z");
+        let later = Some("2026-10-13T12:00:00Z");
+        let past = Some("2026-09-01T12:00:00Z");
+        assert!(is_closing_soon_unapplied_within("open", soon, None, now, 7));
+        assert!(is_closing_soon_unapplied_within(
+            "open",
+            soon,
+            Some("interested"),
+            now,
+            7
+        ));
+        assert!(is_closing_soon_unapplied_within(
+            "open",
+            soon,
+            Some("preparing"),
+            now,
+            7
+        ));
+        assert!(!is_closing_soon_unapplied_within(
+            "open",
+            soon,
+            Some("applied"),
+            now,
+            7
+        ));
+        assert!(!is_closing_soon_unapplied_within(
+            "open",
+            soon,
+            Some("rejected"),
+            now,
+            7
+        ));
+        assert!(!is_closing_soon_unapplied_within(
+            "closed", soon, None, now, 7
+        ));
+        assert!(!is_closing_soon_unapplied_within(
+            "open", later, None, now, 7
+        ));
+        assert!(!is_closing_soon_unapplied_within(
+            "open", past, None, now, 7
+        ));
+        assert!(!is_closing_soon_unapplied_within(
+            "open", None, None, now, 7
+        ));
     }
 
     #[test]
