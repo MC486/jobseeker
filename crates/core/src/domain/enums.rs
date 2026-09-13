@@ -330,6 +330,33 @@ str_enum!(
     }
 );
 
+/// FR-T-03: silence this long while waiting on the employer is "possibly ghosted".
+/// Does not auto-set status to `ghosted` — that stays a user confirmation.
+pub const GHOST_IDLE_DAYS: i64 = 14;
+
+/// Derived flag: waiting on the employer and `last_activity_at` is at least
+/// [`GHOST_IDLE_DAYS`] old. Unknown status or unparseable timestamps are not flagged.
+pub fn is_possibly_ghosted(status: &str, last_activity_at: &str) -> bool {
+    is_possibly_ghosted_at(status, last_activity_at, crate::time::now())
+}
+
+pub fn is_possibly_ghosted_at(
+    status: &str,
+    last_activity_at: &str,
+    now: crate::time::Timestamp,
+) -> bool {
+    let Ok(status) = status.parse::<ApplicationStatus>() else {
+        return false;
+    };
+    if !status.is_waiting_on_employer() {
+        return false;
+    }
+    let Ok(last) = crate::time::parse_rfc3339(last_activity_at) else {
+        return false;
+    };
+    now.signed_duration_since(last) >= chrono::Duration::days(GHOST_IDLE_DAYS)
+}
+
 impl ApplicationStatus {
     pub fn is_terminal(self) -> bool {
         matches!(
@@ -338,6 +365,17 @@ impl ApplicationStatus {
                 | ApplicationStatus::Rejected
                 | ApplicationStatus::Withdrawn
                 | ApplicationStatus::Ghosted
+        )
+    }
+
+    /// Applied / screening / interviewing — silence here is the usual next signal.
+    /// Interested and preparing are still on the user. Offer is active. Terminal is done.
+    pub fn is_waiting_on_employer(self) -> bool {
+        matches!(
+            self,
+            ApplicationStatus::Applied
+                | ApplicationStatus::Screening
+                | ApplicationStatus::Interviewing
         )
     }
 
@@ -418,6 +456,26 @@ mod tests {
             RequirementKind::SoftSkill.base_weight() < RequirementKind::Skill.base_weight(),
             "soft skills must stay near-irrelevant to the score"
         );
+    }
+
+    #[test]
+    fn possibly_ghosted_only_when_waiting_and_idle() {
+        let now = crate::time::parse_rfc3339("2026-09-13T12:00:00Z").unwrap();
+        let stale = "2026-08-20T12:00:00Z";
+        let recent = "2026-09-10T12:00:00Z";
+        assert!(is_possibly_ghosted_at("applied", stale, now));
+        assert!(is_possibly_ghosted_at("screening", stale, now));
+        assert!(is_possibly_ghosted_at("interviewing", stale, now));
+        assert!(!is_possibly_ghosted_at("applied", recent, now));
+        assert!(!is_possibly_ghosted_at("interested", stale, now));
+        assert!(!is_possibly_ghosted_at("preparing", stale, now));
+        assert!(!is_possibly_ghosted_at("offer", stale, now));
+        assert!(!is_possibly_ghosted_at("accepted", stale, now));
+        assert!(!is_possibly_ghosted_at("ghosted", stale, now));
+        assert!(!is_possibly_ghosted_at("applied", "not-a-date", now));
+        assert!(ApplicationStatus::Applied.is_waiting_on_employer());
+        assert!(!ApplicationStatus::Offer.is_waiting_on_employer());
+        assert!(!ApplicationStatus::Interested.is_waiting_on_employer());
     }
 
     #[test]

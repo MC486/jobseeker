@@ -22,6 +22,7 @@ export type JobListRow = {
   application_status: string | null;
   next_action: string | null;
   next_action_due: string | null;
+  possibly_ghosted: boolean;
   updated_at: string;
 };
 
@@ -136,6 +137,7 @@ export type ApplicationView = {
   next_action_due: string | null;
   last_activity_at: string;
   updated_at: string;
+  possibly_ghosted: boolean;
   events?: ApplicationEvent[];
 };
 

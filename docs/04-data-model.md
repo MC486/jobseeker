@@ -320,7 +320,10 @@ UNIQUE `(job_id, profile_id)`. `GET/PATCH /api/v1/jobs/:id/application` is the
 wired write path for the default profile. `applied_at` is set the first time
 status reaches `applied` or later. `next_action` / `next_action_due`
 (`YYYY-MM-DD`) are the follow-up; changing them appends a `reminder` event.
-Each status change appends `application_event`.
+Each status change appends `application_event`. `possibly_ghosted` is not a
+column: it is computed from `status` + `last_activity_at` (≥ 14 days idle
+while `applied` / `screening` / `interviewing`). Confirming ghosted is a
+user PATCH to `status = ghosted`.
 
 **`application_event`** — append-only. `id`, `application_id` FK CASCADE, `kind`
 (`status_change|email_sent|email_received|call|interview|assessment|offer|note|reminder|document_sent`),

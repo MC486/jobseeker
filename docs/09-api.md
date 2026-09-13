@@ -67,6 +67,7 @@ GET  /api/v1/events?since=<event_id>   → SSE stream of DomainEvent (backfills 
 GET  /api/v1/jobs                 → {items: JobListRow[], next_cursor}
      each item includes match_overall plus diagnostic skills_coverage / years_fit
      (same split as GET /api/v1/jobs/:id/match; they do not change overall)
+     and possibly_ghosted (applied/screening/interviewing idle ≥ 14 days)
      ?q=                          full-text (FTS5, supports quoted phrases and OR)
      &status=open|closed|…        &work_mode=remote|hybrid|onsite
      &company_id=  &seniority=    &employment_type=
@@ -176,6 +177,9 @@ GET  /api/v1/jobs/:id/application           default-profile row, or null.
                                     Includes `events` (oldest first):
                                     status_change and reminder rows already
                                     written by PATCH. No separate events URL.
+                                    `possibly_ghosted` is derived (14-day
+                                    idle while waiting on the employer).
+                                    Never auto-sets status to ghosted.
 PATCH /api/v1/jobs/:id/application {status?, next_action?, next_action_due?}
                                     → interested|preparing|applied|screening|
                                       interviewing|offer|accepted|rejected|

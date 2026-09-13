@@ -2352,6 +2352,8 @@ mod tests {
         assert_eq!(page["items"][0]["next_action"], "email recruiter");
         assert_eq!(page["items"][0]["next_action_due"], "2026-09-01");
         assert_eq!(page["items"][0]["status"], "open");
+        assert_eq!(page["items"][0]["possibly_ghosted"], false);
+        assert_eq!(tracked["possibly_ghosted"], false);
 
         let job = app
             .oneshot(

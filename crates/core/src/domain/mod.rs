@@ -16,8 +16,9 @@ pub mod task;
 pub use capture::{Capture, CaptureMethod};
 pub use company::Company;
 pub use enums::{
-    ApplicationStatus, ApplyKind, EducationLevel, EmploymentType, JobStatus, Necessity,
-    RequirementKind, Seniority, SkillLevel, SourceKind, Tristate, WorkMode,
+    is_possibly_ghosted, ApplicationStatus, ApplyKind, EducationLevel, EmploymentType, JobStatus,
+    Necessity, RequirementKind, Seniority, SkillLevel, SourceKind, Tristate, WorkMode,
+    GHOST_IDLE_DAYS,
 };
 pub use event::DomainEvent;
 pub use job::{ExtractedJob, Job};

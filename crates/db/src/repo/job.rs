@@ -40,6 +40,9 @@ pub struct JobListRow {
     /// Calendar date `YYYY-MM-DD`, if set.
     #[serde(default)]
     pub next_action_due: Option<String>,
+    /// Waiting on the employer and idle ≥ 14 days. Derived; not a stored status.
+    #[serde(default)]
+    pub possibly_ghosted: bool,
     pub is_archived: bool,
     pub extraction_partial: bool,
     pub match_overall: Option<f64>,
@@ -124,6 +127,10 @@ pub async fn list(db: &Db, filter: &JobFilter) -> Result<Page<JobListRow>> {
                   WHERE a.job_id = j.id
                     AND a.profile_id = (SELECT id FROM profile WHERE is_default = 1 LIMIT 1)
                   LIMIT 1) AS next_action_due,
+                (SELECT a.last_activity_at FROM application a
+                  WHERE a.job_id = j.id
+                    AND a.profile_id = (SELECT id FROM profile WHERE is_default = 1 LIMIT 1)
+                  LIMIT 1) AS last_activity_at,
                 (SELECT m.overall FROM match_score m
                   WHERE m.job_id = j.id
                   ORDER BY m.computed_at DESC LIMIT 1) AS match_overall,
@@ -254,6 +261,16 @@ pub async fn list(db: &Db, filter: &JobFilter) -> Result<Page<JobListRow>> {
             application_status: row.try_get("application_status").map_err(db_err)?,
             next_action: row.try_get("next_action").map_err(db_err)?,
             next_action_due: row.try_get("next_action_due").map_err(db_err)?,
+            possibly_ghosted: {
+                let status: Option<String> = row.try_get("application_status").map_err(db_err)?;
+                let last: Option<String> = row.try_get("last_activity_at").map_err(db_err)?;
+                match (status.as_deref(), last.as_deref()) {
+                    (Some(status), Some(at)) => {
+                        jobseeker_core::domain::is_possibly_ghosted(status, at)
+                    }
+                    _ => false,
+                }
+            },
             is_archived: row.try_get::<i64, _>("is_archived").map_err(db_err)? != 0,
             extraction_partial: row
                 .try_get::<i64, _>("extraction_partial")
