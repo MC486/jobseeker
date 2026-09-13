@@ -1133,6 +1133,20 @@ function JobTriage({ jobId, detail }: { jobId: string; detail: JobDetail }) {
         </button>
         {nextDirty ? <span className="text-xs text-zinc-500">unsaved</span> : null}
       </div>
+      {(application.data?.events?.length ?? 0) > 0 ? (
+        <div>
+          <h3 className="text-sm font-medium text-zinc-400">Timeline</h3>
+          <ol className="mt-2 space-y-1 text-sm text-zinc-300">
+            {(application.data?.events ?? []).map((ev) => (
+              <li key={ev.id} className="flex flex-wrap gap-x-2">
+                <span className="text-zinc-500">{ev.occurred_at.slice(0, 10)}</span>
+                <span className="text-zinc-500">{ev.kind}</span>
+                <span>{ev.title ?? ev.to_status ?? ev.kind}</span>
+              </li>
+            ))}
+          </ol>
+        </div>
+      ) : null}
       <label className="block text-sm text-zinc-300">
         Notes
         {provenanceDot(detail, "user_notes_md")}

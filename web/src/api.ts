@@ -117,6 +117,15 @@ export type DuplicateCandidate = {
   keep_this: boolean;
 };
 
+export type ApplicationEvent = {
+  id: string;
+  kind: string;
+  occurred_at: string;
+  title: string | null;
+  from_status: string | null;
+  to_status: string | null;
+};
+
 export type ApplicationView = {
   id: string;
   job_id: string;
@@ -127,6 +136,7 @@ export type ApplicationView = {
   next_action_due: string | null;
   last_activity_at: string;
   updated_at: string;
+  events?: ApplicationEvent[];
 };
 
 export type ApplicationPatch = {
