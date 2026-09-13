@@ -1562,7 +1562,7 @@ export function ProfilePage() {
                 : profile.data.can_obtain_clearance
                   ? " · eligible to obtain clearance"
                   : ""}
-              {profile.data.years_experience != null}
+              {profile.data.years_experience != null
                 ? ` · ${profile.data.years_experience.toFixed(1)}y`
                 : ""}
               {profile.data.target_comp_min_cents != null
