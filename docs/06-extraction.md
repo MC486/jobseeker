@@ -175,8 +175,13 @@ typed `Requirement` rows.
 - Education: degree words + field → `kind=education`, `education_level`, `field_of_study`.
 - Certification: `/\b(AWS|Azure|GCP|CISSP|PMP|CPA|Security\+|CKA|RHCE)\b/` and
   "certified|certification".
-- Clearance: `/clearance|secret|ts\/sci|polygraph|public trust/i` → `kind=clearance`,
-  `is_blocker = true`.
+- Clearance: type (`secret`, `ts_sci`, …) plus start vs obtain. `CLEARANCE REQUIRED
+  FOR START: No` / "ability to obtain" → type is stored, `clearance_required_to_start
+  = 0`, requirement `is_blocker = false`. "Must hold an active TS/SCI" →
+  `is_blocker = true`. A type without start language is unspecified, not a silent
+  hold-at-start.
+- Citizenship / US-person: `kind=logistics`, not a skill. Matched against
+  `profile.citizenship`.
 - Human language: "fluent in", "native", named languages → `kind=language`.
 - Skills/tools: taxonomy alias matching over the item text (§4).
 - Soft skills: a curated phrase list ("communication", "self-starter", "cross-functional",

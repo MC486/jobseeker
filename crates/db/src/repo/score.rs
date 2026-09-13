@@ -23,6 +23,7 @@ pub struct MatchSummary {
     pub seniority_fit: Option<f64>,
     pub comp_fit: Option<f64>,
     pub location_fit: Option<f64>,
+    pub preference_fit: Option<f64>,
     pub blocker_count: i64,
     pub blockers: serde_json::Value,
     pub flags: serde_json::Value,
@@ -191,6 +192,8 @@ pub async fn latest_for_job(
     let (skills_coverage, years_fit) = breakdown_from_verdicts(&verdicts);
     let blockers: String = row.try_get("blockers_json").map_err(db_err)?;
     let flags: Option<String> = row.try_get("flags_json").map_err(db_err)?;
+    let comp_fit: Option<f64> = row.try_get("comp_fit").map_err(db_err)?;
+    let location_fit: Option<f64> = row.try_get("location_fit").map_err(db_err)?;
     Ok(Some(MatchSummary {
         id,
         profile_id: row.try_get("profile_id").map_err(db_err)?,
@@ -200,8 +203,9 @@ pub async fn latest_for_job(
         skills_coverage,
         years_fit,
         seniority_fit: row.try_get("seniority_fit").map_err(db_err)?,
-        comp_fit: row.try_get("comp_fit").map_err(db_err)?,
-        location_fit: row.try_get("location_fit").map_err(db_err)?,
+        comp_fit,
+        location_fit,
+        preference_fit: preference_from(comp_fit, location_fit),
         blocker_count: row.try_get("blocker_count").map_err(db_err)?,
         blockers: serde_json::from_str(&blockers).unwrap_or(serde_json::Value::Array(vec![])),
         flags: flags
@@ -346,7 +350,20 @@ fn verdicts_from_explanation(blob: Option<&str>) -> Vec<RequirementVerdict> {
         .collect()
 }
 
-/// Rebuild the diagnostic split from stored verdicts so older scores (no extra
+fn preference_from(comp_fit: Option<f64>, location_fit: Option<f64>) -> Option<f64> {
+    let weights = jobseeker_core::config::Weights::default();
+    weighted_mean(
+        [
+            comp_fit.map(|v| (v as f32, weights.comp)),
+            location_fit.map(|v| (v as f32, weights.location)),
+        ]
+        .into_iter()
+        .flatten(),
+    )
+    .map(f64::from)
+}
+
+/// Rebuild the diagnostic split from stored verdicts so older scores (no extra)
 /// columns) still show skills vs years. Overall is never recomputed here.
 fn breakdown_from_verdicts(verdicts: &[RequirementVerdict]) -> (Option<f64>, Option<f64>) {
     let skills = weighted_mean(verdicts.iter().filter_map(|v| {

@@ -46,7 +46,15 @@ experience (non-skill, e.g. "led a team of 5+")
 education      → compare education_level ordinal; met/partial(adjacent)/gap. is_blocker when
                  the posting says "required" and no equivalent-experience clause is present.
 certification  → exact/alias match against profile certifications; expiry checked.
-clearance      → boolean; gap ⇒ hard blocker.
+clearance      → hold-at-start vs obtain. Must already hold (`required_to_start`
+                 or "must hold" / "active") and missing ⇒ hard blocker. Type
+                 named but not required to start, or "ability to obtain" ⇒
+                 not a blocker when the profile is a US citizen or
+                 `can_obtain_clearance`; flag `clearance_obtainable`. A held
+                 higher clearance covers a lower ask.
+citizenship    → logistics, not a skill. US on the profile ⇒ met. Unset ⇒
+                 unknown (never "no evidence for US Citizenship"). Non-US ⇒
+                 gap + blocker when required.
 language       → level comparison from profile_skill(kind=language_human).
 soft_skill     → semantic match, capped low weight (they are unfalsifiable).
 logistics      → rule per subtype: travel % vs tolerance, work auth vs sponsorship,
@@ -89,14 +97,14 @@ with the years band. Deliberately **asymmetric**: being one level under is penal
 (0.75) than one level over (0.9), because under-qualification screens you out while
 over-qualification is usually a negotiation problem. Two-plus levels either way → ≤0.4.
 
-**`comp_fit`** — job band vs `profile.target_comp_min_cents`, after normalizing period
-(hourly × 2080). `job.max ≥ target` → 1.0; `job.max ≥ 0.9 × target` → 0.7; linear decay to
-0 at 0.6 × target. Missing salary → 0.5 with an `unknown_comp` flag (neutral, and flagged,
-rather than silently penalizing the ~50% of postings with no band).
-
-**`location_fit`** — remote & you accept remote → 1.0; on-site in an acceptable metro → 1.0;
-hybrid in an acceptable metro → 0.9; on-site elsewhere and willing to relocate → 0.5;
-otherwise 0.0 + blocker.
+**`comp_fit`** and **`location_fit`** — **preference**, not qualification. They do
+**not** enter `overall`. Preferring remote does not lower the match on an on-site
+role you can do. `preference_fit` is their weighted mean (same default weights,
+0.10 / 0.05). Comp: job band vs `profile.target_comp_min_cents` (hourly × 2080).
+`job.max ≥ target` → 1.0; `≥ 0.9 × target` → 0.7; linear to 0 at 0.6 × target.
+Missing salary → 0.5 + `unknown_comp`. Location: remote you accept → 1.0; hybrid
+→ ~0.5; on-site in a listed metro → 0.25; on-site elsewhere → 0.0. Never a
+location blocker.
 
 **`semantic_similarity`** — cosine between the job description embedding and a profile
 embedding (mean of the top-k accomplishment vectors, k = 20, weighted by `strength`).
@@ -107,20 +115,24 @@ an explicit `semantic_unavailable` flag (FR-M-06).
 **Overall:**
 
 ```
-overall = Σ wᵢ · subscoreᵢ / Σ wᵢ           (over available subscores)
+overall = Σ wᵢ · subscoreᵢ / Σ wᵢ           (qualification subscores only)
 if blocker_count > 0: overall = min(overall, 0.45)   and blockers are listed first
 ```
 
-Default weights (user-configurable, FR-M-04):
+Default qualification weights (user-configurable, FR-M-04):
 
 ```
-required_coverage 0.45 · preferred_coverage 0.15 · semantic 0.15
-seniority 0.10 · comp 0.10 · location 0.05
+required_coverage 0.45 · preferred_coverage 0.15 · semantic 0.15 · seniority 0.10
 ```
 
-The blocker cap is a hard product decision: a job requiring a clearance you cannot get is
-not an 85% match no matter how well the skills line up. The cap is visible in the
-explanation, never hidden.
+`comp` 0.10 and `location` 0.05 still exist on `Weights` for `preference_fit` only.
+
+The blocker cap is a hard product decision: a job that requires holding a clearance
+you do not have (or that you cannot obtain) is not an 85% match no matter how well
+the skills line up. Ability to obtain, with US citizenship on the profile, is not
+that cap. The cap is visible in the explanation, never hidden.
+
+Algorithm version **1.1.0** (preference split + clearance/citizenship nuance).
 
 ## 4. Explanation payload
 

@@ -127,7 +127,8 @@ listing during dedupe: ATS APIs 90, ATS HTML 70, aggregators 40, manual 100).
 | `apply_url` | TEXT | the real application entry point |
 | `apply_kind` | TEXT CHECK | `ats|external|email|easy_apply|unknown` |
 | `canonical_listing_id` | TEXT FK → job_source_listing | the highest-fidelity source |
-| `requires_clearance` | TEXT | e.g. `secret`, `ts_sci`, null |
+| `requires_clearance` | TEXT | clearance *type* (`secret`, `ts_sci`); not the same as hold-at-start |
+| `clearance_required_to_start` | INTEGER | `1` must hold on day one; `0` type named but not required to start; null unspecified |
 | `visa_sponsorship` | TEXT CHECK | `yes|no|unspecified` |
 | `travel_pct` | INTEGER | |
 | `education_min` | TEXT CHECK | `none|hs|associate|bachelor|master|doctorate|unknown` |
@@ -248,7 +249,8 @@ contextual confirmation before linking.
 
 **`profile`** — a persona. `id`, `name` ("Staff SWE"), `full_name`, `headline`, `email`,
 `phone`, `location`, `links_json`, `summary_md`, `target_titles_json`,
-`target_comp_min_cents`, `target_locations_json`, `work_auth`, `willing_to_relocate`,
+`target_comp_min_cents`, `target_locations_json`, `work_auth`, `citizenship` (`us`/`other`),
+`clearance_held`, `can_obtain_clearance`, `willing_to_relocate`,
 `is_default`, `created_at`, `updated_at`.
 
 **`experience_item`** — `id`, `profile_id` FK, `kind`
@@ -291,7 +293,8 @@ UNIQUE `(profile_id, skill_id)`.
 
 `id`, `job_id` FK, `profile_id` FK, `algorithm_version` TEXT,
 `overall` REAL, `required_coverage` REAL, `preferred_coverage` REAL,
-`seniority_fit` REAL, `comp_fit` REAL, `location_fit` REAL, `semantic_similarity` REAL,
+`seniority_fit` REAL, `comp_fit` REAL, `location_fit` REAL (preference diagnostics; not in
+`overall`), `semantic_similarity` REAL,
 `blocker_count` INTEGER, `blockers_json`, `weights_json` (the weights actually used),
 `explanation_json`, `inputs_hash` TEXT (hash of job content_hash + profile revision +
 weights + algorithm_version), `is_stale` INTEGER, `computed_at`, `duration_ms`.

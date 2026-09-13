@@ -43,6 +43,10 @@ pub struct ProfileSnapshot {
     pub willing_to_relocate: bool,
     pub target_locations: Vec<String>,
     pub clearances: Vec<String>,
+    /// `us` or `other`. Unset is unknown — never invented.
+    pub citizenship: Option<String>,
+    /// Eligible to obtain (clean background). Distinct from holding a clearance.
+    pub can_obtain_clearance: Option<bool>,
     pub education: Option<jobseeker_core::domain::enums::EducationLevel>,
 }
 
@@ -56,6 +60,8 @@ pub struct JobSnapshot {
     pub salary: Salary,
     pub locations: Vec<JobLocation>,
     pub requires_clearance: Option<String>,
+    /// `Some(true)` must hold at start. `Some(false)` type named, not required to start.
+    pub clearance_required_to_start: Option<bool>,
 }
 
 pub fn score(
@@ -66,20 +72,6 @@ pub fn score(
     let started = std::time::Instant::now();
     let mut matches = Vec::new();
     let mut blockers = Vec::new();
-
-    if let Some(needed) = &job.requires_clearance {
-        if !profile
-            .clearances
-            .iter()
-            .any(|c| c.eq_ignore_ascii_case(needed))
-        {
-            blockers.push(Blocker {
-                requirement_id: None,
-                kind: "clearance".into(),
-                message: format!("This role requires {needed}, which is not on the profile"),
-            });
-        }
-    }
 
     for req in &job.requirements {
         let m = judge_requirement(req, profile, cfg);
@@ -109,11 +101,12 @@ pub fn score(
     );
 
     let mut flags = Vec::new();
+    apply_job_clearance(job, profile, &mut blockers, &mut flags);
     let comp_fit = compensation_fit(&job.salary, profile.target_comp_min_cents, &mut flags);
-    let location_fit = location_fit(job, profile, &mut blockers);
+    let location_fit = location_preference(job, profile);
     let seniority_fit = seniority_fit(job.seniority, profile.seniority, profile.years_experience);
 
-    let subscores = Subscores {
+    let mut subscores = Subscores {
         required_coverage,
         preferred_coverage,
         semantic_similarity: None,
@@ -122,7 +115,9 @@ pub fn score(
         location_fit,
         skills_coverage,
         years_fit,
+        preference_fit: None,
     };
+    subscores.preference_fit = subscores.preference(&cfg.weights);
     flags.push("semantic_unavailable".into());
 
     let raw = subscores.weighted(&cfg.weights);
@@ -174,6 +169,11 @@ fn judge_requirement(
     match req.kind {
         RequirementKind::Clearance => clearance_verdict(req, profile),
         RequirementKind::Education => education_verdict(req, profile),
+        RequirementKind::Logistics
+            if jobseeker_normalize::requirement::is_authorization_demand(&req.text) =>
+        {
+            authorization_verdict(req, profile)
+        }
         RequirementKind::Logistics if req.is_blocker => RequirementMatch {
             requirement_id: req.id.clone(),
             status: VerdictStatus::Unknown,
@@ -284,24 +284,129 @@ fn recency_factor(last_used_year: Option<i32>, decay_after: f32) -> f32 {
     penalty.clamp(0.5, 1.0)
 }
 
-fn clearance_verdict(req: &Requirement, profile: &ProfileSnapshot) -> RequirementMatch {
-    let have = profile.clearances.iter().any(|c| {
-        req.text
-            .to_ascii_lowercase()
-            .contains(&c.to_ascii_lowercase())
-            || c.eq_ignore_ascii_case(&req.normalized_text)
+fn apply_job_clearance(
+    job: &JobSnapshot,
+    profile: &ProfileSnapshot,
+    blockers: &mut Vec<Blocker>,
+    flags: &mut Vec<String>,
+) {
+    let Some(needed) = job.requires_clearance.as_deref() else {
+        return;
+    };
+    if profile_holds_clearance(profile, needed) {
+        return;
+    }
+    let must_hold = job.clearance_required_to_start == Some(true)
+        || (job.clearance_required_to_start.is_none() && !job_has_obtain_language(job));
+    if !must_hold {
+        match clearance_eligibility(profile) {
+            Eligibility::Yes => {
+                flags.push("clearance_obtainable".into());
+            }
+            Eligibility::No => {
+                blockers.push(Blocker {
+                    requirement_id: None,
+                    kind: "clearance".into(),
+                    message: format!(
+                        "This role needs eligibility to obtain {needed}, which the profile does not have"
+                    ),
+                });
+            }
+            Eligibility::Unknown => {
+                flags.push("clearance_eligibility_unknown".into());
+            }
+        }
+        return;
+    }
+    blockers.push(Blocker {
+        requirement_id: None,
+        kind: "clearance".into(),
+        message: format!(
+            "This role requires holding {needed} at start, which is not on the profile"
+        ),
     });
+}
+
+fn job_has_obtain_language(job: &JobSnapshot) -> bool {
+    job.clearance_required_to_start == Some(false)
+        || job.requirements.iter().any(|r| {
+            jobseeker_normalize::seniority::detect_clearance_demand(&r.text)
+                .is_some_and(|d| d.obtain_ok || d.required_to_start == Some(false))
+        })
+}
+
+fn profile_holds_clearance(profile: &ProfileSnapshot, needed: &str) -> bool {
+    let need = jobseeker_normalize::seniority::clearance_rank(needed);
+    profile.clearances.iter().any(|c| {
+        c.eq_ignore_ascii_case(needed) || jobseeker_normalize::seniority::clearance_rank(c) >= need
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Eligibility {
+    Yes,
+    No,
+    Unknown,
+}
+
+fn clearance_eligibility(profile: &ProfileSnapshot) -> Eligibility {
+    if profile.can_obtain_clearance == Some(false) {
+        return Eligibility::No;
+    }
+    if profile.can_obtain_clearance == Some(true) {
+        return Eligibility::Yes;
+    }
+    match profile.citizenship.as_deref() {
+        Some("us") => Eligibility::Yes,
+        Some(_) => Eligibility::No,
+        None => Eligibility::Unknown,
+    }
+}
+
+fn clearance_verdict(req: &Requirement, profile: &ProfileSnapshot) -> RequirementMatch {
+    let demand = jobseeker_normalize::seniority::detect_clearance_demand(&req.text);
+    let kind = demand
+        .as_ref()
+        .map(|d| d.kind.as_str())
+        .unwrap_or(req.normalized_text.as_str());
+    let have = profile_holds_clearance(profile, kind)
+        || profile.clearances.iter().any(|c| {
+            req.text
+                .to_ascii_lowercase()
+                .contains(&c.to_ascii_lowercase())
+        });
+    let obtain = demand
+        .as_ref()
+        .is_some_and(|d| d.obtain_ok || d.required_to_start == Some(false));
     let (status, score, rationale) = if have {
         (
             VerdictStatus::Met,
             1.0,
             "The required clearance is on the profile".to_string(),
         )
+    } else if obtain {
+        match clearance_eligibility(profile) {
+            Eligibility::Yes => (
+                VerdictStatus::Met,
+                1.0,
+                format!("Eligible to obtain {kind}; not held today and not required to start"),
+            ),
+            Eligibility::No => (
+                VerdictStatus::Gap,
+                0.0,
+                format!("Not eligible to obtain {kind}"),
+            ),
+            Eligibility::Unknown => (
+                VerdictStatus::Unknown,
+                0.0,
+                format!("Eligibility to obtain {kind} is not on the profile"),
+            ),
+        }
     } else {
         (
             VerdictStatus::Gap,
             0.0,
-            format!("No {} clearance on the profile", req.text),
+            format!("No {kind} clearance on the profile"),
         )
     };
     RequirementMatch {
@@ -313,6 +418,51 @@ fn clearance_verdict(req: &Requirement, profile: &ProfileSnapshot) -> Requiremen
         years_have: None,
         years_needed: None,
         rationale,
+    }
+}
+
+fn authorization_verdict(req: &Requirement, profile: &ProfileSnapshot) -> RequirementMatch {
+    if jobseeker_normalize::requirement::is_citizenship_demand(&req.text)
+        || req.text.to_ascii_lowercase().contains("citizenship")
+        || req.text.to_ascii_lowercase().contains("us person")
+    {
+        let (status, score, rationale) = match profile.citizenship.as_deref() {
+            Some("us") => (
+                VerdictStatus::Met,
+                1.0,
+                "US citizenship is on the profile".to_string(),
+            ),
+            Some(_) => (
+                VerdictStatus::Gap,
+                0.0,
+                "Role requires US citizenship".to_string(),
+            ),
+            None => (
+                VerdictStatus::Unknown,
+                0.0,
+                "Citizenship is not on the profile; it is not a skill gap".to_string(),
+            ),
+        };
+        return RequirementMatch {
+            requirement_id: req.id.clone(),
+            status,
+            score,
+            weight: req.weight(),
+            evidence: vec![],
+            years_have: None,
+            years_needed: None,
+            rationale,
+        };
+    }
+    RequirementMatch {
+        requirement_id: req.id.clone(),
+        status: VerdictStatus::Unknown,
+        score: 0.0,
+        weight: req.weight(),
+        evidence: vec![],
+        years_have: None,
+        years_needed: None,
+        rationale: "A work-authorization demand needs a yes/no from you; it is not guessed".into(),
     }
 }
 
@@ -407,43 +557,27 @@ fn compensation_fit(
     Some(((job_max - floor) as f32 / span).clamp(0.0, 1.0))
 }
 
-fn location_fit(
-    job: &JobSnapshot,
-    profile: &ProfileSnapshot,
-    blockers: &mut Vec<Blocker>,
-) -> Option<f32> {
+/// Work-mode and metro vs stated preferences. Never a qualification blocker:
+/// preferring remote does not make an on-site role you can do a poor match.
+fn location_preference(job: &JobSnapshot, profile: &ProfileSnapshot) -> Option<f32> {
+    let metro_ok = job.locations.iter().any(|loc| {
+        profile.target_locations.iter().any(|pref| {
+            let pref = pref.to_ascii_lowercase();
+            loc.raw.to_ascii_lowercase().contains(&pref)
+                || loc.display().to_ascii_lowercase().contains(&pref)
+        })
+    });
     match job.work_mode {
         WorkMode::Remote if profile.accepts_remote => Some(1.0),
         WorkMode::Remote => Some(0.4),
         WorkMode::Unknown => None,
-        WorkMode::Hybrid | WorkMode::Onsite => {
-            let acceptable = job.locations.iter().any(|loc| {
-                profile.target_locations.iter().any(|pref| {
-                    loc.raw
-                        .to_ascii_lowercase()
-                        .contains(&pref.to_ascii_lowercase())
-                        || loc
-                            .display()
-                            .to_ascii_lowercase()
-                            .contains(&pref.to_ascii_lowercase())
-                })
-            });
-            if acceptable {
-                Some(if job.work_mode == WorkMode::Hybrid {
-                    0.9
-                } else {
-                    1.0
-                })
+        WorkMode::Hybrid => Some(if metro_ok { 0.55 } else { 0.40 }),
+        WorkMode::Onsite => {
+            if metro_ok {
+                Some(0.25)
             } else if profile.willing_to_relocate {
-                Some(0.5)
+                Some(0.15)
             } else {
-                if job.work_mode == WorkMode::Onsite {
-                    blockers.push(Blocker {
-                        requirement_id: None,
-                        kind: "location".into(),
-                        message: "On-site role outside the locations you will consider".into(),
-                    });
-                }
                 Some(0.0)
             }
         }
@@ -548,6 +682,7 @@ mod tests {
             },
             locations: vec![],
             requires_clearance: None,
+            clearance_required_to_start: None,
         }
     }
 
@@ -701,6 +836,7 @@ mod tests {
             None,
         )]);
         job.requires_clearance = Some("ts_sci".into());
+        job.clearance_required_to_start = Some(true);
         let profile = profile(&[("rust", 8.0)]);
         let score = score(&job, &profile, &MatchingConfig::default()).unwrap();
         assert!(!score.blockers.is_empty());
@@ -710,6 +846,100 @@ mod tests {
             score.overall
         );
         assert_eq!(score.verdict_label(), "blocked");
+    }
+
+    #[test]
+    fn secret_obtain_with_us_citizenship_is_not_a_blocker() {
+        let mut job = job(vec![req(
+            "Ability to obtain and/or maintain a Secret Clearance",
+            RequirementKind::Clearance,
+            Necessity::Required,
+            None,
+        )]);
+        job.requires_clearance = Some("secret".into());
+        job.clearance_required_to_start = Some(false);
+        job.work_mode = WorkMode::Onsite;
+        let mut profile = profile(&[("python", 2.0)]);
+        profile.citizenship = Some("us".into());
+        profile.can_obtain_clearance = Some(true);
+        profile.accepts_remote = true;
+        let scored = score(&job, &profile, &MatchingConfig::default()).unwrap();
+        assert!(
+            scored.blockers.is_empty(),
+            "obtain-not-hold must not cap the score: {:?}",
+            scored.blockers
+        );
+        assert!(scored.overall > 0.45, "got {}", scored.overall);
+        assert!(scored.flags.iter().any(|f| f == "clearance_obtainable"));
+        assert_eq!(scored.requirement_matches[0].status, VerdictStatus::Met);
+        assert!(scored.requirement_matches[0]
+            .rationale
+            .contains("Eligible to obtain"));
+    }
+
+    #[test]
+    fn us_citizenship_on_the_profile_is_met_not_a_skill_gap() {
+        let job = job(vec![req(
+            "US Citizenship",
+            RequirementKind::Logistics,
+            Necessity::Required,
+            None,
+        )]);
+        let mut profile = profile(&[]);
+        profile.citizenship = Some("us".into());
+        let scored = score(&job, &profile, &MatchingConfig::default()).unwrap();
+        assert_eq!(scored.requirement_matches[0].status, VerdictStatus::Met);
+        assert!(scored.blockers.is_empty());
+        assert!(scored.requirement_matches[0]
+            .rationale
+            .contains("citizenship"));
+    }
+
+    #[test]
+    fn missing_citizenship_is_unknown_not_no_evidence_for_a_skill() {
+        let job = job(vec![req(
+            "US Citizenship",
+            RequirementKind::Logistics,
+            Necessity::Required,
+            None,
+        )]);
+        let scored = score(&job, &profile(&[]), &MatchingConfig::default()).unwrap();
+        assert_eq!(scored.requirement_matches[0].status, VerdictStatus::Unknown);
+        assert!(!scored.requirement_matches[0]
+            .rationale
+            .to_ascii_lowercase()
+            .contains("no evidence"));
+        assert!(scored.blockers.is_empty());
+    }
+
+    #[test]
+    fn onsite_does_not_lower_qualification_when_you_prefer_remote() {
+        let rust = vec![req(
+            "Production Rust",
+            RequirementKind::Skill,
+            Necessity::Required,
+            None,
+        )];
+        let mut remote = job(rust.clone());
+        remote.work_mode = WorkMode::Remote;
+        let mut onsite = job(rust);
+        onsite.work_mode = WorkMode::Onsite;
+        let mut profile = profile(&[("rust", 8.0)]);
+        profile.accepts_remote = true;
+        profile.target_comp_min_cents = Some(145_000_00);
+        let cfg = MatchingConfig::default();
+        let remote_s = score(&remote, &profile, &cfg).unwrap();
+        let onsite_s = score(&onsite, &profile, &cfg).unwrap();
+        assert!(
+            (remote_s.overall - onsite_s.overall).abs() < 1e-6,
+            "preference must not leak into overall: remote={} onsite={}",
+            remote_s.overall,
+            onsite_s.overall
+        );
+        assert!(
+            onsite_s.subscores.preference_fit.unwrap() < remote_s.subscores.preference_fit.unwrap()
+        );
+        assert!(onsite_s.blockers.iter().all(|b| b.kind != "location"));
     }
 
     #[test]

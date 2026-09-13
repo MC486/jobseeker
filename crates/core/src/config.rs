@@ -234,7 +234,7 @@ impl Default for LlmConfig {
 impl Default for MatchingConfig {
     fn default() -> Self {
         Self {
-            algorithm_version: "1.0.0".into(),
+            algorithm_version: "1.1.0".into(),
             weights: Weights::default(),
             blocker_cap: 0.45,
             recency_decay_after_years: 3.0,

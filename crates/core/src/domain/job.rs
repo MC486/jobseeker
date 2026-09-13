@@ -48,8 +48,12 @@ pub struct Job {
     pub apply_kind: ApplyKind,
     pub canonical_listing_id: Option<ListingId>,
 
-    /// `Some("ts_sci")` when a clearance is demanded. A hard blocker in matching.
+    /// Clearance *type* the posting names (`secret`, `ts_sci`). Not the same as
+    /// "must hold it on day one" — see `clearance_required_to_start`.
     pub requires_clearance: Option<String>,
+    /// `Some(true)` = must already hold it to start. `Some(false)` = type is
+    /// stated but not required to start (ability to obtain is the bar).
+    pub clearance_required_to_start: Option<bool>,
     pub visa_sponsorship: Tristate,
     pub travel_pct: Option<i32>,
     pub education_min: EducationLevel,
@@ -122,6 +126,7 @@ pub struct ExtractedJob {
     pub source_job_id: Option<Sourced<String>>,
 
     pub requires_clearance: Option<Sourced<String>>,
+    pub clearance_required_to_start: Option<Sourced<bool>>,
     pub visa_sponsorship: Option<Sourced<Tristate>>,
     pub travel_pct: Option<Sourced<i32>>,
     pub education_min: Option<Sourced<EducationLevel>>,

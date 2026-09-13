@@ -16,7 +16,7 @@ use jobseeker_core::domain::enums::{Necessity, RequirementKind};
 use once_cell::sync::Lazy;
 use regex::Regex;
 
-use crate::seniority::{detect_clearance, detect_education, extract_years};
+use crate::seniority::{detect_clearance_demand, detect_education, extract_years};
 use crate::text::comparison_key;
 
 /// One atomized demand, before it is given an id and a job.
@@ -162,8 +162,12 @@ pub fn atomize(description_md: &str) -> Vec<AtomizedRequirement> {
                 continue;
             }
             let years = extract_years(&atom);
-            let clearance = detect_clearance(&atom);
+            let clearance = detect_clearance_demand(&atom);
             let kind = classify_kind(&atom, clearance.is_some());
+            let must_hold = clearance.as_ref().is_some_and(|d| {
+                d.required_to_start == Some(true)
+                    || (!d.obtain_ok && d.required_to_start != Some(false))
+            });
             out.push(AtomizedRequirement {
                 normalized_text: key,
                 kind,
@@ -173,10 +177,10 @@ pub fn atomize(description_md: &str) -> Vec<AtomizedRequirement> {
                 education_level: (kind == RequirementKind::Education)
                     .then(|| detect_education(&atom))
                     .flatten(),
-                // A clearance or work-authorization demand is categorical: no amount of
-                // skill overlap substitutes for it (`docs/07-matching.md`).
+                // Hold-at-start clearance and work authorization are categorical.
+                // "Ability to obtain Secret" is not a hold-at-start blocker.
                 is_blocker: necessity == Necessity::Required
-                    && (clearance.is_some() || is_authorization_demand(&atom)),
+                    && (must_hold || is_authorization_demand(&atom)),
                 quantity_raw: years
                     .map(|_| atom.clone())
                     .and_then(|_| quantity_phrase(&atom)),
@@ -293,7 +297,7 @@ pub fn classify_kind(text: &str, has_clearance: bool) -> RequirementKind {
     if has_clearance {
         return RequirementKind::Clearance;
     }
-    if LOGISTICS.is_match(text) {
+    if is_authorization_demand(text) || LOGISTICS.is_match(text) {
         return RequirementKind::Logistics;
     }
     if EDUCATION.is_match(text) {
@@ -333,9 +337,18 @@ fn is_equivalent_only_bullet(text: &str) -> bool {
     RE.is_match(text.trim())
 }
 
-fn is_authorization_demand(text: &str) -> bool {
+pub fn is_authorization_demand(text: &str) -> bool {
     static RE: Lazy<Regex> = Lazy::new(|| {
         Regex::new(r"(?i)\b(authorized to work|work authorization|citizen(?:ship)?|permanent resident|green card|no (?:visa )?sponsorship|us person)\b").unwrap()
+    });
+    RE.is_match(text)
+}
+
+/// US citizenship (or US-person) as a categorical bar, not a skill to evidence.
+pub fn is_citizenship_demand(text: &str) -> bool {
+    static RE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"(?i)\b(us(?:a)? citizenship|united states citizenship|u\.s\. citizenship|us citizen|u\.s\. citizen|must be a (?:us|u\.s\.) citizen|us person)\b")
+            .unwrap()
     });
     RE.is_match(text)
 }
@@ -531,6 +544,30 @@ You will own the ingestion platform.
         assert_eq!(reqs.len(), 1);
         assert!(reqs[0].is_blocker);
         assert_eq!(reqs[0].kind, RequirementKind::Logistics);
+    }
+
+    #[test]
+    fn us_citizenship_is_logistics_not_a_skill() {
+        let reqs = atomize("## Basic Qualifications\n\n- US Citizenship\n");
+        assert_eq!(reqs.len(), 1);
+        assert_eq!(reqs[0].kind, RequirementKind::Logistics);
+        assert!(reqs[0].is_blocker);
+        assert!(is_citizenship_demand(&reqs[0].text));
+    }
+
+    #[test]
+    fn ability_to_obtain_secret_is_not_a_hold_blocker() {
+        let reqs = atomize(
+            "## Basic Qualifications\n\n- Ability to obtain and/or maintain a Secret Clearance\n",
+        );
+        let clearance = reqs
+            .iter()
+            .find(|r| r.kind == RequirementKind::Clearance)
+            .expect("clearance atom");
+        assert!(
+            !clearance.is_blocker,
+            "obtain-and-maintain is eligibility, not hold-at-start: {clearance:?}"
+        );
     }
 
     #[test]

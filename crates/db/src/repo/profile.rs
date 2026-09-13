@@ -23,6 +23,9 @@ pub struct ProfileRow {
     pub target_locations: Vec<String>,
     pub accepts_remote: bool,
     pub willing_to_relocate: bool,
+    pub citizenship: Option<String>,
+    pub clearance_held: Option<String>,
+    pub can_obtain_clearance: Option<bool>,
     pub revision: i64,
     pub skills: Vec<ProfileSkillRow>,
 }
@@ -95,7 +98,8 @@ pub async fn get(db: &Db, id: Option<&ProfileId>) -> Result<Option<ProfileRow>> 
 
     let row = sqlx::query(
         "SELECT id, target_comp_min_cents, target_locations_json,
-                willing_to_relocate, accepts_remote, revision
+                willing_to_relocate, accepts_remote, citizenship, clearance_held,
+                can_obtain_clearance, revision
            FROM profile WHERE id = ?1 AND deleted_at IS NULL",
     )
     .bind(id.as_str())
@@ -146,6 +150,12 @@ pub async fn get(db: &Db, id: Option<&ProfileId>) -> Result<Option<ProfileRow>> 
             .try_get::<i64, _>("willing_to_relocate")
             .map_err(db_err)?
             != 0,
+        citizenship: row.try_get("citizenship").map_err(db_err)?,
+        clearance_held: row.try_get("clearance_held").map_err(db_err)?,
+        can_obtain_clearance: row
+            .try_get::<Option<i64>, _>("can_obtain_clearance")
+            .map_err(db_err)?
+            .map(|v| v != 0),
         revision: row.try_get("revision").map_err(db_err)?,
         skills,
     }))

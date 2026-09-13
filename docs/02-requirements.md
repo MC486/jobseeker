@@ -76,7 +76,7 @@ Priority: **MUST** (M0/M1 blocking), **SHOULD** (planned), **MAY** (opportunisti
 | FR-M-02 | MUST | The overall score SHALL be a documented weighted combination of named subscores, each individually reported. No unexplained single number. |
 | FR-M-03 | MUST | Scores SHALL record `algorithm_version` and an `inputs_hash`; changing the job, the profile, or the algorithm SHALL mark existing scores stale. |
 | FR-M-04 | MUST | Component weights SHALL be user-configurable, and changing them SHALL recompute without re-invoking any LLM. |
-| FR-M-05 | MUST | Hard blockers (missing required clearance, degree, work authorization, on-site in an unacceptable location) SHALL be surfaced separately from graded gaps. |
+| FR-M-05 | MUST | Hard blockers (missing *hold-at-start* clearance, ineligible to obtain a named clearance, degree, work authorization) SHALL be surfaced separately from graded gaps and from preference mismatches (comp, remote vs on-site). |
 | FR-M-06 | SHOULD | Semantic similarity SHALL use embeddings stored locally; absence of an embedding provider SHALL degrade the score to lexical/taxonomy matching only, clearly flagged. |
 | FR-M-07 | MUST | The system SHALL aggregate gaps across all non-archived jobs into a ranked list with frequency counts. |
 | FR-M-08 | SHOULD | Matching SHALL complete in < 200 ms per (job, profile) pair once embeddings exist. |

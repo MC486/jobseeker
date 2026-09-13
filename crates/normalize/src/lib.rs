@@ -20,5 +20,8 @@ pub mod url;
 pub use date::parse_posted_date;
 pub use location::parse_location;
 pub use salary::parse_salary;
-pub use seniority::{infer_employment_type, infer_seniority, infer_work_mode};
+pub use seniority::{
+    detect_clearance, detect_clearance_demand, infer_employment_type, infer_seniority,
+    infer_work_mode, ClearanceDemand,
+};
 pub use url::{canonicalize, detect_source, CanonicalUrl};

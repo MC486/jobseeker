@@ -106,19 +106,23 @@ pub struct Subscores {
     /// postings often mean it as a wishlist. Not a weight in `overall`.
     #[serde(default)]
     pub years_fit: Option<f32>,
+    /// Comp + location/work-mode vs what you *want*. Preference, not qualification.
+    /// Not a weight in `overall` — an on-site role you can do is not a low match
+    /// just because you prefer remote.
+    #[serde(default)]
+    pub preference_fit: Option<f32>,
 }
 
 impl Subscores {
-    /// Weighted mean over the subscores that are actually available, renormalizing so a
-    /// missing component (no embeddings, no salary) neither helps nor hurts.
+    /// Qualification only. Comp and location are preferences (`preference`); they
+    /// do not enter this mean. Missing components renormalize so they neither
+    /// help nor hurt.
     pub fn weighted(&self, w: &Weights) -> f32 {
         let pairs = [
             (self.required_coverage, w.required_coverage),
             (self.preferred_coverage, w.preferred_coverage),
             (self.semantic_similarity, w.semantic),
             (self.seniority_fit, w.seniority),
-            (self.comp_fit, w.comp),
-            (self.location_fit, w.location),
         ];
         let mut num = 0.0;
         let mut den = 0.0;
@@ -135,14 +139,24 @@ impl Subscores {
         }
     }
 
+    /// Comp + location/work-mode vs stated preferences. Separate from `weighted`.
+    pub fn preference(&self, w: &Weights) -> Option<f32> {
+        weighted_mean(
+            [
+                self.comp_fit.map(|v| (v, w.comp)),
+                self.location_fit.map(|v| (v, w.location)),
+            ]
+            .into_iter()
+            .flatten(),
+        )
+    }
+
     pub fn available_count(&self) -> usize {
         [
             self.required_coverage,
             self.preferred_coverage,
             self.semantic_similarity,
             self.seniority_fit,
-            self.comp_fit,
-            self.location_fit,
         ]
         .iter()
         .filter(|v| v.is_some())
@@ -321,7 +335,11 @@ mod tests {
             (s.weighted(&w) - 0.8).abs() < 1e-6,
             "an unavailable component must not drag the score down"
         );
-        assert_eq!(s.available_count(), 4);
+        assert_eq!(
+            s.available_count(),
+            3,
+            "comp/location are preference, not qualification availability"
+        );
     }
 
     #[test]
@@ -406,5 +424,29 @@ mod tests {
             (with.weighted(&w) - without.weighted(&w)).abs() < 1e-6,
             "skills/years are explanatory, not a second overall"
         );
+    }
+
+    #[test]
+    fn preference_does_not_change_qualification() {
+        let w = Weights::default();
+        let onsite = Subscores {
+            required_coverage: Some(0.80),
+            seniority_fit: Some(1.0),
+            comp_fit: Some(0.2),
+            location_fit: Some(0.0),
+            ..Default::default()
+        };
+        let remote = Subscores {
+            required_coverage: Some(0.80),
+            seniority_fit: Some(1.0),
+            comp_fit: Some(1.0),
+            location_fit: Some(1.0),
+            ..Default::default()
+        };
+        assert!(
+            (onsite.weighted(&w) - remote.weighted(&w)).abs() < 1e-6,
+            "an on-site role you can do is not a weaker qualification"
+        );
+        assert!(onsite.preference(&w).unwrap() < remote.preference(&w).unwrap());
     }
 }
