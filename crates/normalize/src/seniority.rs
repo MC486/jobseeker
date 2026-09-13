@@ -150,9 +150,28 @@ pub fn infer_employment_type(text: &str) -> Option<EmploymentType> {
     }
 }
 
-/// Security clearance demanded by the posting, normalized to a comparable key. A clearance
-/// you do not hold is a hard blocker, so detecting it is worth more than most fields.
+/// Clearance *type* plus whether it is required on day one.
+///
+/// Defense postings often name a type (`Secret`) and separately say it is not
+/// required to start — the bar is US citizenship and the ability to obtain.
+/// Flattening that to "requires Secret" invents a hold-at-start blocker.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClearanceDemand {
+    pub kind: String,
+    /// `Some(true)` must already hold it. `Some(false)` explicitly not required
+    /// to start, or the posting only asks for ability to obtain.
+    pub required_to_start: Option<bool>,
+    /// "ability to obtain/maintain" (or start = no) is the stated bar.
+    pub obtain_ok: bool,
+}
+
+/// Security clearance demanded by the posting, normalized to a comparable key.
 pub fn detect_clearance(text: &str) -> Option<String> {
+    detect_clearance_demand(text).map(|d| d.kind)
+}
+
+/// Full clearance demand: type, start-required, obtain language.
+pub fn detect_clearance_demand(text: &str) -> Option<ClearanceDemand> {
     static RE: Lazy<Regex> = Lazy::new(|| {
         Regex::new(
             r"(?ix)
@@ -171,29 +190,79 @@ pub fn detect_clearance(text: &str) -> Option<String> {
     static NEGATED: Lazy<Regex> = Lazy::new(|| {
         Regex::new(r"(?i)\b(no clearance (?:is )?(?:required|needed)|clearance not required|do(?:es)? not require (?:a )?clearance)\b").unwrap()
     });
+    static START_NO: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(
+            r"(?i)clearance\s+required\s+for\s+start\s*:\s*no|not required to start|clearance (?:is )?not required to start",
+        )
+        .unwrap()
+    });
+    static START_YES: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"(?i)clearance\s+required\s+for\s+start\s*:\s*yes").unwrap());
+    static OBTAIN: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(
+            r"(?i)\b(?:abilit(?:y|ies) to obtain|able to obtain|must be able to obtain|obtain and(?:/or)? maintain|obtain\s*/\s*maintain)\b",
+        )
+        .unwrap()
+    });
+    static MUST_HOLD: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(
+            r"(?i)\b(?:must (?:already )?(?:hold|possess|have)|currently (?:hold|possess)|active (?:secret|top[- ]secret|ts\s*/\s*sci) clearance)\b",
+        )
+        .unwrap()
+    });
 
-    // "No clearance required" contains the word "clearance"; a naive match would invent a
-    // blocker out of a statement that there is none.
-    if NEGATED.is_match(text) {
+    let start_no = START_NO.is_match(text);
+    let obtain = OBTAIN.is_match(text);
+    // "No clearance required" is a true negative. "CLEARANCE REQUIRED FOR START:
+    // No" is not that phrase — it still names a type and an obtain bar.
+    if NEGATED.is_match(text) && !start_no && !obtain {
         return None;
     }
     let c = RE.captures(text)?;
-    Some(
-        if c.name("tssci").is_some() {
-            "ts_sci"
-        } else if c.name("poly").is_some() {
-            "ts_sci_poly"
-        } else if c.name("ts").is_some() {
-            "top_secret"
-        } else if c.name("q").is_some() {
-            "doe_q"
-        } else if c.name("publictrust").is_some() {
-            "public_trust"
-        } else {
-            "secret"
-        }
-        .to_string(),
-    )
+    let kind = if c.name("tssci").is_some() {
+        "ts_sci"
+    } else if c.name("poly").is_some() {
+        "ts_sci_poly"
+    } else if c.name("ts").is_some() {
+        "top_secret"
+    } else if c.name("q").is_some() {
+        "doe_q"
+    } else if c.name("publictrust").is_some() {
+        "public_trust"
+    } else {
+        "secret"
+    }
+    .to_string();
+
+    let required_to_start = if start_no {
+        Some(false)
+    } else if START_YES.is_match(text) {
+        Some(true)
+    } else if obtain {
+        Some(false)
+    } else if MUST_HOLD.is_match(text) {
+        Some(true)
+    } else {
+        None
+    };
+
+    Some(ClearanceDemand {
+        kind,
+        required_to_start,
+        obtain_ok: obtain || start_no,
+    })
+}
+
+/// Rank so a held TS/SCI covers a Secret ask. Unknown keys sit with Secret.
+pub fn clearance_rank(kind: &str) -> u8 {
+    match kind {
+        "public_trust" => 1,
+        "secret" => 2,
+        "top_secret" | "doe_q" => 3,
+        "ts_sci" => 4,
+        "ts_sci_poly" => 5,
+        _ => 2,
+    }
 }
 
 /// Visa sponsorship stance. `Unspecified` is the honest answer for most postings and is
@@ -433,6 +502,38 @@ mod tests {
         );
         assert_eq!(detect_clearance("Security clearance not required"), None);
         assert_eq!(detect_clearance("Build great software"), None);
+    }
+
+    #[test]
+    fn secret_not_required_to_start_is_obtain_not_hold() {
+        let text = "\
+CLEARANCE REQUIRED FOR START: No
+CLEARANCE TYPE: Secret
+Ability to obtain and/or maintain a Secret clearance
+US Citizenship required";
+        let d = detect_clearance_demand(text).expect("type is Secret");
+        assert_eq!(d.kind, "secret");
+        assert_eq!(d.required_to_start, Some(false));
+        assert!(d.obtain_ok);
+    }
+
+    #[test]
+    fn must_hold_active_clearance_is_required_to_start() {
+        let d = detect_clearance_demand("Must hold an active TS/SCI clearance").unwrap();
+        assert_eq!(d.kind, "ts_sci");
+        assert_eq!(d.required_to_start, Some(true));
+        assert!(!d.obtain_ok);
+    }
+
+    #[test]
+    fn ability_to_obtain_is_not_a_hold_at_start_demand() {
+        let d = detect_clearance_demand(
+            "Ability to obtain and maintain a Secret Clearance; US Citizenship",
+        )
+        .unwrap();
+        assert_eq!(d.kind, "secret");
+        assert_eq!(d.required_to_start, Some(false));
+        assert!(d.obtain_ok);
     }
 
     #[test]

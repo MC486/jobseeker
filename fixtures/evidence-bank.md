@@ -31,6 +31,8 @@ Alex moved from operations into computer science and decision science, converted
 |---|---|
 | Name | Alex Rivera |
 | Location | Orlando, FL |
+| Citizenship | US |
+| Clearance | None held; eligible to obtain |
 | GitHub | GitHub.com/example |
 
 ## 3. Professional Timeline

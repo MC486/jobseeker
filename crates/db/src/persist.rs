@@ -126,6 +126,7 @@ struct JobRow {
     apply_url: Option<String>,
     apply_kind: ApplyKind,
     requires_clearance: Option<String>,
+    clearance_required_to_start: Option<bool>,
     visa: Tristate,
     travel_pct: Option<i32>,
     education_min: EducationLevel,
@@ -215,6 +216,11 @@ impl JobRow {
                 .requires_clearance
                 .as_ref()
                 .map(|s| s.value.clone()),
+            clearance_required_to_start: input
+                .job
+                .clearance_required_to_start
+                .as_ref()
+                .map(|s| s.value),
             visa: input
                 .job
                 .visa_sponsorship
@@ -256,14 +262,15 @@ async fn insert_job(
             salary_is_estimate, salary_raw,
             posted_at, posted_at_precision, closes_at, closes_at_precision,
             first_seen_at, last_seen_at, status,
-            apply_url, apply_kind, requires_clearance, visa_sponsorship, travel_pct,
+            apply_url, apply_kind, requires_clearance, clearance_required_to_start,
+            visa_sponsorship, travel_pct,
             education_min, years_experience_min,
             content_hash, extraction_model, extracted_at, extraction_confidence,
             extraction_partial, created_at, updated_at
         ) VALUES (
             ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
             ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?26, ?27,
-            ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?26, ?26
+            ?28, ?29, ?30, ?40, ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?26, ?26
         )"#,
     )
     .bind(job_id.as_str())
@@ -305,6 +312,7 @@ async fn insert_job(
     .bind(&row.extracted_at)
     .bind(row.extraction_confidence.map(f64::from))
     .bind(i64::from(row.extraction_partial))
+    .bind(row.clearance_required_to_start.map(i64::from))
     .execute(&mut **tx)
     .await
     .map_err(db_err)?;
@@ -351,6 +359,7 @@ async fn update_job(
             posted_at = ?22, posted_at_precision = ?23, closes_at = ?24,
             closes_at_precision = ?25, last_seen_at = ?26, status = ?27,
             apply_url = ?28, apply_kind = ?29, requires_clearance = ?30,
+            clearance_required_to_start = ?40,
             visa_sponsorship = ?31, travel_pct = ?32, education_min = ?33,
             years_experience_min = ?34, content_hash = ?35, extraction_model = ?36,
             extracted_at = ?37, extraction_confidence = ?38, extraction_partial = ?39,
@@ -396,6 +405,7 @@ async fn update_job(
     .bind(&row.extracted_at)
     .bind(row.extraction_confidence.map(f64::from))
     .bind(i64::from(row.extraction_partial))
+    .bind(row.clearance_required_to_start.map(i64::from))
     .execute(&mut **tx)
     .await
     .map_err(db_err)?;

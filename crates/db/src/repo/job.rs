@@ -560,6 +560,7 @@ pub struct JobDetail {
     pub locations: Vec<String>,
     pub requirements: Vec<RequirementRow>,
     pub requires_clearance: Option<String>,
+    pub clearance_required_to_start: Option<bool>,
     pub user_rating: Option<i64>,
     pub user_notes_md: Option<String>,
     pub is_archived: bool,
@@ -599,7 +600,8 @@ pub async fn get(db: &Db, id: &JobId) -> Result<Option<JobDetail>> {
                 j.salary_min_cents, j.salary_max_cents, j.salary_currency, j.salary_period,
                 j.salary_is_estimate, j.salary_raw, j.posted_at, j.closes_at, j.apply_url,
                 j.description_md, j.file_path, j.content_hash, j.extraction_partial,
-                j.extraction_model, j.requires_clearance, j.user_rating, j.user_notes_md,
+                j.extraction_model, j.requires_clearance, j.clearance_required_to_start,
+                j.user_rating, j.user_notes_md,
                 j.is_archived, j.updated_at
            FROM job j
            JOIN company c ON c.id = j.company_id
@@ -674,6 +676,10 @@ pub async fn get(db: &Db, id: &JobId) -> Result<Option<JobDetail>> {
         requirements,
         listings: load_listings(db, id).await?,
         requires_clearance: row.try_get("requires_clearance").map_err(db_err)?,
+        clearance_required_to_start: row
+            .try_get::<Option<i64>, _>("clearance_required_to_start")
+            .map_err(db_err)?
+            .map(|v| v != 0),
         user_rating: row.try_get("user_rating").map_err(db_err)?,
         user_notes_md: row.try_get("user_notes_md").map_err(db_err)?,
         is_archived: row.try_get::<i64, _>("is_archived").map_err(db_err)? != 0,
@@ -1283,6 +1289,7 @@ pub async fn scoring_inputs(
         apply_kind: jobseeker_core::domain::enums::ApplyKind::Unknown,
         canonical_listing_id: None,
         requires_clearance: detail.requires_clearance,
+        clearance_required_to_start: detail.clearance_required_to_start,
         visa_sponsorship: jobseeker_core::domain::enums::Tristate::Unspecified,
         travel_pct: None,
         education_min: jobseeker_core::domain::enums::EducationLevel::Unknown,

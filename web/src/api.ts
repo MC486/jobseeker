@@ -51,6 +51,8 @@ export type JobDetail = {
   locations: string[];
   requirements: RequirementRow[];
   listings?: { id: string; url: string; source: string; is_canonical: boolean }[];
+  requires_clearance: string | null;
+  clearance_required_to_start: boolean | null;
   user_rating: number | null;
   user_notes_md: string | null;
   is_archived: boolean;
@@ -79,7 +81,10 @@ export type MatchSummary = {
   seniority_fit: number | null;
   comp_fit: number | null;
   location_fit: number | null;
+  preference_fit: number | null;
   blocker_count: number;
+  blockers?: { kind: string; message: string }[];
+  flags?: string[];
   is_stale: boolean;
   computed_at: string;
   verdicts: RequirementVerdict[];
@@ -202,6 +207,9 @@ export type Profile = {
   target_comp_min_cents: number | null;
   target_locations: string[];
   accepts_remote: boolean;
+  citizenship: string | null;
+  clearance_held: string | null;
+  can_obtain_clearance: boolean | null;
   years_experience: number | null;
   revision: number;
   skills: ProfileSkill[];

@@ -26,6 +26,12 @@ pub struct Profile {
     pub target_comp_min_cents: Option<i64>,
     pub target_locations: Vec<String>,
     pub work_auth: Option<String>,
+    /// `us` or `other`. Unset means we have not been told — matching must not invent it.
+    pub citizenship: Option<String>,
+    /// Normalized clearance the profile actually holds (`secret`, `ts_sci`), if any.
+    pub clearance_held: Option<String>,
+    /// Eligible to obtain (US citizen, no stated background issue). Distinct from holding.
+    pub can_obtain_clearance: Option<bool>,
     pub willing_to_relocate: bool,
     pub accepts_remote: bool,
     pub is_default: bool,

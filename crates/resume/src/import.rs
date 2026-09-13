@@ -33,6 +33,10 @@ pub struct ParsedIdentity {
     pub target_locations: Vec<String>,
     pub accepts_remote: bool,
     pub willing_to_relocate: bool,
+    pub work_auth: Option<String>,
+    pub citizenship: Option<String>,
+    pub clearance_held: Option<String>,
+    pub can_obtain_clearance: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -118,6 +122,7 @@ pub fn parse_markdown(input: &str) -> ParsedBank {
             url: gh,
         });
     }
+    apply_eligibility(&mut identity, &lines, input);
 
     let mut items: Vec<ParsedItem> = Vec::new();
     let mut current: Option<usize> = None;
@@ -849,6 +854,76 @@ fn table_value(input: &str, field: &str) -> Option<String> {
     None
 }
 
+fn apply_eligibility(identity: &mut ParsedIdentity, lines: &[&str], input: &str) {
+    let raw = labeled_value(lines, "Citizenship")
+        .or_else(|| table_value(input, "Citizenship"))
+        .or_else(|| labeled_value(lines, "Work authorization"));
+    if let Some(value) = raw.as_deref().and_then(parse_citizenship) {
+        identity.citizenship = Some(value);
+    }
+    if identity.citizenship.as_deref() == Some("us") {
+        identity.work_auth = Some("us_citizen".into());
+    }
+    if let Some(value) =
+        labeled_value(lines, "Clearance").or_else(|| table_value(input, "Clearance"))
+    {
+        let (held, obtain) = parse_clearance_eligibility(&value);
+        identity.clearance_held = held;
+        identity.can_obtain_clearance = obtain;
+    }
+}
+
+fn parse_citizenship(value: &str) -> Option<String> {
+    let t = value.to_ascii_lowercase();
+    if t.contains("dual")
+        && !t.contains("united states")
+        && !t.contains("u.s.")
+        && !t.contains("us")
+    {
+        return Some("other".into());
+    }
+    if t.contains("united states")
+        || t.contains("u.s. citizen")
+        || t.contains("us citizen")
+        || t.contains("usa")
+        || t == "us"
+        || t.starts_with("us,")
+        || t.starts_with("us;")
+        || t.contains("born and bred")
+    {
+        return Some("us".into());
+    }
+    if t.contains("citizen") || t.contains("green card") || t.contains("permanent resident") {
+        return Some("other".into());
+    }
+    None
+}
+
+fn parse_clearance_eligibility(value: &str) -> (Option<String>, Option<bool>) {
+    let t = value.to_ascii_lowercase();
+    let obtain = if t.contains("eligible")
+        || t.contains("can obtain")
+        || t.contains("able to obtain")
+        || t.contains("no background")
+    {
+        Some(true)
+    } else if t.contains("ineligible") || t.contains("cannot obtain") {
+        Some(false)
+    } else {
+        None
+    };
+    let held = if let Some(d) = jobseeker_normalize::seniority::detect_clearance_demand(value) {
+        if t.contains("none") || t.contains("not held") || t.contains("no clearance") {
+            None
+        } else {
+            Some(d.kind)
+        }
+    } else {
+        None
+    };
+    (held, obtain)
+}
+
 fn is_meta_value(s: &str) -> bool {
     let t = s.to_ascii_lowercase();
     t.starts_with("confirm")
@@ -1139,6 +1214,9 @@ mod tests {
             inferred_education(&bank.items),
             Some(EducationLevel::Bachelor)
         );
+        assert_eq!(bank.identity.citizenship.as_deref(), Some("us"));
+        assert_eq!(bank.identity.can_obtain_clearance, Some(true));
+        assert!(bank.identity.clearance_held.is_none());
     }
 
     #[test]

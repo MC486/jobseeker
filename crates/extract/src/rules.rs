@@ -12,7 +12,7 @@ use jobseeker_core::provenance::{merge_field, Provenance, Sourced};
 use jobseeker_core::time::now;
 use jobseeker_normalize::date::parse_posted_date;
 use jobseeker_normalize::seniority::{
-    detect_clearance, detect_education, detect_visa_sponsorship, extract_years,
+    detect_clearance_demand, detect_education, detect_visa_sponsorship, extract_years,
     infer_employment_type, infer_seniority, infer_work_mode,
 };
 use once_cell::sync::Lazy;
@@ -115,12 +115,20 @@ pub fn apply_html(job: &mut ExtractedJob, document: &Html, source: SourceKind) {
         }
     }
 
-    if job.requires_clearance.is_none() {
-        if let Some(c) = detect_clearance(&text) {
+    if let Some(demand) = detect_clearance_demand(&text) {
+        if job.requires_clearance.is_none() {
             merge_field(
                 &mut job.requires_clearance,
-                Sourced::new(c, Provenance::Rules),
+                Sourced::new(demand.kind.clone(), Provenance::Rules),
             );
+        }
+        if job.clearance_required_to_start.is_none() {
+            if let Some(start) = demand.required_to_start {
+                merge_field(
+                    &mut job.clearance_required_to_start,
+                    Sourced::new(start, Provenance::Rules),
+                );
+            }
         }
     }
     if job.visa_sponsorship.is_none() {

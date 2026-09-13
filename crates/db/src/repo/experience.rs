@@ -27,6 +27,10 @@ pub struct BankWrite {
     pub target_locations_json: String,
     pub accepts_remote: bool,
     pub willing_to_relocate: bool,
+    pub work_auth: Option<String>,
+    pub citizenship: Option<String>,
+    pub clearance_held: Option<String>,
+    pub can_obtain_clearance: Option<bool>,
     pub items: Vec<ItemWrite>,
     pub skills: Vec<SkillWrite>,
 }
@@ -78,6 +82,10 @@ pub struct ProfileView {
     pub target_locations: Vec<String>,
     pub accepts_remote: bool,
     pub willing_to_relocate: bool,
+    pub work_auth: Option<String>,
+    pub citizenship: Option<String>,
+    pub clearance_held: Option<String>,
+    pub can_obtain_clearance: Option<bool>,
     pub revision: i64,
     pub years_experience: Option<f32>,
     pub skills: Vec<ProfileSkillView>,
@@ -150,6 +158,10 @@ pub async fn replace_bank(
             target_locations_json = ?12,
             willing_to_relocate = ?13,
             accepts_remote = ?14,
+            work_auth = ?16,
+            citizenship = ?17,
+            clearance_held = ?18,
+            can_obtain_clearance = ?19,
             revision = revision + 1,
             updated_at = ?15
          WHERE id = ?1",
@@ -169,6 +181,10 @@ pub async fn replace_bank(
     .bind(i64::from(bank.willing_to_relocate))
     .bind(i64::from(bank.accepts_remote))
     .bind(&ts)
+    .bind(bank.work_auth.as_deref())
+    .bind(bank.citizenship.as_deref())
+    .bind(bank.clearance_held.as_deref())
+    .bind(bank.can_obtain_clearance.map(i64::from))
     .execute(db.writer())
     .await
     .map_err(db_err)?;
@@ -310,7 +326,8 @@ pub async fn get_view(db: &Db, profile_id: &ProfileId) -> Result<Option<ProfileV
     let row = sqlx::query(
         "SELECT id, name, full_name, headline, email, phone, location, links_json,
                 summary_md, target_titles_json, target_comp_min_cents,
-                target_locations_json, willing_to_relocate, accepts_remote, revision
+                target_locations_json, willing_to_relocate, accepts_remote,
+                work_auth, citizenship, clearance_held, can_obtain_clearance, revision
            FROM profile WHERE id = ?1 AND deleted_at IS NULL",
     )
     .bind(profile_id.as_str())
@@ -445,6 +462,13 @@ pub async fn get_view(db: &Db, profile_id: &ProfileId) -> Result<Option<ProfileV
             .try_get::<i64, _>("willing_to_relocate")
             .map_err(db_err)?
             != 0,
+        work_auth: row.try_get("work_auth").map_err(db_err)?,
+        citizenship: row.try_get("citizenship").map_err(db_err)?,
+        clearance_held: row.try_get("clearance_held").map_err(db_err)?,
+        can_obtain_clearance: row
+            .try_get::<Option<i64>, _>("can_obtain_clearance")
+            .map_err(db_err)?
+            .map(|v| v != 0),
         revision: row.try_get("revision").map_err(db_err)?,
         years_experience: (years_experience > 0.0).then_some(years_experience),
         skills,
@@ -497,6 +521,10 @@ mod tests {
             target_locations_json: r#"["Orlando, FL","US"]"#.into(),
             accepts_remote: true,
             willing_to_relocate: false,
+            work_auth: Some("us_citizen".into()),
+            citizenship: Some("us".into()),
+            clearance_held: None,
+            can_obtain_clearance: Some(true),
             items: vec![ItemWrite {
                 kind: ExperienceKind::Role,
                 org: "Harbor Analytics".into(),

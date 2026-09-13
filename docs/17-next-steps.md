@@ -30,6 +30,17 @@ pair with a hashed, ingest-scoped device token.
 
 ## Just shipped
 
+- **Clearance, citizenship, preference.** Profile stores `citizenship`,
+  `clearance_held`, `can_obtain_clearance` (evidence-bank import reads
+  Citizenship / Clearance). Job stores clearance *type* plus
+  `clearance_required_to_start`. Secret + "not required to start" / "ability
+  to obtain" is not a hold-at-start blocker when the profile is a US citizen
+  or eligible to obtain. US citizenship is logistics, not a skill gap.
+  `comp_fit` and `location_fit` are preference only — they do not enter
+  `overall`, and on-site is not a location blocker. Domain/title mismatch
+  (same DS title, different work) stays a qualification gap. Algorithm
+  `1.1.0`.
+
 - **Next action.** `PATCH /api/v1/jobs/:id/application` accepts `next_action`
   and `next_action_due` (`YYYY-MM-DD`) without touching posting liveness.
   Missing application row is created as `interested`. Each change appends

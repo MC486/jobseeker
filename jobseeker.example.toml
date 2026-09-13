@@ -44,7 +44,7 @@ timeout_seconds = 120
 cache = true
 
 [matching]
-algorithm_version = "1.0.0"
+algorithm_version = "1.1.0"
 blocker_cap = 0.45
 recency_decay_after_years = 3.0
 

@@ -691,7 +691,14 @@ impl Pipeline {
             salary: job.salary,
             locations,
             requires_clearance: job.requires_clearance,
+            clearance_required_to_start: job.clearance_required_to_start,
         };
+        let mut clearances = Vec::new();
+        if let Some(held) = profile_row.clearance_held.clone() {
+            if !held.is_empty() {
+                clearances.push(held);
+            }
+        }
         let profile = jobseeker_matching::ProfileSnapshot {
             profile_id: Some(profile_row.id.clone()),
             skills: profile_row
@@ -711,7 +718,9 @@ impl Pipeline {
             accepts_remote: profile_row.accepts_remote,
             willing_to_relocate: profile_row.willing_to_relocate,
             target_locations: profile_row.target_locations,
-            clearances: vec![],
+            clearances,
+            citizenship: profile_row.citizenship.clone(),
+            can_obtain_clearance: profile_row.can_obtain_clearance,
             education,
         };
         let score = jobseeker_matching::score(&snapshot, &profile, &self.config.matching)?;
@@ -1101,6 +1110,10 @@ fn bank_write(parsed: &jobseeker_resume::import::ParsedBank) -> Result<experienc
         target_locations_json: serde_json::to_string(&parsed.identity.target_locations)?,
         accepts_remote: parsed.identity.accepts_remote,
         willing_to_relocate: parsed.identity.willing_to_relocate,
+        work_auth: parsed.identity.work_auth.clone(),
+        citizenship: parsed.identity.citizenship.clone(),
+        clearance_held: parsed.identity.clearance_held.clone(),
+        can_obtain_clearance: parsed.identity.can_obtain_clearance,
         items: parsed
             .items
             .iter()

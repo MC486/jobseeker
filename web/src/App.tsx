@@ -429,18 +429,19 @@ function SortChip({
 }
 
 const COMPARE_SCORES: {
-  key: "overall" | "skills_coverage" | "years_fit" | "required_coverage" | "preferred_coverage" | "seniority_fit" | "comp_fit" | "location_fit";
+  key: "overall" | "skills_coverage" | "years_fit" | "required_coverage" | "preferred_coverage" | "seniority_fit" | "preference_fit" | "comp_fit" | "location_fit";
   label: string;
   hint?: string;
 }[] = [
-  { key: "overall", label: "Overall", hint: "unchanged weighted score" },
+  { key: "overall", label: "Overall", hint: "qualification only" },
   { key: "skills_coverage", label: "Skills", hint: "tenure stripped" },
   { key: "years_fit", label: "Years", hint: "year-count asks" },
   { key: "required_coverage", label: "Required", hint: "feeds overall" },
   { key: "preferred_coverage", label: "Preferred" },
   { key: "seniority_fit", label: "Seniority" },
-  { key: "comp_fit", label: "Comp" },
-  { key: "location_fit", label: "Location" },
+  { key: "preference_fit", label: "Preference", hint: "comp + location; not overall" },
+  { key: "comp_fit", label: "Comp", hint: "preference" },
+  { key: "location_fit", label: "Location", hint: "preference" },
 ];
 
 function scoreValue(
@@ -1232,6 +1233,16 @@ export function JobPage() {
           {detail.extraction_partial ? " · partial extraction" : ""}
           {detail.is_archived ? " · archived" : ""}
         </p>
+        {detail.requires_clearance ? (
+          <p className="mt-1 text-sm text-zinc-400">
+            Clearance type: {detail.requires_clearance}
+            {detail.clearance_required_to_start === false
+              ? " · not required to start (obtain/maintain)"
+              : detail.clearance_required_to_start === true
+                ? " · required to start"
+                : " · start requirement unspecified"}
+          </p>
+        ) : null}
         {detail.apply_url && (
           <a className="mt-2 inline-block text-sm text-indigo-300" href={detail.apply_url}>
             Apply
@@ -1278,9 +1289,11 @@ export function JobPage() {
             {score.is_stale ? " · stale" : ""}
           </h2>
           <p className="mt-1 text-xs text-zinc-500">
-            Overall is unchanged. Skills ignore year shortfalls when the skill is on the
-            bank; Years is the tenure bar recruiters overfit and postings often treat as a
-            wishlist.
+            Overall is qualification (skills, required bars, seniority). Preference
+            (comp, remote vs on-site) is separate — an on-site role you can do is
+            not a low match just because you prefer remote. Skills ignore year
+            shortfalls when the skill is on the bank; Years is the tenure bar
+            recruiters overfit.
           </p>
           <dl className="mt-3 grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
             <ScoreCell
@@ -1300,9 +1313,26 @@ export function JobPage() {
             />
             <ScoreCell label="Preferred" value={score.preferred_coverage} />
             <ScoreCell label="Seniority" value={score.seniority_fit} />
-            <ScoreCell label="Comp" value={score.comp_fit} />
-            <ScoreCell label="Location" value={score.location_fit} />
+            <ScoreCell
+              label="Preference"
+              value={score.preference_fit}
+              hint="comp + location; not overall"
+            />
+            <ScoreCell label="Comp" value={score.comp_fit} hint="preference" />
+            <ScoreCell label="Location" value={score.location_fit} hint="preference" />
           </dl>
+          {score.flags?.includes("clearance_obtainable") ? (
+            <p className="mt-2 text-sm text-zinc-300">
+              Clearance is not held and is not required to start. Profile is
+              eligible to obtain.
+            </p>
+          ) : null}
+          {score.flags?.includes("clearance_eligibility_unknown") ? (
+            <p className="mt-2 text-sm text-zinc-400">
+              Clearance type is named but not required to start. Eligibility to
+              obtain is not on the profile.
+            </p>
+          ) : null}
           {score.blocker_count > 0 ? (
             <p className="mt-2 text-sm text-amber-300">
               {score.blocker_count} blocker(s) — overall is capped
@@ -1364,7 +1394,9 @@ export function JobPage() {
               <li key={r.id}>
                 <div>
                   <span className="text-zinc-500">{r.necessity}</span> {r.text}
-                  {r.is_blocker ? " · blocker" : ""}
+                  {r.is_blocker && verdict?.status !== "met"
+                    ? " · blocker"
+                    : ""}
                   {verdict ? (
                     <span className="ml-2 text-zinc-400">
                       · {verdict.status} ({Math.round(verdict.score * 100)}%)
@@ -1522,6 +1554,16 @@ export function ProfilePage() {
               {profile.data.headline ?? "Default profile"}
               {profile.data.location ? ` · ${profile.data.location}` : ""}
               {profile.data.accepts_remote ? " · remote" : ""}
+              {profile.data.citizenship === "us"
+                ? " · US citizen"
+                : profile.data.citizenship
+                  ? ` · citizenship: ${profile.data.citizenship}`
+                  : ""}
+              {profile.data.clearance_held
+                ? ` · holds ${profile.data.clearance_held}`
+                : profile.data.can_obtain_clearance
+                  ? " · eligible to obtain clearance"
+                  : ""}
               {profile.data.years_experience != null
                 ? ` · ${profile.data.years_experience.toFixed(1)}y`
                 : ""}
