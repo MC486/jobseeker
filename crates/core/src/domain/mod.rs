@@ -21,7 +21,7 @@ pub use enums::{
     GHOST_IDLE_DAYS,
 };
 pub use event::DomainEvent;
-pub use job::{ExtractedJob, Job};
+pub use job::{is_closing_soon_unapplied, ExtractedJob, Job, CLOSING_SOON_DAYS};
 pub use location::{JobLocation, RawLocation};
 pub use profile::{Accomplishment, ExperienceItem, ExperienceKind, Profile, ProfileSkill};
 pub use requirement::{Requirement, Skill};

@@ -67,7 +67,8 @@ GET  /api/v1/events?since=<event_id>   → SSE stream of DomainEvent (backfills 
 GET  /api/v1/jobs                 → {items: JobListRow[], next_cursor}
      each item includes match_overall plus diagnostic skills_coverage / years_fit
      (same split as GET /api/v1/jobs/:id/match; they do not change overall)
-     and possibly_ghosted (applied/screening/interviewing idle ≥ 14 days)
+     possibly_ghosted (applied/screening/interviewing idle ≥ 14 days), and
+     closing_soon_unapplied (open, closes within 7 days, not yet applied)
      ?q=                          full-text (FTS5, supports quoted phrases and OR)
      &status=open|closed|…        &work_mode=remote|hybrid|onsite
      &company_id=  &seniority=    &employment_type=
@@ -79,6 +80,7 @@ GET  /api/v1/jobs                 → {items: JobListRow[], next_cursor}
      &sort=posted_at|match|salary|updated_at|relevance   &order=asc|desc
      &cursor=&limit=
 GET  /api/v1/jobs/:id             → full job + company + locations + listings + counts
+                                    includes closes_at and closing_soon_unapplied
 PATCH /api/v1/jobs/:id            {title?, user_rating?, user_notes_md?, status?, is_archived?}
                                     → fields set here become provenance `manual`.
                                       `status` is posting lifecycle

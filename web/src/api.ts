@@ -23,6 +23,8 @@ export type JobListRow = {
   next_action: string | null;
   next_action_due: string | null;
   possibly_ghosted: boolean;
+  closing_soon_unapplied: boolean;
+  closes_at?: string | null;
   updated_at: string;
 };
 
@@ -45,6 +47,8 @@ export type JobDetail = {
   employment_type: string;
   salary_raw: string | null;
   posted_at: string | null;
+  closes_at: string | null;
+  closing_soon_unapplied: boolean;
   apply_url: string | null;
   description_md: string;
   file_path: string | null;
