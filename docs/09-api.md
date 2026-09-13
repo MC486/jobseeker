@@ -172,7 +172,10 @@ GET  /api/v1/templates                           available resume templates
 ### Applications
 
 ```
-GET  /api/v1/jobs/:id/application           default-profile row, or null
+GET  /api/v1/jobs/:id/application           default-profile row, or null.
+                                    Includes `events` (oldest first):
+                                    status_change and reminder rows already
+                                    written by PATCH. No separate events URL.
 PATCH /api/v1/jobs/:id/application {status?, next_action?, next_action_due?}
                                     → interested|preparing|applied|screening|
                                       interviewing|offer|accepted|rejected|
@@ -181,7 +184,8 @@ PATCH /api/v1/jobs/:id/application {status?, next_action?, next_action_due?}
                                       is applied or later. Not job.status.
                                       next_action_due is YYYY-MM-DD. Empty
                                       string clears next-action fields.
-                                      At least one field required.
+                                      At least one field required. Response
+                                      includes the updated timeline.
 GET/POST/PATCH/DELETE  /api/v1/contacts[/:id]
 ```
 

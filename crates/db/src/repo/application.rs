@@ -24,6 +24,20 @@ pub struct ApplicationView {
     pub next_action_due: Option<String>,
     pub last_activity_at: String,
     pub updated_at: String,
+    /// Oldest first. Append-only; GET/PATCH both return the current log.
+    #[serde(default)]
+    pub events: Vec<ApplicationEventView>,
+}
+
+/// One row of the application timeline (`status_change`, `reminder`, …).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApplicationEventView {
+    pub id: String,
+    pub kind: String,
+    pub occurred_at: String,
+    pub title: Option<String>,
+    pub from_status: Option<String>,
+    pub to_status: Option<String>,
 }
 
 /// Partial update. `None` leaves a field alone; `Some("")` clears next-action fields.
@@ -217,7 +231,10 @@ async fn get_pair(
     .fetch_optional(db.reader())
     .await
     .map_err(db_err)?;
-    row.map(row_to_view).transpose()
+    match row.map(row_to_view).transpose()? {
+        Some(view) => Ok(Some(with_events(db, view).await?)),
+        None => Ok(None),
+    }
 }
 
 async fn get_by_id(db: &Db, id: &str) -> Result<Option<ApplicationView>> {
@@ -230,7 +247,41 @@ async fn get_by_id(db: &Db, id: &str) -> Result<Option<ApplicationView>> {
     .fetch_optional(db.reader())
     .await
     .map_err(db_err)?;
-    row.map(row_to_view).transpose()
+    match row.map(row_to_view).transpose()? {
+        Some(view) => Ok(Some(with_events(db, view).await?)),
+        None => Ok(None),
+    }
+}
+
+async fn with_events(db: &Db, mut view: ApplicationView) -> Result<ApplicationView> {
+    view.events = list_events(db, &view.id).await?;
+    Ok(view)
+}
+
+/// Timeline for one application, oldest first.
+pub async fn list_events(db: &Db, application_id: &str) -> Result<Vec<ApplicationEventView>> {
+    let rows = sqlx::query(
+        "SELECT id, kind, occurred_at, title, from_status, to_status
+           FROM application_event
+          WHERE application_id = ?1
+          ORDER BY occurred_at ASC, id ASC",
+    )
+    .bind(application_id)
+    .fetch_all(db.reader())
+    .await
+    .map_err(db_err)?;
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        out.push(ApplicationEventView {
+            id: row.try_get("id").map_err(db_err)?,
+            kind: row.try_get("kind").map_err(db_err)?,
+            occurred_at: row.try_get("occurred_at").map_err(db_err)?,
+            title: row.try_get("title").map_err(db_err)?,
+            from_status: row.try_get("from_status").map_err(db_err)?,
+            to_status: row.try_get("to_status").map_err(db_err)?,
+        });
+    }
+    Ok(out)
 }
 
 fn row_to_view(row: sqlx::sqlite::SqliteRow) -> Result<ApplicationView> {
@@ -244,6 +295,7 @@ fn row_to_view(row: sqlx::sqlite::SqliteRow) -> Result<ApplicationView> {
         next_action_due: row.try_get("next_action_due").map_err(db_err)?,
         last_activity_at: row.try_get("last_activity_at").map_err(db_err)?,
         updated_at: row.try_get("updated_at").map_err(db_err)?,
+        events: Vec::new(),
     })
 }
 
@@ -365,6 +417,10 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(events, 3);
+        assert_eq!(later.events.len(), 3);
+        assert_eq!(later.events[0].kind, "status_change");
+        assert_eq!(later.events[0].to_status.as_deref(), Some("interested"));
+        assert_eq!(later.events[2].to_status.as_deref(), Some("interviewing"));
 
         let page = job::list(&db, &JobFilter::default()).await.unwrap();
         assert_eq!(
@@ -417,6 +473,13 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(reminders, 1);
+        assert!(row
+            .events
+            .iter()
+            .any(|e| e.kind == "status_change" && e.to_status.as_deref() == Some("interested")));
+        assert!(row.events.iter().any(|e| {
+            e.kind == "reminder" && e.title.as_deref() == Some("email recruiter by 2026-09-01")
+        }));
 
         let page = job::list(&db, &JobFilter::default()).await.unwrap();
         assert_eq!(

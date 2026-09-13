@@ -2329,6 +2329,14 @@ mod tests {
         assert_eq!(tracked["status"], "applied");
         assert_eq!(tracked["next_action"], "email recruiter");
         assert_eq!(tracked["next_action_due"], "2026-09-01");
+        let kinds: Vec<&str> = tracked["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["kind"].as_str().unwrap())
+            .collect();
+        assert!(kinds.contains(&"status_change"), "{kinds:?}");
+        assert!(kinds.contains(&"reminder"), "{kinds:?}");
 
         let listed = app
             .clone()

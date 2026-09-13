@@ -645,6 +645,11 @@ fn print_application(row: &jobseeker_db::repo::application::ApplicationView) {
         print!("  next=-");
     }
     println!();
+    for ev in &row.events {
+        let when = ev.occurred_at.get(..10).unwrap_or(ev.occurred_at.as_str());
+        let title = ev.title.as_deref().unwrap_or(ev.kind.as_str());
+        println!("  {when}  {}  {title}", ev.kind);
+    }
 }
 
 fn read_paste(path: &PathBuf) -> Result<String> {

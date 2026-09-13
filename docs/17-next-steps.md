@@ -25,10 +25,17 @@ pair with a hashed, ingest-scoped device token.
 
 ## Do next (M0 remaining → M1)
 
-1. **File-based routes + virtualized job table.** Next action is in. Next is
-   file-based routes and TanStack Table.
+1. **File-based routes + virtualized job table.** Application timeline is in.
+   Next is file-based routes and TanStack Table. Kanban / ghosted auto-flag
+   are not this slice.
 
 ## Just shipped
+
+- **Application timeline.** `GET/PATCH /api/v1/jobs/:id/application` returns
+  `events` (oldest first): `status_change` and `reminder` rows the patch
+  already wrote. Job page **Your call** lists them. CLI `jobseeker track`
+  prints the same log. Append-only; nothing is edited in place. Kanban is
+  not this slice.
 
 - **Clearance, citizenship, preference.** Profile stores `citizenship`,
   `clearance_held`, `can_obtain_clearance` (evidence-bank import reads
