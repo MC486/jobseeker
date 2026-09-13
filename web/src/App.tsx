@@ -287,6 +287,7 @@ export function JobList() {
   const overdueCount = rows.filter(
     (row) => row.next_action_due && row.next_action_due < today,
   ).length;
+  const ghostedCount = rows.filter((row) => row.possibly_ghosted).length;
 
   function togglePick(id: string) {
     setPicked((prev) => {
@@ -332,6 +333,11 @@ export function JobList() {
           {overdueCount} overdue next action{overdueCount === 1 ? "" : "s"}
         </p>
       ) : null}
+      {ghostedCount > 0 ? (
+        <p className="text-sm text-amber-300">
+          {ghostedCount} possibly ghosted
+        </p>
+      ) : null}
       {jobs.isError && (
         <p className="text-sm text-red-300">
           {jobs.error instanceof Error ? jobs.error.message : "failed"}
@@ -356,6 +362,9 @@ export function JobList() {
                 <div className="text-sm text-zinc-400">
                   {row.company_name} · {row.work_mode} · {row.status}
                   {row.application_status ? ` · ${row.application_status}` : ""}
+                  {row.possibly_ghosted ? (
+                    <span className="text-amber-300"> · possibly ghosted</span>
+                  ) : null}
                   {row.primary_location ? ` · ${row.primary_location}` : ""}
                   {row.user_rating != null ? ` · ${"★".repeat(row.user_rating)}` : ""}
                 </div>
@@ -1018,6 +1027,25 @@ function JobTriage({ jobId, detail }: { jobId: string; detail: JobDetail }) {
           still live.
         </p>
       </div>
+      {application.data?.possibly_ghosted ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-700/50 bg-amber-950/40 px-3 py-2">
+          <p className="text-sm text-amber-200">
+            No activity in 14+ days — possibly ghosted
+          </p>
+          <button
+            type="button"
+            disabled={track.isPending}
+            onClick={() => {
+              if (window.confirm("Mark this application as ghosted?")) {
+                track.mutate({ status: "ghosted" });
+              }
+            }}
+            className="rounded-lg border border-amber-600 px-3 py-1 text-sm text-amber-100 disabled:opacity-50"
+          >
+            Mark ghosted
+          </button>
+        </div>
+      ) : null}
       <div className="flex flex-wrap items-end gap-4">
         <label className="text-sm text-zinc-300">
           Pipeline

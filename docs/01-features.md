@@ -119,7 +119,7 @@ Legend: **[M0]** foundation · **[M1]** core · **[M2]** matching · **[M3]** ge
 | H1 | Application records with status pipeline | M1 | `interested → preparing → applied → screening → interviewing → offer → accepted/rejected/withdrawn/ghosted`. |
 | H2 | Timeline of events | M1 | Status changes, emails, calls, interviews, assessments, offers, notes. |
 | H3 | Kanban board | M1 | Drag between statuses; WIP counts. |
-| H4 | Next-action + due date + reminders | M1 | The "what do I do today" list. Ghosting detection after N days. |
+| H4 | Next-action + due date + reminders | M1 | The "what do I do today" list. Possibly-ghosted flag after 14 days idle while waiting on the employer — does not auto-set status. |
 | H5 | Contacts | M2 | Recruiters, hiring managers, referrals, linked to company/application. |
 | H6 | Which resume did I send? | M3 | Application pins the exact `document` version. |
 | H7 | Funnel analytics | M4 | Conversion rates by source, title, seniority; response time distributions. |

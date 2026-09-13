@@ -25,11 +25,20 @@ pair with a hashed, ingest-scoped device token.
 
 ## Do next (M0 remaining → M1)
 
-1. **File-based routes + virtualized job table.** Application timeline is in.
-   Next is file-based routes and TanStack Table. Kanban / ghosted auto-flag
-   are not this slice.
+1. **Closing-soon with no application (FR-T-04).** Open jobs whose close date
+   is within N days and that have no application row. Possibly-ghosted is in.
+   Kanban and file-based routes are not this slice.
 
 ## Just shipped
+
+- **Possibly ghosted (FR-T-03).** Applications in `applied` / `screening` /
+  `interviewing` with no activity for 14 days get `possibly_ghosted: true` on
+  the application view and the job list row. The flag is derived from
+  `last_activity_at` — it does not auto-set status to `ghosted`. Job page
+  **Your call** shows an amber banner and Mark ghosted (user confirms).
+  List shows “possibly ghosted” plus a count on the loaded page. CLI
+  `track` / `list` print the same. Interested, preparing, offer, and
+  terminal statuses are never flagged.
 
 - **Application timeline.** `GET/PATCH /api/v1/jobs/:id/application` returns
   `events` (oldest first): `status_change` and `reminder` rows the patch

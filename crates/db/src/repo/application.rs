@@ -24,6 +24,9 @@ pub struct ApplicationView {
     pub next_action_due: Option<String>,
     pub last_activity_at: String,
     pub updated_at: String,
+    /// Waiting on the employer and idle ≥ 14 days. Never auto-sets status to `ghosted`.
+    #[serde(default)]
+    pub possibly_ghosted: bool,
     /// Oldest first. Append-only; GET/PATCH both return the current log.
     #[serde(default)]
     pub events: Vec<ApplicationEventView>,
@@ -285,16 +288,20 @@ pub async fn list_events(db: &Db, application_id: &str) -> Result<Vec<Applicatio
 }
 
 fn row_to_view(row: sqlx::sqlite::SqliteRow) -> Result<ApplicationView> {
+    let status: String = row.try_get("status").map_err(db_err)?;
+    let last_activity_at: String = row.try_get("last_activity_at").map_err(db_err)?;
+    let possibly_ghosted = jobseeker_core::domain::is_possibly_ghosted(&status, &last_activity_at);
     Ok(ApplicationView {
         id: row.try_get("id").map_err(db_err)?,
         job_id: row.try_get("job_id").map_err(db_err)?,
         profile_id: row.try_get("profile_id").map_err(db_err)?,
-        status: row.try_get("status").map_err(db_err)?,
+        status,
         applied_at: row.try_get("applied_at").map_err(db_err)?,
         next_action: row.try_get("next_action").map_err(db_err)?,
         next_action_due: row.try_get("next_action_due").map_err(db_err)?,
-        last_activity_at: row.try_get("last_activity_at").map_err(db_err)?,
+        last_activity_at,
         updated_at: row.try_get("updated_at").map_err(db_err)?,
+        possibly_ghosted,
         events: Vec::new(),
     })
 }
@@ -538,5 +545,71 @@ mod tests {
         )
         .await;
         assert!(matches!(err, Err(Error::BadRequest(_))));
+    }
+
+    #[tokio::test]
+    async fn possibly_ghosted_when_waiting_and_idle_not_when_recent_or_terminal() {
+        let db = Db::open_in_memory().await.unwrap();
+        let id = seed_job(&db).await;
+        let applied = set_status(&db, &id, ApplicationStatus::Applied)
+            .await
+            .unwrap();
+        assert!(
+            !applied.possibly_ghosted,
+            "fresh applied activity is not ghosted"
+        );
+
+        let stale = jobseeker_core::time::to_rfc3339(
+            &(jobseeker_core::time::now() - chrono::Duration::days(20)),
+        );
+        sqlx::query("UPDATE application SET last_activity_at = ?1 WHERE id = ?2")
+            .bind(&stale)
+            .bind(&applied.id)
+            .execute(db.writer())
+            .await
+            .unwrap();
+
+        let idle = get_for_job(&db, &id).await.unwrap().unwrap();
+        assert!(idle.possibly_ghosted);
+        let page = job::list(&db, &JobFilter::default()).await.unwrap();
+        assert!(page.items[0].possibly_ghosted);
+
+        set_status(&db, &id, ApplicationStatus::Offer)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE application SET last_activity_at = ?1 WHERE id = ?2")
+            .bind(&stale)
+            .bind(&applied.id)
+            .execute(db.writer())
+            .await
+            .unwrap();
+        let offer = get_for_job(&db, &id).await.unwrap().unwrap();
+        assert!(!offer.possibly_ghosted);
+        assert_eq!(offer.status, "offer");
+
+        set_status(&db, &id, ApplicationStatus::Accepted)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE application SET last_activity_at = ?1 WHERE id = ?2")
+            .bind(&stale)
+            .bind(&applied.id)
+            .execute(db.writer())
+            .await
+            .unwrap();
+        let accepted = get_for_job(&db, &id).await.unwrap().unwrap();
+        assert!(!accepted.possibly_ghosted);
+
+        let interested_job = seed_job(&db).await;
+        let interested = set_status(&db, &interested_job, ApplicationStatus::Interested)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE application SET last_activity_at = ?1 WHERE id = ?2")
+            .bind(&stale)
+            .bind(&interested.id)
+            .execute(db.writer())
+            .await
+            .unwrap();
+        let still_on_user = get_for_job(&db, &interested_job).await.unwrap().unwrap();
+        assert!(!still_on_user.possibly_ghosted);
     }
 }

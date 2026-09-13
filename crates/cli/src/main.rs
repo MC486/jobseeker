@@ -292,6 +292,9 @@ async fn main() -> Result<()> {
                 if let Some(act) = &row.next_action {
                     print!("  next {act}");
                 }
+                if row.possibly_ghosted {
+                    print!("  possibly ghosted");
+                }
                 println!();
             }
             if let Some(c) = page.next_cursor {
@@ -643,6 +646,9 @@ fn print_application(row: &jobseeker_db::repo::application::ApplicationView) {
         print!("  next={act}");
     } else {
         print!("  next=-");
+    }
+    if row.possibly_ghosted {
+        print!("  possibly ghosted");
     }
     println!();
     for ev in &row.events {
