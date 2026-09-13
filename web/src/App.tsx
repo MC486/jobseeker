@@ -1394,7 +1394,9 @@ export function JobPage() {
               <li key={r.id}>
                 <div>
                   <span className="text-zinc-500">{r.necessity}</span> {r.text}
-                  {r.is_blocker ? " · blocker" : ""}
+                  {r.is_blocker && verdict?.status !== "met"
+                    ? " · blocker"
+                    : ""}
                   {verdict ? (
                     <span className="ml-2 text-zinc-400">
                       · {verdict.status} ({Math.round(verdict.score * 100)}%)
