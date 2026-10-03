@@ -32,11 +32,10 @@ export type JobSort = "overall" | "skills" | "years";
 
 export function RootLayout() {
   const me = useQuery({ queryKey: keys.me, queryFn: fetchers.me, staleTime: 60_000 });
-  const wide = useRouterState({
-    select: (s) => s.location.pathname === "/jobs/compare",
-  });
+  const path = useRouterState({ select: (s) => s.location.pathname });
+  const shell =
+    path === "/pipeline" ? "max-w-[100rem]" : path === "/jobs/compare" ? "max-w-6xl" : "max-w-4xl";
   useEffect(() => subscribeQueryEvents(), []);
-  const shell = wide ? "max-w-6xl" : "max-w-4xl";
 
   return (
     <div className="min-h-screen">
@@ -48,6 +47,9 @@ export function RootLayout() {
           <nav className="flex gap-4 text-sm text-zinc-400">
             <Link to="/jobs" className="hover:text-zinc-100">
               Jobs
+            </Link>
+            <Link to="/pipeline" className="hover:text-zinc-100">
+              Pipeline
             </Link>
             <Link to="/profile" className="hover:text-zinc-100">
               Profile

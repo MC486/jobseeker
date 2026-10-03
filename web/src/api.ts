@@ -259,8 +259,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  jobs: (q?: string) =>
-    request<Page<JobListRow>>(`/api/v1/jobs${q ? `?q=${encodeURIComponent(q)}` : ""}`),
+  jobs: (q?: string, limit?: number) => {
+    const params = new URLSearchParams();
+    if (q) params.set("q", q);
+    if (limit != null) params.set("limit", String(limit));
+    const qs = params.toString();
+    return request<Page<JobListRow>>(`/api/v1/jobs${qs ? `?${qs}` : ""}`);
+  },
   job: (id: string) => request<JobDetail>(`/api/v1/jobs/${id}`),
   jobMatch: (id: string) => request<MatchSummary>(`/api/v1/jobs/${id}/match`),
   patchJob: (id: string, body: JobPatch) =>

@@ -174,6 +174,9 @@ GET  /api/v1/templates                           available resume templates
 
 ### Applications
 
+The web `/pipeline` board reads `GET /api/v1/jobs?limit=200` and moves cards
+with `PATCH /api/v1/jobs/:id/application`. There is no separate kanban URL.
+
 ```
 GET  /api/v1/jobs/:id/application           default-profile row, or null.
                                     Includes `events` (oldest first):
