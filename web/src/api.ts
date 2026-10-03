@@ -258,7 +258,17 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
+export type TodayBoard = {
+  today: string;
+  overdue: JobListRow[];
+  due_soon: JobListRow[];
+  possibly_ghosted: JobListRow[];
+  closing_soon: JobListRow[];
+  truncated: boolean;
+};
+
 export const api = {
+  today: () => request<TodayBoard>("/api/v1/today"),
   jobs: (q?: string, limit?: number) => {
     const params = new URLSearchParams();
     if (q) params.set("q", q);

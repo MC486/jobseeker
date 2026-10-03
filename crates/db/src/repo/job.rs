@@ -451,6 +451,61 @@ pub async fn closing_soon(db: &Db, days: i64, limit: i64) -> Result<Vec<JobListR
         .collect())
 }
 
+/// Overdue and upcoming next actions, plus the ghosted and closing-soon nags.
+/// One row may appear in more than one list. Drawn from the first page of jobs
+/// (200); `truncated` is set when a later page exists.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct TodayBoard {
+    pub today: String,
+    pub overdue: Vec<JobListRow>,
+    pub due_soon: Vec<JobListRow>,
+    pub possibly_ghosted: Vec<JobListRow>,
+    pub closing_soon: Vec<JobListRow>,
+    pub truncated: bool,
+}
+
+pub async fn today(db: &Db) -> Result<TodayBoard> {
+    use jobseeker_core::domain::{classify_due, utc_day, DueWhen};
+
+    let now = jobseeker_core::time::now();
+    let today = utc_day(now);
+    let page = list(
+        db,
+        &JobFilter {
+            limit: Some(200),
+            ..Default::default()
+        },
+    )
+    .await?;
+    let mut overdue = Vec::new();
+    let mut due_soon = Vec::new();
+    let mut possibly_ghosted = Vec::new();
+    let mut closing_soon = Vec::new();
+    for row in page.items {
+        match classify_due(row.next_action_due.as_deref(), &today) {
+            DueWhen::Overdue => overdue.push(row.clone()),
+            DueWhen::Soon => due_soon.push(row.clone()),
+            DueWhen::None | DueWhen::Later => {}
+        }
+        if row.possibly_ghosted {
+            possibly_ghosted.push(row.clone());
+        }
+        if row.closing_soon_unapplied {
+            closing_soon.push(row);
+        }
+    }
+    overdue.sort_by(|a, b| a.next_action_due.cmp(&b.next_action_due));
+    due_soon.sort_by(|a, b| a.next_action_due.cmp(&b.next_action_due));
+    Ok(TodayBoard {
+        today,
+        overdue,
+        due_soon,
+        possibly_ghosted,
+        closing_soon,
+        truncated: page.next_cursor.is_some(),
+    })
+}
+
 /// Allocate this job's FTS surrogate rowid and (re)index it.
 ///
 /// Contentless FTS5 rows cannot be updated in place — a change is delete-then-insert, and
@@ -2417,5 +2472,115 @@ mod tests {
         assert!(titles.contains(&"Closing Soon"), "{titles:?}");
         assert!(!titles.contains(&"Already Applied"), "{titles:?}");
         assert!(!titles.contains(&"Closes Next Month"), "{titles:?}");
+    }
+
+    #[tokio::test]
+    async fn today_splits_overdue_soon_ghosted_and_closing() {
+        let db = Db::open_in_memory().await.unwrap();
+        let overdue = insert_job(
+            &db,
+            "Acme",
+            "Overdue Followup",
+            JobStatus::Open,
+            WorkMode::Remote,
+            None,
+            SalaryPeriod::Year,
+            "2026-09-01T00:00:00Z",
+        )
+        .await;
+        let soon = insert_job(
+            &db,
+            "Acme",
+            "Due This Week",
+            JobStatus::Open,
+            WorkMode::Remote,
+            None,
+            SalaryPeriod::Year,
+            "2026-09-02T00:00:00Z",
+        )
+        .await;
+        let idle = insert_job(
+            &db,
+            "Acme",
+            "Idle Application",
+            JobStatus::Open,
+            WorkMode::Remote,
+            None,
+            SalaryPeriod::Year,
+            "2026-09-03T00:00:00Z",
+        )
+        .await;
+        let closing = insert_job(
+            &db,
+            "Acme",
+            "Closes Friday",
+            JobStatus::Open,
+            WorkMode::Remote,
+            None,
+            SalaryPeriod::Year,
+            "2026-09-04T00:00:00Z",
+        )
+        .await;
+
+        let yesterday = (chrono::Utc::now().date_naive() - chrono::Duration::days(1))
+            .format("%Y-%m-%d")
+            .to_string();
+        let in_two = (chrono::Utc::now().date_naive() + chrono::Duration::days(2))
+            .format("%Y-%m-%d")
+            .to_string();
+        let in_three = jobseeker_core::time::to_rfc3339(
+            &(jobseeker_core::time::now() + chrono::Duration::days(3)),
+        );
+        let stale = jobseeker_core::time::to_rfc3339(
+            &(jobseeker_core::time::now() - chrono::Duration::days(20)),
+        );
+
+        crate::repo::application::patch(
+            &db,
+            &overdue,
+            crate::repo::application::ApplicationPatch {
+                next_action: Some("email recruiter".into()),
+                next_action_due: Some(yesterday),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        crate::repo::application::patch(
+            &db,
+            &soon,
+            crate::repo::application::ApplicationPatch {
+                next_action: Some("prep loop".into()),
+                next_action_due: Some(in_two),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        crate::repo::application::set_status(&db, &idle, ApplicationStatus::Applied)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE application SET last_activity_at = ?1 WHERE job_id = ?2")
+            .bind(&stale)
+            .bind(idle.as_str())
+            .execute(db.writer())
+            .await
+            .unwrap();
+        sqlx::query("UPDATE job SET closes_at = ?1 WHERE id = ?2")
+            .bind(&in_three)
+            .bind(closing.as_str())
+            .execute(db.writer())
+            .await
+            .unwrap();
+
+        let board = today(&db).await.unwrap();
+        fn titles(rows: &[JobListRow]) -> Vec<&str> {
+            rows.iter().map(|r| r.title.as_str()).collect()
+        }
+        assert_eq!(titles(&board.overdue), vec!["Overdue Followup"]);
+        assert_eq!(titles(&board.due_soon), vec!["Due This Week"]);
+        assert_eq!(titles(&board.possibly_ghosted), vec!["Idle Application"]);
+        assert_eq!(titles(&board.closing_soon), vec!["Closes Friday"]);
+        assert!(!board.truncated);
     }
 }

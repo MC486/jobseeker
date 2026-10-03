@@ -1,4 +1,4 @@
-//! Process entrypoint: `jobseeker serve`, `add`, `list`, `show`, `triage`, `track`, `merge`, `split`, `duplicates`, `conflicts`, `migrate`, `openapi`, `reconcile`, `profile`.
+//! Process entrypoint: `jobseeker serve`, `add`, `list`, `today`, `show`, `triage`, `track`, `merge`, `split`, `duplicates`, `conflicts`, `migrate`, `openapi`, `reconcile`, `profile`.
 
 use std::io::{self, Read};
 use std::path::PathBuf;
@@ -45,6 +45,8 @@ enum Command {
         #[arg(long)]
         async_queue: bool,
     },
+    /// Overdue and upcoming next actions, plus ghosted and closing-soon nags.
+    Today,
     /// List saved jobs.
     List {
         #[arg(long)]
@@ -256,6 +258,18 @@ async fn main() -> Result<()> {
                 if let Some(row) = page.items.first() {
                     println!("{} — {} ({})", row.title, row.company_name, row.id);
                 }
+            }
+        }
+        Command::Today => {
+            let pipeline = Pipeline::open(config).await?;
+            let board = job::today(&pipeline.db).await?;
+            println!("today {}", board.today);
+            print_today("overdue", &board.overdue);
+            print_today("due soon", &board.due_soon);
+            print_today("possibly ghosted", &board.possibly_ghosted);
+            print_today("closing soon", &board.closing_soon);
+            if board.truncated {
+                println!("later pages exist; this is the first 200 jobs");
             }
         }
         Command::List { query, limit } => {
@@ -631,6 +645,29 @@ async fn main() -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn print_today(label: &str, rows: &[jobseeker_db::repo::job::JobListRow]) {
+    println!("{label} ({})", rows.len());
+    if rows.is_empty() {
+        println!("  (none)");
+        return;
+    }
+    for row in rows {
+        print!("  {}  {} — {}", row.id, row.title, row.company_name);
+        if let Some(due) = &row.next_action_due {
+            print!("  due {due}");
+        }
+        if let Some(act) = &row.next_action {
+            print!("  next {act}");
+        }
+        if let Some(closes) = row.closes_at.as_deref().and_then(|s| s.get(..10)) {
+            if row.closing_soon_unapplied {
+                print!("  closes {closes}");
+            }
+        }
+        println!();
+    }
 }
 
 fn print_application(row: &jobseeker_db::repo::application::ApplicationView) {

@@ -16,6 +16,7 @@ import {
 } from "./App";
 import { parseCompareIds } from "./compare";
 import { PipelinePage } from "./Pipeline";
+import { TodayPage } from "./Today";
 
 export type JobsSearch = {
   q?: string;
@@ -44,6 +45,12 @@ const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/",
   component: Home,
+});
+
+const todayRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/today",
+  component: TodayPage,
 });
 
 const jobsRoute = createRoute({
@@ -88,6 +95,7 @@ const taskRoute = createRoute({
 
 const routeTree = rootRoute.addChildren([
   indexRoute,
+  todayRoute,
   jobsRoute,
   compareRoute,
   jobRoute,

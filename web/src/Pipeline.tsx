@@ -66,6 +66,7 @@ export function PipelinePage() {
       qc.setQueryData(keys.application(jobId), row);
       qc.invalidateQueries({ queryKey: ["jobs"] });
       qc.invalidateQueries({ queryKey: keys.pipeline });
+      qc.invalidateQueries({ queryKey: keys.today });
       qc.invalidateQueries({ queryKey: keys.job(jobId) });
       setError(null);
     },

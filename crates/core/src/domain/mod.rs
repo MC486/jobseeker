@@ -12,6 +12,7 @@ pub mod requirement;
 pub mod salary;
 pub mod scoring;
 pub mod task;
+pub mod today;
 
 pub use capture::{Capture, CaptureMethod};
 pub use company::Company;
@@ -28,3 +29,4 @@ pub use requirement::{Requirement, Skill};
 pub use salary::{RawSalary, Salary, SalaryPeriod};
 pub use scoring::{MatchScore, RequirementMatch, Subscores, VerdictStatus};
 pub use task::{Task, TaskKind, TaskStatus};
+pub use today::{classify_due, utc_day, DueWhen, DUE_SOON_DAYS};
