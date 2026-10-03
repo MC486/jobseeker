@@ -36,8 +36,9 @@ pair with a hashed, ingest-scoped device token.
   virtualized table (title, company, comp, where, posted, closes, overall /
   skills / years, status) over the first 200 jobs. Search and sort stay in
   the URL. Job detail and compare stay sibling routes (`jobs_.$jobId`,
-  `jobs_.compare`) so the list does not wrap them. Facets, saved views, and
-  infinite scroll are not this slice.
+  `jobs_.compare`) so the list does not wrap them. JSON-LD `unitText` `YEAR`
+  is written as `per year` so the comp column gets cents. Facets, saved
+  views, and infinite scroll are not this slice.
 
 - **Today list (FR-T-02 upcoming).** `GET /api/v1/today` buckets the first 200
   jobs into overdue next actions, due within 7 days (including today),

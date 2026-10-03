@@ -386,15 +386,29 @@ fn salary_from(posting: &Value) -> Option<RawSalary> {
             })
         }
     }
-    if !period.is_empty() {
+    let phrase = period_phrase(&period);
+    if !phrase.is_empty() {
         text.push(' ');
-        text.push_str(&period);
+        text.push_str(&phrase);
     }
     Some(RawSalary {
         text,
         country_hint: None,
         source_kind: None,
     })
+}
+
+/// schema.org `unitText` is `YEAR` / `HOUR`, which the salary parser does not treat as a period.
+fn period_phrase(unit: &str) -> String {
+    match unit.trim().to_ascii_lowercase().as_str() {
+        "year" | "yr" | "annum" => "per year".to_string(),
+        "month" | "mo" => "per month".to_string(),
+        "week" | "wk" => "per week".to_string(),
+        "day" => "per day".to_string(),
+        "hour" | "hr" => "per hour".to_string(),
+        "" => String::new(),
+        other => other.to_string(),
+    }
 }
 
 fn numberish(value: Option<&Value>) -> Option<f64> {
@@ -448,7 +462,9 @@ mod tests {
         assert_eq!(job.work_mode.unwrap().value, WorkMode::Remote);
         assert_eq!(job.employment_type.unwrap().value, EmploymentType::FullTime);
         assert_eq!(job.locations[0].value.text, "US");
-        assert!(job.salary.unwrap().value.text.contains("185000"));
+        let salary = job.salary.unwrap().value.text;
+        assert!(salary.contains("185000"), "{salary}");
+        assert!(salary.contains("per year"), "{salary}");
         assert!(job
             .description_md
             .unwrap()

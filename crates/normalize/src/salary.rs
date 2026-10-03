@@ -284,6 +284,7 @@ mod tests {
             "$185k - $225k annually",
             "185,000 - 225,000 USD per year",
             "USD 185000 to 225000 a year",
+            "USD 185000 - 225000 per year",
         ] {
             let s = p(text);
             assert_eq!(s.min_cents, Some(185_000_00), "min for {text:?}");
