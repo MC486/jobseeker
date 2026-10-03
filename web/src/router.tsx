@@ -15,6 +15,7 @@ import {
   type JobSort,
 } from "./App";
 import { parseCompareIds } from "./compare";
+import { PipelinePage } from "./Pipeline";
 
 export type JobsSearch = {
   q?: string;
@@ -67,6 +68,12 @@ const jobRoute = createRoute({
   component: JobPage,
 });
 
+const pipelineRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/pipeline",
+  component: PipelinePage,
+});
+
 const profileRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/profile",
@@ -84,6 +91,7 @@ const routeTree = rootRoute.addChildren([
   jobsRoute,
   compareRoute,
   jobRoute,
+  pipelineRoute,
   profileRoute,
   taskRoute,
 ]);

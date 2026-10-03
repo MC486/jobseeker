@@ -25,10 +25,16 @@ pair with a hashed, ingest-scoped device token.
 
 ## Do next (M0 remaining → M1)
 
-1. **Kanban `/pipeline`.** Closing-soon and possibly-ghosted are in. File-based
-   routes are not this slice.
+1. **File-based routes + virtualized job table.** The pipeline board is in.
+   File-based routes are still not this slice.
 
 ## Just shipped
+
+- **Pipeline board.** `/pipeline` is a kanban of jobs that already have an
+  application status. Columns follow the pipeline order and show a count.
+  Drag a card, or use Move, to `PATCH` that job's application. Posting
+  status is unchanged. The board reads `GET /api/v1/jobs?limit=200` — no
+  new endpoint. File-based routes are not this slice.
 
 - **Closing soon with no application (FR-T-04).** Open jobs whose close date
   is within 7 days and that have no application — or are still `interested` /

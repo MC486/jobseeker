@@ -91,7 +91,12 @@ The job page **Your call** block sets pipeline status (applied /
 interviewing / …), a next action with a due date, posting status, a 0–5
 rating, notes, and archive. When an application exists, **Timeline** lists
 status changes and next-action reminders oldest-first. Stars, pipeline
-label, and overdue next actions also show on the list. Kanban is not wired.
+label, and overdue next actions also show on the list.
+
+**Pipeline** (`/pipeline`) is the kanban: one column per application status,
+with a count. Cards are jobs that already have a pipeline status. Drag a
+card, or use Move, to change that status. This does not change posting
+liveness. The board is the first 200 jobs from `GET /api/v1/jobs`.
 
 **Job detail** is the center of the product. Left: structured facts (comp, location, mode,
 dates, seniority, blockers) each with a subtle provenance dot — hover shows "from Greenhouse

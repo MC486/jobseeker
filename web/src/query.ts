@@ -14,6 +14,7 @@ export const queryClient = new QueryClient({
 export const keys = {
   me: ["me"] as const,
   jobs: (q?: string) => ["jobs", { q: q ?? "" }] as const,
+  pipeline: ["pipeline"] as const,
   job: (id: string) => ["job", id] as const,
   match: (id: string) => ["match", id] as const,
   duplicates: (id: string) => ["duplicates", id] as const,
@@ -34,6 +35,7 @@ export function subscribeQueryEvents(): () => void {
       case "job.created":
       case "job.updated":
         queryClient.invalidateQueries({ queryKey: ["jobs"] });
+        queryClient.invalidateQueries({ queryKey: keys.pipeline });
         if (event.entity_id) {
           queryClient.invalidateQueries({ queryKey: keys.job(event.entity_id) });
           queryClient.invalidateQueries({ queryKey: ["duplicates"] });
@@ -59,6 +61,7 @@ export function subscribeQueryEvents(): () => void {
 export const fetchers = {
   me: () => api.me(),
   jobs: (q?: string) => api.jobs(q),
+  pipeline: () => api.jobs(undefined, 200),
   job: (id: string) => api.job(id),
   match: (id: string) => api.jobMatch(id),
   duplicates: (id: string) => api.duplicates(id),
