@@ -62,7 +62,7 @@ export function subscribeQueryEvents(): () => void {
 
 export const fetchers = {
   me: () => api.me(),
-  jobs: (q?: string) => api.jobs(q),
+  jobs: (q?: string) => api.jobs(q, 200),
   pipeline: () => api.jobs(undefined, 200),
   today: () => api.today(),
   job: (id: string) => api.job(id),

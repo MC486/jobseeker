@@ -6,7 +6,7 @@
 |---|---|---|
 | Framework | React 19 + TypeScript (strict) | ecosystem depth for tables/virtualization/editors |
 | Build | Vite 7 | fast dev, good code splitting, brotli output |
-| Routing | TanStack Router (code-based tree; file-based later) | typed params/search — filters live in the URL safely |
+| Routing | TanStack Router (file-based `web/src/routes`) | typed params/search — filters live in the URL safely |
 | Server state | TanStack Query | caching, invalidation, optimistic updates |
 | Styling | Tailwind CSS v4 | no naming overhead, dark mode, tiny output |
 | Components | Radix primitives + local components | accessible, unstyled, no design-system lock-in |
@@ -110,13 +110,13 @@ highlights the originating sentence in the description. Right: match summary wit
 bars, top strengths, top gaps, and the actions (Tailor resume · Draft cover letter · Track
 application · Refresh · Archive).
 
-**Job list** is a dense virtualized table: title, company, comp, location/mode, posted age,
-close-date urgency, match overall plus the diagnostic Skills / Years split, status. Facet
-rail on the left with counts. Column set and saved views are user-configurable. Bulk select
-for tag/archive/rescore. Skills and Years do not change overall; they exist so a 5-year
-wishlist can be compared across rows without opening each job. Search (`?q=`) and sort
-(`?sort=overall|skills|years`) live in the URL; sort reorders the loaded page only.
-Checkboxes select 2–4 rows for `/jobs/compare?ids=`.
+**Job list** (`/jobs`) is a dense virtualized table of the first 200 jobs: title,
+company, comp, location/mode, posted age, close date, match overall plus the diagnostic
+Skills / Years split, and status. Only the rows in the scroll window are mounted.
+Search (`?q=`) and sort (`?sort=overall|skills|years`) live in the URL; sort reorders
+the loaded page only. Checkboxes select 2–4 rows for `/jobs/compare?ids=`. A facet
+rail, saved views, and bulk tag/archive/rescore are not this table. Skills and Years
+do not change overall.
 
 **Experience bank editor** is a two-pane outline: roles on the left, accomplishments on the
 right with inline metric fields, skill chips with autocomplete, strength stars, and a

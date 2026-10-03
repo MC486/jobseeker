@@ -25,10 +25,19 @@ pair with a hashed, ingest-scoped device token.
 
 ## Do next (M0 remaining → M1)
 
-1. **File-based routes + virtualized job table.** The today list is in.
-   File-based routes are still not this slice.
+1. **Job detail sections.** `/jobs/$jobId` is still one scroll (facts, your
+   call, match, requirements, sources). The route tree's overview /
+   requirements / match / description / sources sections are not this slice.
 
 ## Just shipped
+
+- **File-based routes + virtualized job table.** Routes live in
+  `web/src/routes` and `tsr generate` writes `routeTree.gen.ts`. `/jobs` is a
+  virtualized table (title, company, comp, where, posted, closes, overall /
+  skills / years, status) over the first 200 jobs. Search and sort stay in
+  the URL. Job detail and compare stay sibling routes (`jobs_.$jobId`,
+  `jobs_.compare`) so the list does not wrap them. Facets, saved views, and
+  infinite scroll are not this slice.
 
 - **Today list (FR-T-02 upcoming).** `GET /api/v1/today` buckets the first 200
   jobs into overdue next actions, due within 7 days (including today),
@@ -215,5 +224,5 @@ A LinkedIn URL must still fail with `needs_browser` and must not be fetched.
 
 - `crates/api/src/lib.rs` — SSE events, password login
 - `crates/pipeline/src/lib.rs` — `refresh_listing`, reconcile handlers
-- `web/src/router.tsx` — TanStack route tree; `web/src/compare.ts` — compare ids
+- `web/src/routes/` — file-based TanStack routes; `web/src/compare.ts` — compare ids
 - `extension/popup.js` — capture polish / origin allowlist

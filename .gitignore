@@ -22,6 +22,7 @@ jobseeker.toml
 
 # Generated artifacts
 /openapi.json
+.tanstack/
 
 # Editors and OS
 .DS_Store
