@@ -114,44 +114,35 @@ export function PipelinePage() {
           Nothing tracked yet. Set a pipeline status on a job to put it here.
         </p>
       ) : null}
-      <div className="flex gap-3 overflow-x-auto pb-4">
+      <div className="flex overflow-x-auto pb-4">
         {COLUMNS.map((status) => {
           const cards = byStatus.get(status) ?? [];
           const hot = over === status;
           return (
-            <section
-              key={status}
-              className={`w-56 shrink-0 rounded-xl border bg-zinc-900/40 ${
-                hot ? "border-indigo-400" : "border-zinc-800"
-              }`}
-              onDragOver={(e) => {
-                e.preventDefault();
-                setOver(status);
-              }}
-              onDragLeave={() => setOver((current) => (current === status ? null : current))}
-              onDrop={(e) => {
-                e.preventDefault();
-                setOver(null);
-                const jobId = e.dataTransfer.getData("text/plain");
-                if (jobId) dropOn(status, jobId);
-              }}
-            >
-              <header className="flex items-baseline justify-between px-3 py-2">
-                <h2 className="text-sm font-medium capitalize text-zinc-200">{status}</h2>
-                <span className="text-xs text-zinc-500" aria-label={`${cards.length} in ${status}`}>
-                  {cards.length}
-                </span>
-              </header>
-              <ul className="min-h-40 space-y-2 px-2 pb-3">
-                {cards.map((row) => (
-                  <PipelineCard
-                    key={row.id}
-                    row={row}
-                    pending={move.isPending}
-                    onMove={(next) => dropOn(next, row.id)}
-                  />
-                ))}
-              </ul>
+            <section key={status} data-column={status} className="w-60 shrink-0 px-1.5">
+              <div
+                className={`min-h-64 rounded-xl border bg-zinc-900/40 ${
+                  hot ? "border-indigo-400" : "border-zinc-800"
+                }`}
+              >
+                <header className="flex items-baseline justify-between px-3 py-2">
+                  <h2 className="text-sm font-medium capitalize text-zinc-200">{status}</h2>
+                  <span className="text-xs text-zinc-500" aria-label={`${cards.length} in ${status}`}>
+                    {cards.length}
+                  </span>
+                </header>
+                <ul className="min-h-40 space-y-2 px-2 pb-3">
+                  {cards.map((row) => (
+                    <PipelineCard
+                      key={row.id}
+                      row={row}
+                      pending={move.isPending}
+                      onHover={setOver}
+                      onMove={(next) => dropOn(next, row.id)}
+                    />
+                  ))}
+                </ul>
+              </div>
             </section>
           );
         })}
@@ -160,27 +151,54 @@ export function PipelinePage() {
   );
 }
 
+function columnAt(x: number, y: number): Column | null {
+  const raw = document.elementFromPoint(x, y)?.closest("[data-column]")?.getAttribute("data-column");
+  return COLUMNS.find((status) => status === raw) ?? null;
+}
+
 function PipelineCard({
   row,
   pending,
+  onHover,
   onMove,
 }: {
   row: JobListRow;
   pending: boolean;
+  onHover: (status: Column | null) => void;
   onMove: (status: Column) => void;
 }) {
+  const [dragging, setDragging] = useState(false);
   const today = utcToday();
   const overdue = Boolean(row.next_action_due && row.next_action_due < today);
   return (
     <li
-      draggable
-      onDragStart={(e) => {
-        e.dataTransfer.setData("text/plain", row.id);
-        e.dataTransfer.effectAllowed = "move";
+      onPointerDown={(e) => {
+        if ((e.target as HTMLElement).closest("a, select, label")) return;
+        e.currentTarget.setPointerCapture(e.pointerId);
+        setDragging(true);
       }}
-      className="cursor-grab rounded-lg border border-zinc-800 bg-zinc-950 p-2 active:cursor-grabbing"
+      onPointerMove={(e) => {
+        if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
+        onHover(columnAt(e.clientX, e.clientY));
+      }}
+      onPointerUp={(e) => {
+        if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
+        const next = columnAt(e.clientX, e.clientY);
+        setDragging(false);
+        onHover(null);
+        if (next) onMove(next);
+      }}
+      onPointerCancel={() => {
+        setDragging(false);
+        onHover(null);
+      }}
+      className={`cursor-grab rounded-lg border border-zinc-800 bg-zinc-950 p-2 active:cursor-grabbing ${
+        dragging ? "pointer-events-none opacity-60" : ""
+      }`}
     >
+      <p className="text-[10px] uppercase tracking-wide text-zinc-600">Drag</p>
       <Link
+        draggable={false}
         to="/jobs/$jobId"
         params={{ jobId: row.id }}
         className="text-sm font-medium text-zinc-100 hover:text-indigo-300"
@@ -209,6 +227,7 @@ function PipelineCard({
       <label className="mt-2 block text-[11px] text-zinc-600">
         Move
         <select
+          draggable={false}
           className="mt-0.5 block w-full rounded border border-zinc-800 bg-zinc-900 px-1 py-0.5 text-xs text-zinc-300"
           value={row.application_status ?? ""}
           disabled={pending}
