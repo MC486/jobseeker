@@ -64,6 +64,11 @@ GET  /api/v1/events?since=<event_id>   → SSE stream of DomainEvent (backfills 
 ### Jobs
 
 ```
+GET  /api/v1/today                → {today, overdue, due_soon, possibly_ghosted,
+                                    closing_soon, truncated}
+                                    first 200 jobs. A row may appear in more
+                                    than one list. due_soon is today through
+                                    today+7. truncated when a later page exists.
 GET  /api/v1/jobs                 → {items: JobListRow[], next_cursor}
      each item includes match_overall plus diagnostic skills_coverage / years_fit
      (same split as GET /api/v1/jobs/:id/match; they do not change overall)

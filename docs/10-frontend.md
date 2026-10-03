@@ -93,6 +93,10 @@ rating, notes, and archive. When an application exists, **Timeline** lists
 status changes and next-action reminders oldest-first. Stars, pipeline
 label, and overdue next actions also show on the list.
 
+**Today** (`/today`) is the follow-up list: overdue next actions, due within
+7 days, possibly ghosted, and closing soon with no application. It reads
+`GET /api/v1/today`.
+
 **Pipeline** (`/pipeline`) is the kanban: one column per application status,
 with a count. Cards are jobs that already have a pipeline status. Drag a
 card, or use Move, to change that status. This does not change posting

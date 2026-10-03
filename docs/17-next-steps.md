@@ -25,10 +25,16 @@ pair with a hashed, ingest-scoped device token.
 
 ## Do next (M0 remaining → M1)
 
-1. **File-based routes + virtualized job table.** The pipeline board is in.
+1. **File-based routes + virtualized job table.** The today list is in.
    File-based routes are still not this slice.
 
 ## Just shipped
+
+- **Today list (FR-T-02 upcoming).** `GET /api/v1/today` buckets the first 200
+  jobs into overdue next actions, due within 7 days (including today),
+  possibly ghosted, and closing soon with no application. A job can sit in
+  more than one list. `/today` shows them. CLI: `jobseeker today`. Due today
+  is "due soon", not overdue. File-based routes are not this slice.
 
 - **Pipeline board.** `/pipeline` is a kanban of jobs that already have an
   application status. Columns follow the pipeline order and show a count.

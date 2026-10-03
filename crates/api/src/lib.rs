@@ -222,6 +222,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/ingest/paste", post(ingest_paste))
         .route("/api/v1/ingest/capture", post(ingest_capture))
         .route("/api/v1/jobs", get(list_jobs))
+        .route("/api/v1/today", get(today))
         .route("/api/v1/jobs/{id}", get(get_job).patch(patch_job))
         .route("/api/v1/jobs/{id}/match", get(get_job_match))
         .route("/api/v1/jobs/{id}/merge", post(merge_job))
@@ -420,6 +421,14 @@ async fn list_jobs(
         items: page.items,
         next_cursor: page.next_cursor,
     }))
+}
+
+#[utoipa::path(get, path = "/api/v1/today", responses((status = 200)))]
+async fn today(
+    State(state): State<AppState>,
+) -> ApiResult<Json<jobseeker_db::repo::job::TodayBoard>> {
+    let board = job::today(&state.pipeline.db).await.map_err(ApiError)?;
+    Ok(Json(board))
 }
 
 #[utoipa::path(get, path = "/api/v1/jobs/{id}", responses((status = 200), (status = 404)))]

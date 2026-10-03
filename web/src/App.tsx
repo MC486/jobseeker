@@ -45,6 +45,9 @@ export function RootLayout() {
             jobseeker
           </Link>
           <nav className="flex gap-4 text-sm text-zinc-400">
+            <Link to="/today" className="hover:text-zinc-100">
+              Today
+            </Link>
             <Link to="/jobs" className="hover:text-zinc-100">
               Jobs
             </Link>
@@ -1037,6 +1040,7 @@ function JobTriage({ jobId, detail }: { jobId: string; detail: JobDetail }) {
     onSuccess: (row) => {
       qc.setQueryData(keys.application(jobId), row);
       qc.invalidateQueries({ queryKey: ["jobs"] });
+      qc.invalidateQueries({ queryKey: keys.today });
       qc.invalidateQueries({ queryKey: keys.job(jobId) });
       setError(null);
     },
