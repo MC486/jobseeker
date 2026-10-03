@@ -261,7 +261,7 @@ function scoreOf(row: JobListRow, sort: JobSort): number {
 }
 
 const JOB_COLS =
-  "grid grid-cols-[1.75rem_minmax(12rem,1.7fr)_minmax(7rem,0.9fr)_minmax(7rem,0.9fr)_6.5rem_3.25rem_5.25rem_3.5rem_3.5rem_3.5rem_minmax(5.5rem,0.7fr)] items-center gap-x-3 px-3";
+  "grid grid-cols-[1.75rem_minmax(12rem,1.7fr)_minmax(7rem,0.9fr)_minmax(7rem,0.9fr)_9rem_3.25rem_5.75rem_3.5rem_3.5rem_3.5rem_minmax(5.5rem,0.7fr)] items-center gap-x-3 px-3";
 
 function fmtMoney(cents: number, period: string): string {
   const amount = cents / 100;
@@ -402,7 +402,7 @@ export function JobList() {
         </p>
       )}
       <div className="overflow-x-auto rounded-xl border border-zinc-800 text-sm">
-        <div className="min-w-[66rem]">
+        <div className="min-w-[70rem]">
         <div className={`${JOB_COLS} border-b border-zinc-800 py-2 text-xs text-zinc-500`}>
           <span />
           <span>Title</span>
@@ -466,7 +466,7 @@ export function JobList() {
                     </div>
                     <span className="truncate text-zinc-300">{row.company_name}</span>
                     <span className="truncate text-zinc-400">{where || "—"}</span>
-                    <span className="truncate text-zinc-300">{fmtComp(row)}</span>
+                    <span className="whitespace-nowrap text-zinc-300">{fmtComp(row)}</span>
                     <span className="text-zinc-400">{postedAge(row.posted_at)}</span>
                     <span className={row.closing_soon_unapplied ? "text-amber-300" : "text-zinc-400"}>
                       {row.closes_at ? row.closes_at.slice(0, 10) : "—"}
