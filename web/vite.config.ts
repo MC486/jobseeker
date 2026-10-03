@@ -1,9 +1,17 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [
+    tanstackRouter({
+      target: "react",
+      autoCodeSplitting: false,
+    }),
+    react(),
+    tailwindcss(),
+  ],
   server: {
     port: 5173,
     proxy: {

@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   keepPreviousData,
   useMutation,
@@ -6,6 +6,7 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   Link,
   Outlet,
@@ -34,7 +35,11 @@ export function RootLayout() {
   const me = useQuery({ queryKey: keys.me, queryFn: fetchers.me, staleTime: 60_000 });
   const path = useRouterState({ select: (s) => s.location.pathname });
   const shell =
-    path === "/pipeline" ? "max-w-[100rem]" : path === "/jobs/compare" ? "max-w-6xl" : "max-w-4xl";
+    path === "/pipeline" || path === "/jobs"
+      ? "max-w-[100rem]"
+      : path === "/jobs/compare"
+        ? "max-w-6xl"
+        : "max-w-4xl";
   useEffect(() => subscribeQueryEvents(), []);
 
   return (
@@ -255,6 +260,41 @@ function scoreOf(row: JobListRow, sort: JobSort): number {
   return value ?? -1;
 }
 
+const JOB_COLS =
+  "grid grid-cols-[1.75rem_minmax(12rem,1.7fr)_minmax(7rem,0.9fr)_minmax(7rem,0.9fr)_9rem_3.25rem_5.75rem_3.5rem_3.5rem_3.5rem_minmax(5.5rem,0.7fr)] items-center gap-x-3 px-3";
+
+function fmtMoney(cents: number, period: string): string {
+  const amount = cents / 100;
+  if (period === "hour" || period === "day") return `$${Math.round(amount)}`;
+  if (amount >= 1000) return `$${Math.round(amount / 1000)}k`;
+  return `$${Math.round(amount)}`;
+}
+
+function fmtComp(row: JobListRow): string {
+  const min = row.salary_min_cents;
+  const max = row.salary_max_cents;
+  if (min == null && max == null) return "—";
+  const period = row.salary_period;
+  const suffix = period && period !== "unknown" ? `/${period === "year" ? "yr" : period}` : "";
+  if (min != null && max != null && min !== max) {
+    return `${fmtMoney(min, period)}–${fmtMoney(max, period)}${suffix}`;
+  }
+  const one = min ?? max;
+  return one == null ? "—" : `${fmtMoney(one, period)}${suffix}`;
+}
+
+function postedAge(iso: string | null): string {
+  if (!iso) return "—";
+  const then = Date.parse(iso);
+  if (Number.isNaN(then)) return "—";
+  const days = Math.floor((Date.now() - then) / 86_400_000);
+  if (days <= 0) return "today";
+  if (days === 1) return "1d";
+  if (days < 30) return `${days}d`;
+  const months = Math.floor(days / 30);
+  return months === 1 ? "1mo" : `${months}mo`;
+}
+
 export function JobList() {
   const navigate = useNavigate({ from: "/jobs" });
   const search = useSearch({ from: "/jobs" });
@@ -288,6 +328,13 @@ export function JobList() {
     return [...items].sort((a, b) => scoreOf(b, sort) - scoreOf(a, sort));
   }, [jobs.data, sort]);
   const [picked, setPicked] = useState<string[]>([]);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 52,
+    overscan: 6,
+  });
   const today = utcToday();
   const overdueCount = rows.filter(
     (row) => row.next_action_due && row.next_action_due < today,
@@ -354,73 +401,112 @@ export function JobList() {
           {jobs.error instanceof Error ? jobs.error.message : "failed"}
         </p>
       )}
-      <ul className="divide-y divide-zinc-800">
-        {rows.map((row) => {
-          const checked = picked.includes(row.id);
-          const locked = !checked && picked.length >= MAX_COMPARE;
-          return (
-            <li key={row.id} className="flex items-start gap-3 py-3">
-              <input
-                type="checkbox"
-                className="mt-1.5 accent-indigo-400"
-                checked={checked}
-                disabled={locked}
-                aria-label={`Select ${row.title} at ${row.company_name} for compare`}
-                onChange={() => togglePick(row.id)}
-              />
-              <Link to="/jobs/$jobId" params={{ jobId: row.id }} className="min-w-0 flex-1 text-left">
-                <div className="font-medium">{row.title}</div>
-                <div className="text-sm text-zinc-400">
-                  {row.company_name} · {row.work_mode} · {row.status}
-                  {row.application_status ? ` · ${row.application_status}` : ""}
-                  {row.possibly_ghosted ? (
-                    <span className="text-amber-300"> · possibly ghosted</span>
-                  ) : null}
-                  {row.closing_soon_unapplied ? (
-                    <span className="text-amber-300">
-                      {" "}
-                      · closes {(row.closes_at ?? "").slice(0, 10) || "soon"}
-                    </span>
-                  ) : null}
-                  {row.primary_location ? ` · ${row.primary_location}` : ""}
-                  {row.user_rating != null ? ` · ${"★".repeat(row.user_rating)}` : ""}
-                </div>
-                {nextActionLine(row) ? (
-                  <div className={`mt-0.5 text-xs ${dueTone(row.next_action_due)}`}>
-                    {nextActionLine(row)}
-                  </div>
-                ) : null}
-                {row.match_overall != null ? (
-                  <div className="mt-1 flex flex-wrap gap-x-3 text-xs text-zinc-400">
-                    <span className={sort === "overall" ? "text-zinc-100" : "text-zinc-200"}>
-                      {pct(row.match_overall)} match
-                    </span>
-                    {row.skills_coverage != null ? (
-                      <span
-                        className={sort === "skills" ? "text-zinc-100" : undefined}
-                        title="Required bars with tenure stripped. Does not change overall."
+      <div className="overflow-x-auto rounded-xl border border-zinc-800 text-sm">
+        <div className="min-w-[70rem]">
+        <div className={`${JOB_COLS} border-b border-zinc-800 py-2 text-xs text-zinc-500`}>
+          <span />
+          <span>Title</span>
+          <span>Company</span>
+          <span>Where</span>
+          <span>Comp</span>
+          <span>Posted</span>
+          <span>Closes</span>
+          <span className={sort === "overall" ? "text-zinc-200" : undefined}>Overall</span>
+          <span className={sort === "skills" ? "text-zinc-200" : undefined}>Skills</span>
+          <span className={sort === "years" ? "text-zinc-200" : undefined}>Years</span>
+          <span>Status</span>
+        </div>
+        {rows.length === 0 && !jobs.isError && !jobs.isPending ? (
+          <p className="px-3 py-6 text-zinc-500">No jobs yet.</p>
+        ) : (
+          <div
+            ref={scrollRef}
+            data-job-table
+            data-job-count={rows.length}
+            className="max-h-[32rem] overflow-auto"
+          >
+            <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
+              {virtualizer.getVirtualItems().map((item) => {
+                const row = rows[item.index];
+                if (!row) return null;
+                const checked = picked.includes(row.id);
+                const locked = !checked && picked.length >= MAX_COMPARE;
+                const where = [row.primary_location, row.work_mode].filter(Boolean).join(" · ");
+                return (
+                  <div
+                    key={row.id}
+                    data-index={item.index}
+                    data-job-row
+                    data-job-title={row.title}
+                    ref={virtualizer.measureElement}
+                    className={`${JOB_COLS} absolute left-0 top-0 w-full border-b border-zinc-900 py-2`}
+                    style={{ transform: `translateY(${item.start}px)` }}
+                  >
+                    <input
+                      type="checkbox"
+                      className="accent-indigo-400"
+                      checked={checked}
+                      disabled={locked}
+                      aria-label={`Select ${row.title} at ${row.company_name} for compare`}
+                      onChange={() => togglePick(row.id)}
+                    />
+                    <div className="min-w-0">
+                      <Link
+                        to="/jobs/$jobId"
+                        params={{ jobId: row.id }}
+                        className="block truncate font-medium hover:text-zinc-100"
                       >
-                        skills {pct(row.skills_coverage)}
-                      </span>
-                    ) : null}
-                    {row.years_fit != null ? (
-                      <span
-                        className={sort === "years" ? "text-zinc-100" : undefined}
-                        title="Required year-count asks. Recruiters overfit this; postings often mean a wishlist."
-                      >
-                        years {pct(row.years_fit)}
-                      </span>
-                    ) : null}
+                        {row.title}
+                      </Link>
+                      {nextActionLine(row) ? (
+                        <div className={`truncate text-xs ${dueTone(row.next_action_due)}`}>
+                          {nextActionLine(row)}
+                        </div>
+                      ) : null}
+                    </div>
+                    <span className="truncate text-zinc-300">{row.company_name}</span>
+                    <span className="truncate text-zinc-400">{where || "—"}</span>
+                    <span className="whitespace-nowrap text-zinc-300">{fmtComp(row)}</span>
+                    <span className="text-zinc-400">{postedAge(row.posted_at)}</span>
+                    <span className={row.closing_soon_unapplied ? "text-amber-300" : "text-zinc-400"}>
+                      {row.closes_at ? row.closes_at.slice(0, 10) : "—"}
+                    </span>
+                    <span className={sort === "overall" ? "text-zinc-100" : "text-zinc-300"}>
+                      {row.match_overall != null ? pct(row.match_overall) : "—"}
+                    </span>
+                    <span
+                      className={sort === "skills" ? "text-zinc-100" : "text-zinc-400"}
+                      title="Required bars with tenure stripped. Does not change overall."
+                    >
+                      {row.skills_coverage != null ? pct(row.skills_coverage) : "—"}
+                    </span>
+                    <span
+                      className={sort === "years" ? "text-zinc-100" : "text-zinc-400"}
+                      title="Required year-count asks. Recruiters overfit this; postings often mean a wishlist."
+                    >
+                      {row.years_fit != null ? pct(row.years_fit) : "—"}
+                    </span>
+                    <span className="truncate text-zinc-300">
+                      {row.application_status ?? row.status}
+                      {row.possibly_ghosted ? (
+                        <span className="text-amber-300"> · possibly ghosted</span>
+                      ) : null}
+                      {row.user_rating != null ? ` ${"★".repeat(row.user_rating)}` : ""}
+                    </span>
                   </div>
-                ) : null}
-              </Link>
-            </li>
-          );
-        })}
-      </ul>
-      {rows.length === 0 && !jobs.isError && !jobs.isPending && (
-        <p className="text-zinc-500">No jobs yet.</p>
-      )}
+                );
+              })}
+            </div>
+          </div>
+        )}
+        </div>
+      </div>
+      {jobs.data?.next_cursor ? (
+        <p className="text-xs text-zinc-500">A later page of jobs exists, so some rows are not in this table.</p>
+      ) : null}
+      {rows.length > 0 ? (
+        <p className="text-xs text-zinc-600">{rows.length} on this page</p>
+      ) : null}
     </div>
   );
 }
@@ -524,7 +610,7 @@ function keeperRank(job: JobDetail): number {
 
 export function ComparePage() {
   const navigate = useNavigate({ from: "/jobs/compare" });
-  const search = useSearch({ from: "/jobs/compare" });
+  const search = useSearch({ from: "/jobs_/compare" });
   const qc = useQueryClient();
   const ids = parseCompareIds(search.ids);
   const [merging, setMerging] = useState<string | null>(null);
@@ -1265,7 +1351,7 @@ function provenanceDot(job: JobDetail, field: string) {
 }
 
 export function JobPage() {
-  const { jobId } = useParams({ from: "/jobs/$jobId" });
+  const { jobId } = useParams({ from: "/jobs_/$jobId" });
   const navigate = useNavigate();
   const qc = useQueryClient();
   const [splitError, setSplitError] = useState<string | null>(null);
