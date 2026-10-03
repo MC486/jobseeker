@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { api, JobListRow } from "./api";
@@ -32,6 +32,9 @@ export function PipelinePage() {
   const jobs = useQuery({ queryKey: keys.pipeline, queryFn: fetchers.pipeline });
   const [over, setOver] = useState<Column | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const dragId = useRef<string | null>(null);
+  const overRef = useRef<Column | null>(null);
+  const dropRef = useRef<(status: Column, jobId: string) => void>(() => {});
   const move = useMutation({
     mutationFn: ({ jobId, status }: { jobId: string; status: string }) =>
       api.patchApplication(jobId, { status }),
@@ -83,11 +86,38 @@ export function PipelinePage() {
     if (bucket) bucket.push(row);
   }
 
+  function hover(status: Column | null) {
+    overRef.current = status;
+    setOver(status);
+  }
+
   function dropOn(status: Column, jobId: string) {
     const row = tracked.find((item) => item.id === jobId);
     if (!row || row.application_status === status) return;
     move.mutate({ jobId, status });
   }
+  dropRef.current = dropOn;
+
+  useEffect(() => {
+    function onMove(e: PointerEvent) {
+      if (!dragId.current) return;
+      hover(columnAt(e.clientX, e.clientY));
+    }
+    function onUp(e: PointerEvent) {
+      const jobId = dragId.current;
+      if (!jobId) return;
+      dragId.current = null;
+      const next = columnAt(e.clientX, e.clientY) ?? overRef.current;
+      hover(null);
+      if (next) dropRef.current(next, jobId);
+    }
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+  }, []);
 
   return (
     <div className="space-y-4">
@@ -137,7 +167,9 @@ export function PipelinePage() {
                       key={row.id}
                       row={row}
                       pending={move.isPending}
-                      onHover={setOver}
+                      onDragStart={() => {
+                        dragId.current = row.id;
+                      }}
                       onMove={(next) => dropOn(next, row.id)}
                     />
                   ))}
@@ -159,42 +191,23 @@ function columnAt(x: number, y: number): Column | null {
 function PipelineCard({
   row,
   pending,
-  onHover,
+  onDragStart,
   onMove,
 }: {
   row: JobListRow;
   pending: boolean;
-  onHover: (status: Column | null) => void;
+  onDragStart: () => void;
   onMove: (status: Column) => void;
 }) {
-  const [dragging, setDragging] = useState(false);
   const today = utcToday();
   const overdue = Boolean(row.next_action_due && row.next_action_due < today);
   return (
     <li
       onPointerDown={(e) => {
         if ((e.target as HTMLElement).closest("a, select, label")) return;
-        e.currentTarget.setPointerCapture(e.pointerId);
-        setDragging(true);
+        onDragStart();
       }}
-      onPointerMove={(e) => {
-        if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
-        onHover(columnAt(e.clientX, e.clientY));
-      }}
-      onPointerUp={(e) => {
-        if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
-        const next = columnAt(e.clientX, e.clientY);
-        setDragging(false);
-        onHover(null);
-        if (next) onMove(next);
-      }}
-      onPointerCancel={() => {
-        setDragging(false);
-        onHover(null);
-      }}
-      className={`cursor-grab rounded-lg border border-zinc-800 bg-zinc-950 p-2 active:cursor-grabbing ${
-        dragging ? "pointer-events-none opacity-60" : ""
-      }`}
+      className="cursor-grab rounded-lg border border-zinc-800 bg-zinc-950 p-2 active:cursor-grabbing"
     >
       <p className="text-[10px] uppercase tracking-wide text-zinc-600">Drag</p>
       <Link
