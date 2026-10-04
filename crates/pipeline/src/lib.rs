@@ -791,8 +791,41 @@ impl Pipeline {
         patch: &jobseeker_db::repo::job::RequirementPatch,
     ) -> Result<jobseeker_db::repo::job::RequirementRow> {
         let (job_id, row) = jobseeker_db::repo::job::patch_requirement(&self.db, id, patch).await?;
-        let _ = jobseeker_db::repo::job::mark_scores_stale(&self.db, &job_id).await;
-        if let Err(e) = self.materialize_job(&job_id).await {
+        self.refresh_after_requirement_change(&job_id, id.as_str())
+            .await;
+        Ok(row)
+    }
+
+    /// A requirement the user typed. Provenance is `manual` and there is no sentence span.
+    /// Adding the same normalized text again clears a previous dismissal.
+    pub async fn create_requirement(
+        &self,
+        job_id: &jobseeker_core::ids::JobId,
+        new: &jobseeker_db::repo::job::NewRequirement,
+    ) -> Result<jobseeker_db::repo::job::RequirementRow> {
+        let row = jobseeker_db::repo::job::create_requirement(&self.db, job_id, new).await?;
+        self.refresh_after_requirement_change(job_id, &row.id).await;
+        Ok(row)
+    }
+
+    /// Remove a requirement. Its normalized text is remembered so the next extract skips it.
+    pub async fn delete_requirement(
+        &self,
+        id: &RequirementId,
+    ) -> Result<jobseeker_db::repo::job::RequirementRow> {
+        let (job_id, row) = jobseeker_db::repo::job::delete_requirement(&self.db, id).await?;
+        self.refresh_after_requirement_change(&job_id, &row.id)
+            .await;
+        Ok(row)
+    }
+
+    async fn refresh_after_requirement_change(
+        &self,
+        job_id: &jobseeker_core::ids::JobId,
+        requirement_id: &str,
+    ) {
+        let _ = jobseeker_db::repo::job::mark_scores_stale(&self.db, job_id).await;
+        if let Err(e) = self.materialize_job(job_id).await {
             tracing::warn!(error = %e, "materialize after requirement edit failed");
         }
         if let Err(e) = self
@@ -806,13 +839,12 @@ impl Pipeline {
                 DomainEvent::JOB_UPDATED,
                 "job",
                 job_id.as_str(),
-                json!({ "source": "requirement", "requirement_id": id.as_str() }),
+                json!({ "source": "requirement", "requirement_id": requirement_id }),
             )
             .await
         {
             tracing::warn!(error = %e, "failed to emit job.updated");
         }
-        Ok(row)
     }
 
     /// User-initiated cross-post merge. `from` is soft-deleted; `into` keeps its

@@ -469,6 +469,7 @@ async fn replace_requirements(
     requirements: &[AtomizedRequirement],
 ) -> Result<()> {
     let manual = snapshot_manual_requirements(tx, job_id).await?;
+    let dismissed = dismissed_requirement_keys(tx, job_id).await?;
     sqlx::query("DELETE FROM requirement WHERE job_id = ?1")
         .bind(job_id.as_str())
         .execute(&mut **tx)
@@ -478,7 +479,7 @@ async fn replace_requirements(
     let ts = to_rfc3339(&now());
     let mut seen = std::collections::HashSet::new();
     for (ordinal, req) in requirements.iter().enumerate() {
-        if !seen.insert(req.normalized_text.clone()) {
+        if dismissed.contains(&req.normalized_text) || !seen.insert(req.normalized_text.clone()) {
             continue;
         }
         let id = RequirementId::new();
@@ -516,7 +517,20 @@ async fn replace_requirements(
         .map_err(db_err)?;
     }
     restore_manual_requirements(tx, job_id, &manual).await?;
+    reinsert_authored_requirements(tx, job_id, &manual, &seen, &dismissed).await?;
     Ok(())
+}
+
+struct ManualRequirement {
+    text: String,
+    normalized_text: String,
+    kind: String,
+    necessity: String,
+    min_years: Option<f64>,
+    is_blocker: bool,
+    /// Written by the user, not copied off a posting sentence. Re-extract keeps these
+    /// even when the new atom list does not mention them.
+    authored: bool,
 }
 
 /// Classifications the user set. A re-extract deletes every requirement row, so these
@@ -524,9 +538,10 @@ async fn replace_requirements(
 async fn snapshot_manual_requirements(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     job_id: &JobId,
-) -> Result<Vec<(String, String, String)>> {
+) -> Result<Vec<ManualRequirement>> {
     let rows = sqlx::query(
-        "SELECT normalized_text, kind, necessity FROM requirement
+        "SELECT text, normalized_text, kind, necessity, min_years, is_blocker, span_start
+           FROM requirement
           WHERE job_id = ?1 AND provenance = 'manual'",
     )
     .bind(job_id.as_str())
@@ -535,25 +550,49 @@ async fn snapshot_manual_requirements(
     .map_err(db_err)?;
     let mut out = Vec::with_capacity(rows.len());
     for r in rows {
-        out.push((
-            r.try_get("normalized_text").map_err(db_err)?,
-            r.try_get("kind").map_err(db_err)?,
-            r.try_get("necessity").map_err(db_err)?,
-        ));
+        let span_start: Option<i64> = r.try_get("span_start").map_err(db_err)?;
+        out.push(ManualRequirement {
+            text: r.try_get("text").map_err(db_err)?,
+            normalized_text: r.try_get("normalized_text").map_err(db_err)?,
+            kind: r.try_get("kind").map_err(db_err)?,
+            necessity: r.try_get("necessity").map_err(db_err)?,
+            min_years: r.try_get("min_years").map_err(db_err)?,
+            is_blocker: r.try_get::<i64, _>("is_blocker").map_err(db_err)? != 0,
+            authored: span_start.is_none(),
+        });
     }
     Ok(out)
+}
+
+async fn dismissed_requirement_keys(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    job_id: &JobId,
+) -> Result<std::collections::HashSet<String>> {
+    let rows: Vec<String> = sqlx::query_scalar(
+        "SELECT entity_id FROM tombstone
+          WHERE entity_kind = 'requirement_norm' AND reason = ?1",
+    )
+    .bind(job_id.as_str())
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(db_err)?;
+    let prefix = format!("{}|", job_id.as_str());
+    Ok(rows
+        .into_iter()
+        .filter_map(|id| id.strip_prefix(&prefix).map(str::to_string))
+        .collect())
 }
 
 async fn restore_manual_requirements(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     job_id: &JobId,
-    saved: &[(String, String, String)],
+    saved: &[ManualRequirement],
 ) -> Result<()> {
     if saved.is_empty() {
         return Ok(());
     }
     let ts = to_rfc3339(&now());
-    for (normalized, kind, necessity) in saved {
+    for row in saved {
         sqlx::query(
             "UPDATE requirement
                 SET kind = ?3, necessity = ?4, provenance = 'manual', confidence = 1.0,
@@ -561,9 +600,56 @@ async fn restore_manual_requirements(
               WHERE job_id = ?1 AND normalized_text = ?2",
         )
         .bind(job_id.as_str())
-        .bind(normalized)
-        .bind(kind)
-        .bind(necessity)
+        .bind(&row.normalized_text)
+        .bind(&row.kind)
+        .bind(&row.necessity)
+        .bind(&ts)
+        .execute(&mut **tx)
+        .await
+        .map_err(db_err)?;
+    }
+    Ok(())
+}
+
+/// Put back requirements the user typed that this extract did not mention.
+async fn reinsert_authored_requirements(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    job_id: &JobId,
+    saved: &[ManualRequirement],
+    present: &std::collections::HashSet<String>,
+    dismissed: &std::collections::HashSet<String>,
+) -> Result<()> {
+    let ts = to_rfc3339(&now());
+    let mut ordinal: i64 =
+        sqlx::query_scalar("SELECT COALESCE(MAX(ordinal), -1) FROM requirement WHERE job_id = ?1")
+            .bind(job_id.as_str())
+            .fetch_one(&mut **tx)
+            .await
+            .map_err(db_err)?;
+    for row in saved {
+        if !row.authored
+            || present.contains(&row.normalized_text)
+            || dismissed.contains(&row.normalized_text)
+        {
+            continue;
+        }
+        ordinal += 1;
+        let id = RequirementId::new();
+        sqlx::query(
+            r#"INSERT INTO requirement (
+                id, job_id, ordinal, text, normalized_text, kind, necessity,
+                min_years, is_blocker, confidence, provenance, created_at, updated_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1.0, 'manual', ?10, ?10)"#,
+        )
+        .bind(id.as_str())
+        .bind(job_id.as_str())
+        .bind(ordinal)
+        .bind(&row.text)
+        .bind(&row.normalized_text)
+        .bind(&row.kind)
+        .bind(&row.necessity)
+        .bind(row.min_years)
+        .bind(i64::from(row.is_blocker))
         .bind(&ts)
         .execute(&mut **tx)
         .await
@@ -901,6 +987,7 @@ async fn replace_requirements_from_file(
     requirements: &[FileReqWrite],
 ) -> Result<()> {
     let manual = snapshot_manual_requirements(tx, job_id).await?;
+    let dismissed = dismissed_requirement_keys(tx, job_id).await?;
     sqlx::query("DELETE FROM requirement WHERE job_id = ?1")
         .bind(job_id.as_str())
         .execute(&mut **tx)
@@ -909,7 +996,10 @@ async fn replace_requirements_from_file(
     let ts = to_rfc3339(&now());
     let mut seen = std::collections::HashSet::new();
     for (ordinal, req) in requirements.iter().enumerate() {
-        if req.normalized_text.is_empty() || !seen.insert(req.normalized_text.clone()) {
+        if req.normalized_text.is_empty()
+            || dismissed.contains(&req.normalized_text)
+            || !seen.insert(req.normalized_text.clone())
+        {
             continue;
         }
         let id = match &req.id {
@@ -1324,5 +1414,101 @@ mod tests {
         assert_eq!(modeling.kind, "tool");
         assert_eq!(modeling.necessity, "required");
         assert_eq!(modeling.provenance, "rules");
+    }
+
+    #[tokio::test]
+    async fn an_added_requirement_survives_reextract_and_a_removed_one_does_not() {
+        let db = Db::open_in_memory().await.unwrap();
+        let (listing_id, _) = listing::upsert_by_url(
+            &db,
+            &UpsertListing {
+                source: SourceKind::Greenhouse,
+                url: "https://boards.greenhouse.io/acme/jobs/add".into(),
+                url_canonical: "https://boards.greenhouse.io/acme/jobs/add".into(),
+                source_job_id: Some("add".into()),
+                title_at_source: Some("Engineer".into()),
+                company_name_at_source: Some("Acme".into()),
+            },
+        )
+        .await
+        .unwrap();
+        let mut extracted = ExtractedJob::default();
+        extracted.title = Some(Sourced::new("Engineer".into(), Provenance::Rules));
+        extracted.company_name = Some(Sourced::new("Acme".into(), Provenance::Rules));
+        let out = persist_extracted(
+            &db,
+            PersistExtracted {
+                listing_id: Some(&listing_id),
+                job: &extracted,
+                requirements: &[atom("Production Python"), atom("Applied modeling")],
+                description_md: "md",
+                description_text: "md",
+                content_hash: "b3:add1",
+                partial: false,
+                model: None,
+            },
+        )
+        .await
+        .unwrap();
+        crate::repo::job::create_requirement(
+            &db,
+            &out.job_id,
+            &crate::repo::job::NewRequirement {
+                text: "Distributed tracing".into(),
+                necessity: Some("preferred".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let detail = crate::repo::job::get(&db, &out.job_id)
+            .await
+            .unwrap()
+            .unwrap();
+        let python = detail
+            .requirements
+            .iter()
+            .find(|r| r.text == "Production Python")
+            .unwrap();
+        let python_id: jobseeker_core::ids::RequirementId = python.id.parse().unwrap();
+        crate::repo::job::delete_requirement(&db, &python_id)
+            .await
+            .unwrap();
+
+        persist_extracted(
+            &db,
+            PersistExtracted {
+                listing_id: Some(&listing_id),
+                job: &extracted,
+                requirements: &[atom("Production Python"), atom("Applied modeling")],
+                description_md: "md",
+                description_text: "md",
+                content_hash: "b3:add2",
+                partial: false,
+                model: None,
+            },
+        )
+        .await
+        .unwrap();
+        let again = crate::repo::job::get(&db, &out.job_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(again
+            .requirements
+            .iter()
+            .all(|r| r.normalized_text != "production python"));
+        let tracing = again
+            .requirements
+            .iter()
+            .find(|r| r.normalized_text == "distributed tracing")
+            .unwrap();
+        assert_eq!(tracing.necessity, "preferred");
+        assert_eq!(tracing.provenance, "manual");
+        assert_eq!(tracing.span_start, None);
+        assert!(again
+            .requirements
+            .iter()
+            .any(|r| r.normalized_text == "applied modeling"));
     }
 }

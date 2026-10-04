@@ -276,6 +276,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/jobs/{id}/requirements": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["create_requirement"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/jobs/{id}/split": {
         parameters: {
             query?: never;
@@ -350,7 +366,7 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        delete?: never;
+        delete: operations["delete_requirement"];
         options?: never;
         head?: never;
         patch: operations["patch_requirement"];
@@ -449,6 +465,11 @@ export interface components {
             llm_provider: string;
             schema_migrations: number;
             version: string;
+        };
+        NewRequirementRequest: {
+            kind?: string | null;
+            necessity?: string | null;
+            text: string;
         };
         PairRequest: {
             code: string;
@@ -987,6 +1008,47 @@ export interface operations {
             };
         };
     };
+    create_requirement: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NewRequirementRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     split_job: {
         parameters: {
             query?: never;
@@ -1084,6 +1146,31 @@ export interface operations {
                 content?: never;
             };
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    delete_requirement: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
