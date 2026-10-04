@@ -25,11 +25,17 @@ pair with a hashed, ingest-scoped device token.
 
 ## Do next (M0 remaining → M1)
 
-1. **Job detail sections.** `/jobs/$jobId` is still one scroll (facts, your
-   call, match, requirements, sources). The route tree's overview /
-   requirements / match / description / sources sections are not this slice.
+1. **Requirement evidence in the description.** A requirement row does not
+   highlight its sentence. Inline requirement edits and a documents section
+   (tailored resume / cover letter) are not this slice.
 
 ## Just shipped
+
+- **Job detail sections.** `/jobs/$jobId` is the overview. Requirements,
+  match, description, and sources are their own routes. Your call stays
+  above the section nav on every one. Unresolved conflicts and possible
+  duplicates are counted on Sources. Clicking a requirement does not
+  highlight description text. There is no documents section.
 
 - **File-based routes + virtualized job table.** Routes live in
   `web/src/routes` and `tsr generate` writes `routeTree.gen.ts`. `/jobs` is a
@@ -225,5 +231,5 @@ A LinkedIn URL must still fail with `needs_browser` and must not be fetched.
 
 - `crates/api/src/lib.rs` — SSE events, password login
 - `crates/pipeline/src/lib.rs` — `refresh_listing`, reconcile handlers
-- `web/src/routes/` — file-based TanStack routes; `web/src/compare.ts` — compare ids
+- `web/src/routes/` — file-based TanStack routes, including `/jobs/$jobId` sections; `web/src/compare.ts` — compare ids
 - `extension/popup.js` — capture polish / origin allowlist
