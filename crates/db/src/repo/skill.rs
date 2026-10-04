@@ -82,6 +82,57 @@ pub async fn ensure_seed(db: &Db) -> Result<u64> {
     Ok(inserted)
 }
 
+/// One taxonomy row for the requirement skill picker.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SkillListItem {
+    pub id: String,
+    pub name: String,
+    pub slug: String,
+}
+
+/// Seed skills, optionally filtered by a case-insensitive substring of name or slug.
+pub async fn list(db: &Db, q: Option<&str>) -> Result<Vec<SkillListItem>> {
+    let q = q.unwrap_or("").trim();
+    let rows = if q.is_empty() {
+        sqlx::query("SELECT id, name, slug FROM skill ORDER BY name COLLATE NOCASE, slug")
+            .fetch_all(db.reader())
+            .await
+            .map_err(db_err)?
+    } else {
+        let like = like_contains(&q.to_ascii_lowercase());
+        sqlx::query(
+            "SELECT id, name, slug FROM skill
+              WHERE lower(name) LIKE ?1 ESCAPE '\\' OR lower(slug) LIKE ?1 ESCAPE '\\'
+              ORDER BY name COLLATE NOCASE, slug",
+        )
+        .bind(&like)
+        .fetch_all(db.reader())
+        .await
+        .map_err(db_err)?
+    };
+    let mut out = Vec::with_capacity(rows.len());
+    for r in rows {
+        out.push(SkillListItem {
+            id: r.try_get("id").map_err(db_err)?,
+            name: r.try_get("name").map_err(db_err)?,
+            slug: r.try_get("slug").map_err(db_err)?,
+        });
+    }
+    Ok(out)
+}
+
+fn like_contains(q: &str) -> String {
+    let mut out = String::from("%");
+    for ch in q.chars() {
+        if ch == '%' || ch == '_' || ch == '\\' {
+            out.push('\\');
+        }
+        out.push(ch);
+    }
+    out.push('%');
+    out
+}
+
 pub async fn id_by_slug(db: &Db, slug: &str) -> Result<Option<SkillId>> {
     let id: Option<String> = sqlx::query_scalar("SELECT id FROM skill WHERE slug = ?1")
         .bind(slug)
@@ -103,5 +154,12 @@ mod tests {
         assert_eq!(ensure_seed(&db).await.unwrap(), 0);
         assert!(id_by_slug(&db, "rust").await.unwrap().is_some());
         assert!(id_by_slug(&db, "kubernetes").await.unwrap().is_some());
+        let rust = list(&db, Some("rust")).await.unwrap();
+        assert!(rust.iter().any(|s| s.slug == "rust"));
+        assert!(rust
+            .iter()
+            .all(|s| s.slug.contains("rust") || s.name.to_ascii_lowercase().contains("rust")));
+        let all = list(&db, None).await.unwrap();
+        assert!(all.len() > rust.len());
     }
 }

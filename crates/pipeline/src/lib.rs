@@ -783,8 +783,9 @@ impl Pipeline {
         Ok(report)
     }
 
-    /// User retype or reclassify. Provenance becomes `manual`. Files are rewritten and
-    /// the job is rescored in-process — `score:{job}` is already a completed dedupe key.
+    /// User retype, reclassify, or skill link. Provenance becomes `manual`. Files are
+    /// rewritten and the job is rescored in-process — `score:{job}` is already a completed
+    /// dedupe key.
     pub async fn reclassify_requirement(
         &self,
         id: &RequirementId,

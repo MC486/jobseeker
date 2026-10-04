@@ -209,7 +209,7 @@ written today.
 | `normalized_text` | TEXT NOT NULL | cleaned, deduped comparison key |
 | `kind` | TEXT CHECK | `skill|tool|experience|education|certification|clearance|language|soft_skill|domain|responsibility|logistics|other` |
 | `necessity` | TEXT CHECK | `required|preferred|nice_to_have|implied` |
-| `skill_id` | TEXT FK → skill | null when it is not a taxonomy skill |
+| `skill_id` | TEXT FK → skill | null until the user links a taxonomy skill. Extraction leaves it null. The scorer uses that skill's slug; posting text is the fallback |
 | `min_years`, `max_years` | REAL | |
 | `level` | TEXT CHECK | `exposure|working|proficient|expert` |
 | `education_level` | TEXT CHECK | as `job.education_min` |

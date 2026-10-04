@@ -531,6 +531,8 @@ struct ManualRequirement {
     /// Written by the user, not copied off a posting sentence. Re-extract keeps these
     /// even when the new atom list does not mention them.
     authored: bool,
+    /// The user's skill link, including a deliberate clear (`None`).
+    skill_id: Option<String>,
 }
 
 /// Classifications the user set. A re-extract deletes every requirement row, so these
@@ -540,7 +542,8 @@ async fn snapshot_manual_requirements(
     job_id: &JobId,
 ) -> Result<Vec<ManualRequirement>> {
     let rows = sqlx::query(
-        "SELECT text, normalized_text, kind, necessity, min_years, is_blocker, span_start
+        "SELECT text, normalized_text, kind, necessity, min_years, is_blocker, span_start,
+                skill_id
            FROM requirement
           WHERE job_id = ?1 AND provenance = 'manual'",
     )
@@ -559,6 +562,7 @@ async fn snapshot_manual_requirements(
             min_years: r.try_get("min_years").map_err(db_err)?,
             is_blocker: r.try_get::<i64, _>("is_blocker").map_err(db_err)? != 0,
             authored: span_start.is_none(),
+            skill_id: r.try_get("skill_id").map_err(db_err)?,
         });
     }
     Ok(out)
@@ -595,14 +599,15 @@ async fn restore_manual_requirements(
     for row in saved {
         sqlx::query(
             "UPDATE requirement
-                SET kind = ?3, necessity = ?4, provenance = 'manual', confidence = 1.0,
-                    updated_at = ?5
+                SET kind = ?3, necessity = ?4, skill_id = ?5, provenance = 'manual',
+                    confidence = 1.0, updated_at = ?6
               WHERE job_id = ?1 AND normalized_text = ?2",
         )
         .bind(job_id.as_str())
         .bind(&row.normalized_text)
         .bind(&row.kind)
         .bind(&row.necessity)
+        .bind(row.skill_id.as_deref())
         .bind(&ts)
         .execute(&mut **tx)
         .await
@@ -638,8 +643,8 @@ async fn reinsert_authored_requirements(
         sqlx::query(
             r#"INSERT INTO requirement (
                 id, job_id, ordinal, text, normalized_text, kind, necessity,
-                min_years, is_blocker, confidence, provenance, created_at, updated_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1.0, 'manual', ?10, ?10)"#,
+                min_years, is_blocker, skill_id, confidence, provenance, created_at, updated_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 1.0, 'manual', ?11, ?11)"#,
         )
         .bind(id.as_str())
         .bind(job_id.as_str())
@@ -650,6 +655,7 @@ async fn reinsert_authored_requirements(
         .bind(&row.necessity)
         .bind(row.min_years)
         .bind(i64::from(row.is_blocker))
+        .bind(row.skill_id.as_deref())
         .bind(&ts)
         .execute(&mut **tx)
         .await
@@ -1372,6 +1378,7 @@ mod tests {
             &crate::repo::job::RequirementPatch {
                 kind: Some("responsibility".into()),
                 necessity: Some("preferred".into()),
+                ..Default::default()
             },
         )
         .await
@@ -1414,6 +1421,173 @@ mod tests {
         assert_eq!(modeling.kind, "tool");
         assert_eq!(modeling.necessity, "required");
         assert_eq!(modeling.provenance, "rules");
+    }
+
+    #[tokio::test]
+    async fn a_manual_skill_link_survives_reextract() {
+        let db = Db::open_in_memory().await.unwrap();
+        crate::repo::skill::ensure_seed(&db).await.unwrap();
+        let rust = crate::repo::skill::id_by_slug(&db, "rust")
+            .await
+            .unwrap()
+            .unwrap();
+        let kubernetes = crate::repo::skill::id_by_slug(&db, "kubernetes")
+            .await
+            .unwrap()
+            .unwrap();
+        let (listing_id, _) = listing::upsert_by_url(
+            &db,
+            &UpsertListing {
+                source: SourceKind::Greenhouse,
+                url: "https://boards.greenhouse.io/acme/jobs/skill".into(),
+                url_canonical: "https://boards.greenhouse.io/acme/jobs/skill".into(),
+                source_job_id: Some("skill".into()),
+                title_at_source: Some("Engineer".into()),
+                company_name_at_source: Some("Acme".into()),
+            },
+        )
+        .await
+        .unwrap();
+        let mut extracted = ExtractedJob::default();
+        extracted.title = Some(Sourced::new("Engineer".into(), Provenance::Rules));
+        extracted.company_name = Some(Sourced::new("Acme".into(), Provenance::Rules));
+        let out = persist_extracted(
+            &db,
+            PersistExtracted {
+                listing_id: Some(&listing_id),
+                job: &extracted,
+                requirements: &[atom("Production Python"), atom("Applied modeling")],
+                description_md: "md",
+                description_text: "md",
+                content_hash: "b3:sk1",
+                partial: false,
+                model: None,
+            },
+        )
+        .await
+        .unwrap();
+        let detail = crate::repo::job::get(&db, &out.job_id)
+            .await
+            .unwrap()
+            .unwrap();
+        let python = detail
+            .requirements
+            .iter()
+            .find(|r| r.text == "Production Python")
+            .unwrap();
+        let python_id: jobseeker_core::ids::RequirementId = python.id.parse().unwrap();
+        crate::repo::job::patch_requirement(
+            &db,
+            &python_id,
+            &crate::repo::job::RequirementPatch {
+                skill_id: Some(Some(rust.as_str().to_string())),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let added = crate::repo::job::create_requirement(
+            &db,
+            &out.job_id,
+            &crate::repo::job::NewRequirement {
+                text: "Distributed tracing".into(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let added_id: jobseeker_core::ids::RequirementId = added.id.parse().unwrap();
+        crate::repo::job::patch_requirement(
+            &db,
+            &added_id,
+            &crate::repo::job::RequirementPatch {
+                skill_id: Some(Some(kubernetes.as_str().to_string())),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        persist_extracted(
+            &db,
+            PersistExtracted {
+                listing_id: Some(&listing_id),
+                job: &extracted,
+                requirements: &[atom("Production Python"), atom("Applied modeling")],
+                description_md: "md",
+                description_text: "md",
+                content_hash: "b3:sk2",
+                partial: false,
+                model: None,
+            },
+        )
+        .await
+        .unwrap();
+        let again = crate::repo::job::get(&db, &out.job_id)
+            .await
+            .unwrap()
+            .unwrap();
+        let python = again
+            .requirements
+            .iter()
+            .find(|r| r.normalized_text == "production python")
+            .unwrap();
+        assert_eq!(python.skill_id.as_deref(), Some(rust.as_str()));
+        assert_eq!(python.skill_slug.as_deref(), Some("rust"));
+        assert_eq!(python.provenance, "manual");
+        let tracing = again
+            .requirements
+            .iter()
+            .find(|r| r.normalized_text == "distributed tracing")
+            .unwrap();
+        assert_eq!(tracing.skill_id.as_deref(), Some(kubernetes.as_str()));
+        assert_eq!(tracing.skill_slug.as_deref(), Some("kubernetes"));
+        assert_eq!(tracing.provenance, "manual");
+        assert_eq!(tracing.span_start, None);
+
+        let python_id: jobseeker_core::ids::RequirementId = python.id.parse().unwrap();
+        crate::repo::job::patch_requirement(
+            &db,
+            &python_id,
+            &crate::repo::job::RequirementPatch {
+                skill_id: Some(None),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        persist_extracted(
+            &db,
+            PersistExtracted {
+                listing_id: Some(&listing_id),
+                job: &extracted,
+                requirements: &[atom("Production Python")],
+                description_md: "md",
+                description_text: "md",
+                content_hash: "b3:sk3",
+                partial: false,
+                model: None,
+            },
+        )
+        .await
+        .unwrap();
+        let cleared = crate::repo::job::get(&db, &out.job_id)
+            .await
+            .unwrap()
+            .unwrap();
+        let python = cleared
+            .requirements
+            .iter()
+            .find(|r| r.normalized_text == "production python")
+            .unwrap();
+        assert_eq!(python.skill_id, None);
+        assert_eq!(python.provenance, "manual");
+        let tracing = cleared
+            .requirements
+            .iter()
+            .find(|r| r.normalized_text == "distributed tracing")
+            .unwrap();
+        assert_eq!(tracing.skill_slug.as_deref(), Some("kubernetes"));
     }
 
     #[tokio::test]

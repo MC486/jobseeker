@@ -372,6 +372,22 @@ export interface paths {
         patch: operations["patch_requirement"];
         trace?: never;
     };
+    "/api/v1/skills": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_skills"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/tasks/{id}": {
         parameters: {
             query?: never;
@@ -490,6 +506,8 @@ export interface components {
         PatchRequirementRequest: {
             kind?: string | null;
             necessity?: string | null;
+            /** @description Absent leaves the link. JSON `null` clears it. A skill id sets it. */
+            skill_id?: string | null;
         };
         ResolveConflictRequest: {
             /** @description `a`, `b`, or `keep`. Never inferred. */
@@ -1206,6 +1224,26 @@ export interface operations {
                 content?: never;
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_skills: {
+        parameters: {
+            query?: {
+                /** @description Filter by name or slug */
+                q?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };

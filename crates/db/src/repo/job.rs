@@ -4,7 +4,7 @@
 //! pagination is keyset-based, and the projection is only what a table row renders.
 
 use jobseeker_core::domain::enums::{JobStatus, Necessity, RequirementKind, Seniority, WorkMode};
-use jobseeker_core::ids::{CompanyId, JobId, ListingId, RequirementId};
+use jobseeker_core::ids::{CompanyId, JobId, ListingId, RequirementId, SkillId};
 use jobseeker_core::Result;
 use jobseeker_normalize::text::comparison_key;
 use sqlx::Row;
@@ -630,8 +630,30 @@ pub struct RequirementRow {
     /// UTF-8 byte offsets into `description_md`. Both absent when the atom has no origin.
     pub span_start: Option<i64>,
     pub span_end: Option<i64>,
-    /// `manual` after the user retypes or reclassifies this requirement.
+    /// `manual` after the user retypes, reclassifies, or relinks this requirement.
     pub provenance: String,
+    /// Taxonomy skill this requirement is judged as. Null until the user links one.
+    pub skill_id: Option<String>,
+    pub skill_slug: Option<String>,
+    pub skill_name: Option<String>,
+}
+
+fn read_requirement_row(r: &sqlx::sqlite::SqliteRow) -> Result<RequirementRow> {
+    Ok(RequirementRow {
+        id: r.try_get("id").map_err(db_err)?,
+        text: r.try_get("text").map_err(db_err)?,
+        normalized_text: r.try_get("normalized_text").map_err(db_err)?,
+        kind: r.try_get("kind").map_err(db_err)?,
+        necessity: r.try_get("necessity").map_err(db_err)?,
+        min_years: r.try_get("min_years").map_err(db_err)?,
+        is_blocker: r.try_get::<i64, _>("is_blocker").map_err(db_err)? != 0,
+        span_start: r.try_get("span_start").map_err(db_err)?,
+        span_end: r.try_get("span_end").map_err(db_err)?,
+        provenance: r.try_get("provenance").map_err(db_err)?,
+        skill_id: r.try_get("skill_id").map_err(db_err)?,
+        skill_slug: r.try_get("skill_slug").map_err(db_err)?,
+        skill_name: r.try_get("skill_name").map_err(db_err)?,
+    })
 }
 
 /// Full job record for the detail view and the CLI `show` command.
@@ -746,9 +768,13 @@ pub async fn get(db: &Db, id: &JobId) -> Result<Option<JobDetail>> {
     .map_err(db_err)?;
 
     let req_rows = sqlx::query(
-        "SELECT id, text, normalized_text, kind, necessity, min_years, is_blocker,
-                span_start, span_end, provenance
-           FROM requirement WHERE job_id = ?1 ORDER BY ordinal ASC",
+        "SELECT r.id, r.text, r.normalized_text, r.kind, r.necessity, r.min_years, r.is_blocker,
+                r.span_start, r.span_end, r.provenance, r.skill_id,
+                s.slug AS skill_slug, s.name AS skill_name
+           FROM requirement r
+           LEFT JOIN skill s ON s.id = r.skill_id
+          WHERE r.job_id = ?1
+          ORDER BY r.ordinal ASC",
     )
     .bind(id.as_str())
     .fetch_all(db.reader())
@@ -756,18 +782,7 @@ pub async fn get(db: &Db, id: &JobId) -> Result<Option<JobDetail>> {
     .map_err(db_err)?;
     let mut requirements = Vec::with_capacity(req_rows.len());
     for r in req_rows {
-        requirements.push(RequirementRow {
-            id: r.try_get("id").map_err(db_err)?,
-            text: r.try_get("text").map_err(db_err)?,
-            normalized_text: r.try_get("normalized_text").map_err(db_err)?,
-            kind: r.try_get("kind").map_err(db_err)?,
-            necessity: r.try_get("necessity").map_err(db_err)?,
-            min_years: r.try_get("min_years").map_err(db_err)?,
-            is_blocker: r.try_get::<i64, _>("is_blocker").map_err(db_err)? != 0,
-            span_start: r.try_get("span_start").map_err(db_err)?,
-            span_end: r.try_get("span_end").map_err(db_err)?,
-            provenance: r.try_get("provenance").map_err(db_err)?,
-        });
+        requirements.push(read_requirement_row(&r)?);
     }
 
     Ok(Some(JobDetail {
@@ -1343,9 +1358,13 @@ pub async fn scoring_inputs(
 
     let now = jobseeker_core::time::now();
     let req_rows = sqlx::query(
-        "SELECT id, ordinal, text, normalized_text, kind, necessity, min_years, max_years,
-                is_blocker, quantity_raw, confidence, provenance
-           FROM requirement WHERE job_id = ?1 ORDER BY ordinal ASC",
+        "SELECT r.id, r.ordinal, r.text, r.normalized_text, r.kind, r.necessity, r.min_years,
+                r.max_years, r.is_blocker, r.quantity_raw, r.confidence, r.provenance,
+                r.skill_id, s.slug AS skill_slug
+           FROM requirement r
+           LEFT JOIN skill s ON s.id = r.skill_id
+          WHERE r.job_id = ?1
+          ORDER BY r.ordinal ASC",
     )
     .bind(id.as_str())
     .fetch_all(db.reader())
@@ -1357,6 +1376,8 @@ pub async fn scoring_inputs(
         let necessity: String = r.try_get("necessity").map_err(db_err)?;
         let provenance: String = r.try_get("provenance").map_err(db_err)?;
         let conf: f64 = r.try_get("confidence").map_err(db_err)?;
+        let skill_id: Option<String> = r.try_get("skill_id").map_err(db_err)?;
+        let skill_slug: Option<String> = r.try_get("skill_slug").map_err(db_err)?;
         requirements.push(jobseeker_core::domain::requirement::Requirement {
             id: r.try_get::<String, _>("id").map_err(db_err)?.parse()?,
             job_id: id.clone(),
@@ -1365,7 +1386,8 @@ pub async fn scoring_inputs(
             normalized_text: r.try_get("normalized_text").map_err(db_err)?,
             kind: kind.parse()?,
             necessity: necessity.parse()?,
-            skill_id: None,
+            skill_id: skill_id.as_deref().map(str::parse).transpose()?,
+            skill_slug,
             min_years: r
                 .try_get::<Option<f64>, _>("min_years")
                 .map_err(db_err)?
@@ -1535,12 +1557,16 @@ pub async fn patch(db: &Db, id: &JobId, patch: &JobPatch) -> Result<u64> {
     Ok(result.rows_affected())
 }
 
-/// A user retype (`kind`) or reclassify (`necessity`). At least one field is required.
-/// The row becomes provenance `manual` so a later extract keeps this classification.
+/// A user retype (`kind`), reclassify (`necessity`), or skill link.
+/// At least one field is required. The row becomes provenance `manual` so a later
+/// extract keeps this classification, including a cleared skill link.
+///
+/// `skill_id`: `None` leaves the link, `Some(None)` clears it, `Some(Some(id))` sets it.
 #[derive(Debug, Clone, Default)]
 pub struct RequirementPatch {
     pub kind: Option<String>,
     pub necessity: Option<String>,
+    pub skill_id: Option<Option<String>>,
 }
 
 pub async fn patch_requirement(
@@ -1548,9 +1574,9 @@ pub async fn patch_requirement(
     id: &RequirementId,
     patch: &RequirementPatch,
 ) -> Result<(JobId, RequirementRow)> {
-    if patch.kind.is_none() && patch.necessity.is_none() {
+    if patch.kind.is_none() && patch.necessity.is_none() && patch.skill_id.is_none() {
         return Err(jobseeker_core::Error::BadRequest(
-            "kind or necessity is required".into(),
+            "kind, necessity, or skill_id is required".into(),
         ));
     }
     if let Some(kind) = &patch.kind {
@@ -1559,6 +1585,22 @@ pub async fn patch_requirement(
     if let Some(necessity) = &patch.necessity {
         let _: Necessity = necessity.parse()?;
     }
+    let skill_write = match &patch.skill_id {
+        None => None,
+        Some(None) => Some(None),
+        Some(Some(raw)) => {
+            let skill_id: SkillId = raw.parse()?;
+            let found: Option<String> = sqlx::query_scalar("SELECT id FROM skill WHERE id = ?1")
+                .bind(skill_id.as_str())
+                .fetch_optional(db.reader())
+                .await
+                .map_err(db_err)?;
+            if found.is_none() {
+                return Err(jobseeker_core::Error::NotFound("skill"));
+            }
+            Some(Some(skill_id.as_str().to_string()))
+        }
+    };
 
     let existing = sqlx::query(
         "SELECT r.job_id FROM requirement r
@@ -1581,41 +1623,35 @@ pub async fn patch_requirement(
         "UPDATE requirement
             SET kind = COALESCE(?2, kind),
                 necessity = COALESCE(?3, necessity),
+                skill_id = CASE WHEN ?4 = 1 THEN ?5 ELSE skill_id END,
                 provenance = 'manual',
                 confidence = 1.0,
-                updated_at = ?4
+                updated_at = ?6
           WHERE id = ?1",
     )
     .bind(id.as_str())
     .bind(patch.kind.as_deref())
     .bind(patch.necessity.as_deref())
+    .bind(i64::from(skill_write.is_some()))
+    .bind(skill_write.as_ref().and_then(|id| id.as_deref()))
     .bind(&ts)
     .execute(db.writer())
     .await
     .map_err(db_err)?;
 
     let r = sqlx::query(
-        "SELECT id, text, normalized_text, kind, necessity, min_years, is_blocker,
-                span_start, span_end, provenance
-           FROM requirement WHERE id = ?1",
+        "SELECT r.id, r.text, r.normalized_text, r.kind, r.necessity, r.min_years, r.is_blocker,
+                r.span_start, r.span_end, r.provenance, r.skill_id,
+                s.slug AS skill_slug, s.name AS skill_name
+           FROM requirement r
+           LEFT JOIN skill s ON s.id = r.skill_id
+          WHERE r.id = ?1",
     )
     .bind(id.as_str())
     .fetch_one(db.reader())
     .await
     .map_err(db_err)?;
-    let row = RequirementRow {
-        id: r.try_get("id").map_err(db_err)?,
-        text: r.try_get("text").map_err(db_err)?,
-        normalized_text: r.try_get("normalized_text").map_err(db_err)?,
-        kind: r.try_get("kind").map_err(db_err)?,
-        necessity: r.try_get("necessity").map_err(db_err)?,
-        min_years: r.try_get("min_years").map_err(db_err)?,
-        is_blocker: r.try_get::<i64, _>("is_blocker").map_err(db_err)? != 0,
-        span_start: r.try_get("span_start").map_err(db_err)?,
-        span_end: r.try_get("span_end").map_err(db_err)?,
-        provenance: r.try_get("provenance").map_err(db_err)?,
-    };
-    Ok((job_id, row))
+    Ok((job_id, read_requirement_row(&r)?))
 }
 
 /// Tombstone kind for a requirement the user removed, keyed by normalized text so a
@@ -1732,6 +1768,9 @@ pub async fn create_requirement(
         span_start: None,
         span_end: None,
         provenance: "manual".into(),
+        skill_id: None,
+        skill_slug: None,
+        skill_name: None,
     })
 }
 
@@ -1740,9 +1779,11 @@ pub async fn delete_requirement(db: &Db, id: &RequirementId) -> Result<(JobId, R
     let mut tx = db.writer().begin().await.map_err(db_err)?;
     let r = sqlx::query(
         "SELECT r.id, r.job_id, r.text, r.normalized_text, r.kind, r.necessity, r.min_years,
-                r.is_blocker, r.span_start, r.span_end, r.provenance
+                r.is_blocker, r.span_start, r.span_end, r.provenance, r.skill_id,
+                s.slug AS skill_slug, s.name AS skill_name
            FROM requirement r
            JOIN job j ON j.id = r.job_id
+           LEFT JOIN skill s ON s.id = r.skill_id
           WHERE r.id = ?1 AND j.deleted_at IS NULL",
     )
     .bind(id.as_str())
@@ -1754,18 +1795,7 @@ pub async fn delete_requirement(db: &Db, id: &RequirementId) -> Result<(JobId, R
     };
     let job_id: JobId = r.try_get::<String, _>("job_id").map_err(db_err)?.parse()?;
     let normalized: String = r.try_get("normalized_text").map_err(db_err)?;
-    let row = RequirementRow {
-        id: r.try_get("id").map_err(db_err)?,
-        text: r.try_get("text").map_err(db_err)?,
-        normalized_text: normalized.clone(),
-        kind: r.try_get("kind").map_err(db_err)?,
-        necessity: r.try_get("necessity").map_err(db_err)?,
-        min_years: r.try_get("min_years").map_err(db_err)?,
-        is_blocker: r.try_get::<i64, _>("is_blocker").map_err(db_err)? != 0,
-        span_start: r.try_get("span_start").map_err(db_err)?,
-        span_end: r.try_get("span_end").map_err(db_err)?,
-        provenance: r.try_get("provenance").map_err(db_err)?,
-    };
+    let row = read_requirement_row(&r)?;
     let ts = jobseeker_core::time::to_rfc3339(&jobseeker_core::time::now());
     sqlx::query(
         "INSERT OR IGNORE INTO tombstone (entity_kind, entity_id, deleted_at, reason)
@@ -2684,7 +2714,7 @@ mod tests {
             &req_id,
             &RequirementPatch {
                 necessity: Some("preferred".into()),
-                kind: None,
+                ..Default::default()
             },
         )
         .await
@@ -2717,6 +2747,107 @@ mod tests {
         )
         .await;
         assert!(matches!(missing, Err(jobseeker_core::Error::NotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn patch_requirement_links_and_clears_a_skill() {
+        let db = Db::open_in_memory().await.unwrap();
+        crate::repo::skill::ensure_seed(&db).await.unwrap();
+        let rust = crate::repo::skill::id_by_slug(&db, "rust")
+            .await
+            .unwrap()
+            .unwrap();
+        let job_id = insert_job(
+            &db,
+            "Acme",
+            "Engineer",
+            JobStatus::Open,
+            WorkMode::Remote,
+            None,
+            SalaryPeriod::Year,
+            "2026-09-01T00:00:00Z",
+        )
+        .await;
+        let req_id = RequirementId::new();
+        sqlx::query(
+            "INSERT INTO requirement
+                (id, job_id, text, normalized_text, kind, necessity, span_start, span_end,
+                 created_at, updated_at)
+             VALUES (?1, ?2, 'Production Python', 'production python', 'skill', 'required',
+                     22, 39, ?3, ?3)",
+        )
+        .bind(req_id.as_str())
+        .bind(job_id.as_str())
+        .bind("2026-09-01T00:00:00Z")
+        .execute(db.writer())
+        .await
+        .unwrap();
+
+        let unknown = patch_requirement(
+            &db,
+            &req_id,
+            &RequirementPatch {
+                skill_id: Some(Some(SkillId::new().as_str().to_string())),
+                ..Default::default()
+            },
+        )
+        .await;
+        assert!(matches!(unknown, Err(jobseeker_core::Error::NotFound(_))));
+
+        let malformed = patch_requirement(
+            &db,
+            &req_id,
+            &RequirementPatch {
+                skill_id: Some(Some("not-a-skill".into())),
+                ..Default::default()
+            },
+        )
+        .await;
+        assert!(matches!(
+            malformed,
+            Err(jobseeker_core::Error::BadRequest(_))
+        ));
+
+        let (_, row) = patch_requirement(
+            &db,
+            &req_id,
+            &RequirementPatch {
+                skill_id: Some(Some(rust.as_str().to_string())),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(row.skill_id.as_deref(), Some(rust.as_str()));
+        assert_eq!(row.skill_slug.as_deref(), Some("rust"));
+        assert_eq!(row.skill_name.as_deref(), Some("Rust"));
+        assert_eq!(row.provenance, "manual");
+        assert_eq!(row.kind, "skill");
+        assert_eq!(row.necessity, "required");
+        assert_eq!(row.span_start, Some(22));
+        assert_eq!(row.span_end, Some(39));
+
+        let scored = scoring_inputs(&db, &job_id).await.unwrap().unwrap();
+        assert_eq!(scored.1[0].skill_id.as_ref(), Some(&rust));
+        assert_eq!(scored.1[0].skill_slug.as_deref(), Some("rust"));
+
+        let (_, cleared) = patch_requirement(
+            &db,
+            &req_id,
+            &RequirementPatch {
+                skill_id: Some(None),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(cleared.skill_id, None);
+        assert_eq!(cleared.skill_slug, None);
+        assert_eq!(cleared.provenance, "manual");
+        assert_eq!(cleared.span_start, Some(22));
+        let scored = scoring_inputs(&db, &job_id).await.unwrap().unwrap();
+        assert_eq!(scored.1[0].skill_id, None);
+        assert_eq!(scored.1[0].skill_slug, None);
     }
 
     #[tokio::test]

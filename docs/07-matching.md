@@ -27,6 +27,7 @@ For each requirement, dispatch on `kind`:
 
 ```
 skill / tool
+  compared slug: `skill_id`'s slug when linked, else the longest alias in the text
   ├─ direct evidence?           → years_have = evidence.years
   ├─ hierarchy evidence?        → years_have = evidence.years * 0.7^hops
   ├─ semantic-only match?       → cosine(req, best accomplishment) ≥ 0.72 → partial

@@ -39,6 +39,16 @@ export type RequirementRow = {
   span_start: number | null;
   span_end: number | null;
   provenance: string;
+  /** Taxonomy skill this requirement is judged as. Null until the user links one. */
+  skill_id: string | null;
+  skill_slug: string | null;
+  skill_name: string | null;
+};
+
+export type SkillListItem = {
+  id: string;
+  name: string;
+  slug: string;
 };
 
 export type JobDetail = {
@@ -284,7 +294,16 @@ export const api = {
   jobMatch: (id: string) => request<MatchSummary>(`/api/v1/jobs/${id}/match`),
   patchJob: (id: string, body: JobPatch) =>
     request<JobDetail>(`/api/v1/jobs/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
-  patchRequirement: (id: string, body: { kind?: string; necessity?: string }) =>
+  skills: (q?: string) => {
+    const params = new URLSearchParams();
+    if (q) params.set("q", q);
+    const qs = params.toString();
+    return request<SkillListItem[]>(`/api/v1/skills${qs ? `?${qs}` : ""}`);
+  },
+  patchRequirement: (
+    id: string,
+    body: { kind?: string; necessity?: string; skill_id?: string | null },
+  ) =>
     request<RequirementRow>(`/api/v1/requirements/${id}`, {
       method: "PATCH",
       body: JSON.stringify(body),

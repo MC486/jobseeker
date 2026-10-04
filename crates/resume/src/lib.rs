@@ -150,6 +150,7 @@ mod tests {
             kind: RequirementKind::Skill,
             necessity: Necessity::Required,
             skill_id: None,
+            skill_slug: None,
             min_years: None,
             max_years: None,
             level: None,

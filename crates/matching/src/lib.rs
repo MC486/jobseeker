@@ -198,11 +198,8 @@ fn skill_verdict(
         let credit = if ev.slug.is_empty() {
             0.0
         } else {
-            // The requirement text is resolved to a slug by the caller when possible;
-            // fall back to matching the requirement text itself as a slug-ish key.
-            let want = ev.slug.as_str();
-            let have = ev.slug.as_str();
-            let _ = (want, have);
+            // A linked taxonomy skill wins. Otherwise the requirement text resolves
+            // to a slug, and that slug is what hierarchy credit compares.
             hierarchy_credit(&ev.slug, &slug_of(req))
         };
         if credit > 0.0 && best.as_ref().map(|(_, c)| *c).unwrap_or(0.0) < credit {
@@ -249,6 +246,9 @@ fn skill_verdict(
 }
 
 fn slug_of(req: &Requirement) -> String {
+    if let Some(slug) = req.skill_slug.as_deref().filter(|s| !s.is_empty()) {
+        return slug.to_string();
+    }
     jobseeker_normalize::skill::resolve(&req.text)
         .unwrap_or(req.normalized_text.as_str())
         .to_string()
@@ -651,6 +651,7 @@ mod tests {
             kind,
             necessity,
             skill_id: None,
+            skill_slug: None,
             min_years: years,
             max_years: None,
             level: None,
@@ -768,6 +769,33 @@ mod tests {
             (scored.subscores.weighted(&cfg.weights) - without.weighted(&cfg.weights)).abs() < 1e-6
         );
         assert!((scored.overall - scored.subscores.weighted(&cfg.weights)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_linked_skill_overrides_text_resolution() {
+        let mut python = req(
+            "Production Python",
+            RequirementKind::Skill,
+            Necessity::Required,
+            None,
+        );
+        let person = profile(&[("rust", 8.0)]);
+        let gap = score(
+            &job(vec![python.clone()]),
+            &person,
+            &MatchingConfig::default(),
+        )
+        .unwrap();
+        assert_eq!(gap.requirement_matches[0].status, VerdictStatus::Gap);
+
+        python.skill_slug = Some("rust".into());
+        let met = score(&job(vec![python]), &person, &MatchingConfig::default()).unwrap();
+        assert_eq!(met.requirement_matches[0].status, VerdictStatus::Met);
+        assert!(
+            met.requirement_matches[0].score > 0.9,
+            "rust on the profile should cover a requirement linked to rust, got {}",
+            met.requirement_matches[0].score
+        );
     }
 
     #[test]
