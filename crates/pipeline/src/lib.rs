@@ -14,7 +14,7 @@ use jobseeker_core::domain::capture::{CaptureMethod, CaptureSubmission, ExtractS
 use jobseeker_core::domain::enums::SourceKind;
 use jobseeker_core::domain::event::DomainEvent;
 use jobseeker_core::domain::task::TaskKind;
-use jobseeker_core::ids::{CaptureId, ListingId, TaskId};
+use jobseeker_core::ids::{CaptureId, ListingId, RequirementId, TaskId};
 use jobseeker_core::{Error, Result};
 use jobseeker_db::persist::{self, PersistExtracted};
 use jobseeker_db::queue::{ClaimedTask, NewTask, Queue};
@@ -781,6 +781,38 @@ impl Pipeline {
             tracing::warn!(error = %e, "failed to emit profile.updated");
         }
         Ok(report)
+    }
+
+    /// User retype or reclassify. Provenance becomes `manual`. Files are rewritten and
+    /// the job is rescored in-process — `score:{job}` is already a completed dedupe key.
+    pub async fn reclassify_requirement(
+        &self,
+        id: &RequirementId,
+        patch: &jobseeker_db::repo::job::RequirementPatch,
+    ) -> Result<jobseeker_db::repo::job::RequirementRow> {
+        let (job_id, row) = jobseeker_db::repo::job::patch_requirement(&self.db, id, patch).await?;
+        let _ = jobseeker_db::repo::job::mark_scores_stale(&self.db, &job_id).await;
+        if let Err(e) = self.materialize_job(&job_id).await {
+            tracing::warn!(error = %e, "materialize after requirement edit failed");
+        }
+        if let Err(e) = self
+            .handle_score_match(&json!({ "job_id": job_id.as_str() }))
+            .await
+        {
+            tracing::warn!(error = %e, "rescore after requirement edit failed");
+        }
+        if let Err(e) = self
+            .emit(
+                DomainEvent::JOB_UPDATED,
+                "job",
+                job_id.as_str(),
+                json!({ "source": "requirement", "requirement_id": id.as_str() }),
+            )
+            .await
+        {
+            tracing::warn!(error = %e, "failed to emit job.updated");
+        }
+        Ok(row)
     }
 
     /// User-initiated cross-post merge. `from` is soft-deleted; `into` keeps its

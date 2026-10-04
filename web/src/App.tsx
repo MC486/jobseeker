@@ -1535,44 +1535,134 @@ export function JobOverview() {
   );
 }
 
+const NECESSITY_OPTIONS = [
+  ["required", "required"],
+  ["preferred", "preferred"],
+  ["nice_to_have", "nice to have"],
+  ["implied", "implied"],
+] as const;
+
+const KIND_OPTIONS = [
+  ["skill", "skill"],
+  ["tool", "tool"],
+  ["experience", "experience"],
+  ["education", "education"],
+  ["certification", "certification"],
+  ["clearance", "clearance"],
+  ["language", "language"],
+  ["soft_skill", "soft skill"],
+  ["domain", "domain"],
+  ["responsibility", "responsibility"],
+  ["logistics", "logistics"],
+  ["other", "other"],
+] as const;
+
 export function JobRequirements() {
-  const { detail, score } = useJobRecord();
+  const qc = useQueryClient();
+  const { jobId, detail, score } = useJobRecord();
+  const [error, setError] = useState<string | null>(null);
+  const edit = useMutation({
+    mutationFn: (body: { id: string; kind?: string; necessity?: string }) =>
+      api.patchRequirement(body.id, { kind: body.kind, necessity: body.necessity }),
+    onMutate: async (body) => {
+      await qc.cancelQueries({ queryKey: keys.job(jobId) });
+      const prev = qc.getQueryData<JobDetail>(keys.job(jobId));
+      qc.setQueryData<JobDetail>(keys.job(jobId), (old) => {
+        if (!old) return old;
+        return {
+          ...old,
+          requirements: old.requirements.map((r) =>
+            r.id === body.id
+              ? {
+                  ...r,
+                  kind: body.kind ?? r.kind,
+                  necessity: body.necessity ?? r.necessity,
+                  provenance: "manual",
+                }
+              : r,
+          ),
+        };
+      });
+      return { prev };
+    },
+    onSuccess: async () => {
+      setError(null);
+      await qc.invalidateQueries({ queryKey: keys.job(jobId) });
+      await qc.invalidateQueries({ queryKey: keys.match(jobId) });
+    },
+    onError: (err, _body, ctx) => {
+      if (ctx?.prev) qc.setQueryData(keys.job(jobId), ctx.prev);
+      setError(err instanceof Error ? err.message : String(err));
+    },
+  });
   if (!detail) return null;
   const verdictByReq = new Map((score?.verdicts ?? []).map((v) => [v.requirement_id, v]));
   if (detail.requirements.length === 0) {
     return <p className="text-sm text-zinc-500">No requirements extracted.</p>;
   }
   return (
-    <ul className="space-y-2 text-sm">
-      {detail.requirements.map((r) => {
-        const verdict = verdictByReq.get(r.id);
-        return (
-          <li key={r.id} data-requirement-id={r.id}>
-            <div>
-              <span className="text-zinc-500">{r.necessity}</span>{" "}
-              <Link
-                to="/jobs/$jobId/description"
-                params={{ jobId: detail.id }}
-                search={{ req: r.id }}
-                className="text-indigo-300"
-              >
-                {r.text}
-              </Link>
-              {r.is_blocker && verdict?.status !== "met" ? " · blocker" : ""}
-              {verdict ? (
-                <span className="ml-2 text-zinc-400">
-                  · {verdict.status} ({Math.round(verdict.score * 100)}%)
-                  {verdict.years_needed != null
-                    ? ` · ${fmtYears(verdict.years_have)} / ${fmtYears(verdict.years_needed)} yr`
-                    : ""}
-                </span>
-              ) : null}
-            </div>
-            {verdict?.rationale ? <p className="text-zinc-500">{verdict.rationale}</p> : null}
-          </li>
-        );
-      })}
-    </ul>
+    <div className="space-y-3">
+      <ul className="space-y-3 text-sm">
+        {detail.requirements.map((r) => {
+          const verdict = verdictByReq.get(r.id);
+          const pending = edit.isPending && edit.variables?.id === r.id;
+          return (
+            <li key={r.id} data-requirement-id={r.id}>
+              <div className="flex flex-wrap items-center gap-2">
+                <select
+                  aria-label={`${r.text} necessity`}
+                  className="rounded border border-zinc-700 bg-zinc-950 px-1.5 py-0.5 text-xs text-zinc-300"
+                  value={r.necessity}
+                  disabled={pending}
+                  onChange={(e) => edit.mutate({ id: r.id, necessity: e.target.value })}
+                >
+                  {NECESSITY_OPTIONS.map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  aria-label={`${r.text} kind`}
+                  className="rounded border border-zinc-700 bg-zinc-950 px-1.5 py-0.5 text-xs text-zinc-300"
+                  value={r.kind}
+                  disabled={pending}
+                  onChange={(e) => edit.mutate({ id: r.id, kind: e.target.value })}
+                >
+                  {KIND_OPTIONS.map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+                <Link
+                  to="/jobs/$jobId/description"
+                  params={{ jobId: detail.id }}
+                  search={{ req: r.id }}
+                  className="text-indigo-300"
+                >
+                  {r.text}
+                </Link>
+                {r.provenance === "manual" ? <span className="text-zinc-500">manual</span> : null}
+                {r.is_blocker && verdict?.status !== "met" ? (
+                  <span className="text-zinc-400">blocker</span>
+                ) : null}
+                {verdict ? (
+                  <span className="text-zinc-400">
+                    {verdict.status} ({Math.round(verdict.score * 100)}%)
+                    {verdict.years_needed != null
+                      ? ` · ${fmtYears(verdict.years_have)} / ${fmtYears(verdict.years_needed)} yr`
+                      : ""}
+                  </span>
+                ) : null}
+              </div>
+              {verdict?.rationale ? <p className="text-zinc-500">{verdict.rationale}</p> : null}
+            </li>
+          );
+        })}
+      </ul>
+      {error ? <p className="text-sm text-red-300">{error}</p> : null}
+    </div>
   );
 }
 

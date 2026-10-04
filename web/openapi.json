@@ -280,6 +280,161 @@
         }
       }
     },
+    "/api/v1/jobs/{id}/application": {
+      "get": {
+        "tags": [],
+        "operationId": "get_application",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      },
+      "patch": {
+        "tags": [],
+        "operationId": "patch_application",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchApplicationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "400": {
+            "description": ""
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/{id}/conflicts": {
+      "get": {
+        "tags": [],
+        "operationId": "list_conflicts",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/{id}/conflicts/{conflict_id}/resolve": {
+      "post": {
+        "tags": [],
+        "operationId": "resolve_conflict",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "conflict_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResolveConflictRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "400": {
+            "description": ""
+          },
+          "404": {
+            "description": ""
+          },
+          "409": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/{id}/duplicates": {
+      "get": {
+        "tags": [],
+        "operationId": "list_duplicates",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      }
+    },
     "/api/v1/jobs/{id}/match": {
       "get": {
         "tags": [],
@@ -296,6 +451,80 @@
         ],
         "responses": {
           "200": {
+            "description": ""
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/{id}/merge": {
+      "post": {
+        "tags": [],
+        "operationId": "merge_job",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MergeJobRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "400": {
+            "description": ""
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/{id}/split": {
+      "post": {
+        "tags": [],
+        "operationId": "split_job",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SplitJobRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "400": {
             "description": ""
           },
           "404": {
@@ -355,6 +584,43 @@
             "description": ""
           },
           "400": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/api/v1/requirements/{id}": {
+      "patch": {
+        "tags": [],
+        "operationId": "patch_requirement",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchRequirementRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "400": {
+            "description": ""
+          },
+          "404": {
             "description": ""
           }
         }
@@ -552,6 +818,17 @@
           }
         }
       },
+      "MergeJobRequest": {
+        "type": "object",
+        "required": [
+          "into_job_id"
+        ],
+        "properties": {
+          "into_job_id": {
+            "type": "string"
+          }
+        }
+      },
       "MetaResponse": {
         "type": "object",
         "required": [
@@ -580,6 +857,29 @@
         "properties": {
           "code": {
             "type": "string"
+          }
+        }
+      },
+      "PatchApplicationRequest": {
+        "type": "object",
+        "properties": {
+          "next_action": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "next_action_due": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -616,6 +916,46 @@
               "null"
             ],
             "format": "int32"
+          }
+        }
+      },
+      "PatchRequirementRequest": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "necessity": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ResolveConflictRequest": {
+        "type": "object",
+        "required": [
+          "choice"
+        ],
+        "properties": {
+          "choice": {
+            "type": "string",
+            "description": "`a`, `b`, or `keep`. Never inferred."
+          }
+        }
+      },
+      "SplitJobRequest": {
+        "type": "object",
+        "required": [
+          "listing_id"
+        ],
+        "properties": {
+          "listing_id": {
+            "type": "string"
           }
         }
       }
