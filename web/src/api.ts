@@ -38,6 +38,7 @@ export type RequirementRow = {
   /** UTF-8 byte offsets into `description_md`. Null when the atom has no origin. */
   span_start: number | null;
   span_end: number | null;
+  provenance: string;
 };
 
 export type JobDetail = {
@@ -283,6 +284,11 @@ export const api = {
   jobMatch: (id: string) => request<MatchSummary>(`/api/v1/jobs/${id}/match`),
   patchJob: (id: string, body: JobPatch) =>
     request<JobDetail>(`/api/v1/jobs/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  patchRequirement: (id: string, body: { kind?: string; necessity?: string }) =>
+    request<RequirementRow>(`/api/v1/requirements/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
   mergeJob: (from: string, into: string) =>
     request<{ from_id: string; into_id: string; listings_moved: number; requirements_added: number }>(
       `/api/v1/jobs/${from}/merge`,

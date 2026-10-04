@@ -25,11 +25,18 @@ pair with a hashed, ingest-scoped device token.
 
 ## Do next (M0 remaining → M1)
 
-1. **Inline requirement edits.** Retype or reclassify a requirement on
-   `/jobs/$jobId/requirements` without leaving the page. A documents section
-   (tailored resume / cover letter) is still later.
+1. **Add or remove a requirement.** Create or delete one on
+   `/jobs/$jobId/requirements`. Relinking a skill and a documents section
+   (tailored resume / cover letter) are still later.
 
 ## Just shipped
+
+- **Inline requirement edits.** Necessity and kind are selects on
+  `/jobs/$jobId/requirements`. `PATCH /api/v1/requirements/:id` sets
+  provenance `manual`, rewrites the job files, and rescores. A later extract
+  keeps that classification when the normalized text still matches. The
+  sentence span is unchanged, so the description highlight still lands.
+  Adding, removing, and relinking a skill are not this slice.
 
 - **Requirement evidence in the description.** Job detail returns
   `span_start` / `span_end` (UTF-8 byte offsets into `description_md`).

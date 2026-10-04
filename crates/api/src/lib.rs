@@ -16,13 +16,13 @@ use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::middleware;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{Html, IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{get, patch, post};
 use axum::{Extension, Json, Router};
 use futures::{Stream, StreamExt};
 use jobseeker_core::config::AuthMode;
 use jobseeker_core::domain::capture::CaptureSubmission;
 use jobseeker_core::domain::event::DomainEvent;
-use jobseeker_core::ids::{JobId, TaskId};
+use jobseeker_core::ids::{JobId, RequirementId, TaskId};
 use jobseeker_core::{Error, Result};
 use jobseeker_db::queue::Queue;
 use jobseeker_db::repo::application;
@@ -164,6 +164,7 @@ pub struct PageDto<T: Serialize> {
         list_jobs,
         get_job,
         patch_job,
+        patch_requirement,
         get_job_match,
         merge_job,
         split_job,
@@ -191,6 +192,7 @@ pub struct PageDto<T: Serialize> {
         Accepted,
         MetaResponse,
         PatchJobRequest,
+        PatchRequirementRequest,
         MergeJobRequest,
         SplitJobRequest,
         ResolveConflictRequest,
@@ -224,6 +226,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/jobs", get(list_jobs))
         .route("/api/v1/today", get(today))
         .route("/api/v1/jobs/{id}", get(get_job).patch(patch_job))
+        .route("/api/v1/requirements/{id}", patch(patch_requirement))
         .route("/api/v1/jobs/{id}/match", get(get_job_match))
         .route("/api/v1/jobs/{id}/merge", post(merge_job))
         .route("/api/v1/jobs/{id}/split", post(split_job))
@@ -495,6 +498,46 @@ async fn patch_job(
         )
         .await;
     Ok(Json(job))
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct PatchRequirementRequest {
+    #[serde(default)]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub necessity: Option<String>,
+}
+
+fn trimmed_field(value: Option<String>) -> Option<String> {
+    value
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+#[utoipa::path(
+    patch,
+    path = "/api/v1/requirements/{id}",
+    request_body = PatchRequirementRequest,
+    responses((status = 200), (status = 400), (status = 404))
+)]
+async fn patch_requirement(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<PatchRequirementRequest>,
+) -> ApiResult<Json<jobseeker_db::repo::job::RequirementRow>> {
+    let id: RequirementId = id.parse().map_err(ApiError)?;
+    let row = state
+        .pipeline
+        .reclassify_requirement(
+            &id,
+            &jobseeker_db::repo::job::RequirementPatch {
+                kind: trimmed_field(body.kind),
+                necessity: trimmed_field(body.necessity),
+            },
+        )
+        .await
+        .map_err(ApiError)?;
+    Ok(Json(row))
 }
 
 #[utoipa::path(get, path = "/api/v1/jobs/{id}/match", responses((status = 200), (status = 404)))]
@@ -2247,6 +2290,105 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(bad.status(), StatusCode::BAD_REQUEST);
+        std::mem::forget(dir);
+    }
+
+    #[tokio::test]
+    async fn patch_requirement_reclassifies_and_keeps_the_sentence_span() {
+        let dir = tempfile::tempdir().unwrap();
+        let pipe = jobseeker_pipeline::for_test(dir.path().to_path_buf())
+            .await
+            .unwrap();
+        let html = r#"<html><head><script type="application/ld+json">{"@type":"JobPosting","title":"Data Scientist","hiringOrganization":{"name":"Zillow"},"description":"<h2>Requirements</h2><ul><li>Production Python and SQL</li></ul>"}</script></head></html>"#;
+        pipe.ingest_paste(html, Some("https://boards.greenhouse.io/zillow/jobs/2"))
+            .await
+            .unwrap();
+        pipe.drain().await.unwrap();
+        let page =
+            jobseeker_db::repo::job::list(&pipe.db, &jobseeker_db::repo::job::JobFilter::default())
+                .await
+                .unwrap();
+        let job_id = page.items[0].id.clone();
+        let detail = jobseeker_db::repo::job::get(&pipe.db, &job_id.parse().unwrap())
+            .await
+            .unwrap()
+            .unwrap();
+        let sql = detail
+            .requirements
+            .iter()
+            .find(|r| r.text == "SQL")
+            .expect("compound bullet splits into SQL");
+        let req_id = sql.id.clone();
+        let span = (sql.span_start, sql.span_end);
+
+        let app = router(AppState::new(pipe));
+        let patched = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PATCH")
+                    .uri(format!("/api/v1/requirements/{req_id}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "necessity": "preferred" }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(patched.status(), StatusCode::OK);
+        let row: serde_json::Value = body_json(patched).await;
+        assert_eq!(row["necessity"], "preferred");
+        assert_eq!(row["provenance"], "manual");
+        assert_eq!(row["span_start"], serde_json::json!(span.0));
+        assert_eq!(row["span_end"], serde_json::json!(span.1));
+
+        let again = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/jobs/{job_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let detail: serde_json::Value = body_json(again).await;
+        let reqs = detail["requirements"].as_array().unwrap();
+        let sql = reqs.iter().find(|r| r["text"] == "SQL").unwrap();
+        assert_eq!(sql["necessity"], "preferred");
+        assert_eq!(sql["provenance"], "manual");
+
+        let bad = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PATCH")
+                    .uri(format!("/api/v1/requirements/{req_id}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "kind": "vibes" }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(bad.status(), StatusCode::BAD_REQUEST);
+
+        let missing = app
+            .oneshot(
+                Request::builder()
+                    .method("PATCH")
+                    .uri("/api/v1/requirements/00000000-0000-7000-8000-000000000001")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "necessity": "implied" }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
         std::mem::forget(dir);
     }
 

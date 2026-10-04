@@ -110,8 +110,11 @@ conflicts). Provenance is a dot on the title and on comp. Clicking a
 requirement opens `/description?req=<id>` and highlights that requirement's
 `span_start`/`span_end` bytes in the description (the whole bullet when
 several atoms share it). A span that is missing or out of range leaves the
-description unmarked and says the sentence was not located. There is no
-documents section, and requirement rows are not editable inline.
+description unmarked and says the sentence was not located. On
+`/requirements`, necessity and kind are selects. A change stays on the page,
+is marked manual, and is kept if that posting is extracted again. Adding,
+removing, or relinking a skill is not on this page. There is no documents
+section.
 
 **Job list** (`/jobs`) is a dense virtualized table of the first 200 jobs: title,
 company, comp, location/mode, posted age, close date, match overall plus the diagnostic

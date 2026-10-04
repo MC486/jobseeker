@@ -3,8 +3,8 @@
 //! The list query is the performance-critical path (NFR-P-02): filters compose in SQL,
 //! pagination is keyset-based, and the projection is only what a table row renders.
 
-use jobseeker_core::domain::enums::{JobStatus, Seniority, WorkMode};
-use jobseeker_core::ids::{CompanyId, JobId, ListingId};
+use jobseeker_core::domain::enums::{JobStatus, Necessity, RequirementKind, Seniority, WorkMode};
+use jobseeker_core::ids::{CompanyId, JobId, ListingId, RequirementId};
 use jobseeker_core::Result;
 use sqlx::Row;
 
@@ -629,6 +629,8 @@ pub struct RequirementRow {
     /// UTF-8 byte offsets into `description_md`. Both absent when the atom has no origin.
     pub span_start: Option<i64>,
     pub span_end: Option<i64>,
+    /// `manual` after the user retypes or reclassifies this requirement.
+    pub provenance: String,
 }
 
 /// Full job record for the detail view and the CLI `show` command.
@@ -744,7 +746,7 @@ pub async fn get(db: &Db, id: &JobId) -> Result<Option<JobDetail>> {
 
     let req_rows = sqlx::query(
         "SELECT id, text, normalized_text, kind, necessity, min_years, is_blocker,
-                span_start, span_end
+                span_start, span_end, provenance
            FROM requirement WHERE job_id = ?1 ORDER BY ordinal ASC",
     )
     .bind(id.as_str())
@@ -763,6 +765,7 @@ pub async fn get(db: &Db, id: &JobId) -> Result<Option<JobDetail>> {
             is_blocker: r.try_get::<i64, _>("is_blocker").map_err(db_err)? != 0,
             span_start: r.try_get("span_start").map_err(db_err)?,
             span_end: r.try_get("span_end").map_err(db_err)?,
+            provenance: r.try_get("provenance").map_err(db_err)?,
         });
     }
 
@@ -1529,6 +1532,89 @@ pub async fn patch(db: &Db, id: &JobId, patch: &JobPatch) -> Result<u64> {
         }
     }
     Ok(result.rows_affected())
+}
+
+/// A user retype (`kind`) or reclassify (`necessity`). At least one field is required.
+/// The row becomes provenance `manual` so a later extract keeps this classification.
+#[derive(Debug, Clone, Default)]
+pub struct RequirementPatch {
+    pub kind: Option<String>,
+    pub necessity: Option<String>,
+}
+
+pub async fn patch_requirement(
+    db: &Db,
+    id: &RequirementId,
+    patch: &RequirementPatch,
+) -> Result<(JobId, RequirementRow)> {
+    if patch.kind.is_none() && patch.necessity.is_none() {
+        return Err(jobseeker_core::Error::BadRequest(
+            "kind or necessity is required".into(),
+        ));
+    }
+    if let Some(kind) = &patch.kind {
+        let _: RequirementKind = kind.parse()?;
+    }
+    if let Some(necessity) = &patch.necessity {
+        let _: Necessity = necessity.parse()?;
+    }
+
+    let existing = sqlx::query(
+        "SELECT r.job_id FROM requirement r
+           JOIN job j ON j.id = r.job_id
+          WHERE r.id = ?1 AND j.deleted_at IS NULL",
+    )
+    .bind(id.as_str())
+    .fetch_optional(db.reader())
+    .await
+    .map_err(db_err)?;
+    let Some(existing) = existing else {
+        return Err(jobseeker_core::Error::NotFound("requirement"));
+    };
+    let job_id: JobId = existing
+        .try_get::<String, _>("job_id")
+        .map_err(db_err)?
+        .parse()?;
+    let ts = jobseeker_core::time::to_rfc3339(&jobseeker_core::time::now());
+    sqlx::query(
+        "UPDATE requirement
+            SET kind = COALESCE(?2, kind),
+                necessity = COALESCE(?3, necessity),
+                provenance = 'manual',
+                confidence = 1.0,
+                updated_at = ?4
+          WHERE id = ?1",
+    )
+    .bind(id.as_str())
+    .bind(patch.kind.as_deref())
+    .bind(patch.necessity.as_deref())
+    .bind(&ts)
+    .execute(db.writer())
+    .await
+    .map_err(db_err)?;
+
+    let r = sqlx::query(
+        "SELECT id, text, normalized_text, kind, necessity, min_years, is_blocker,
+                span_start, span_end, provenance
+           FROM requirement WHERE id = ?1",
+    )
+    .bind(id.as_str())
+    .fetch_one(db.reader())
+    .await
+    .map_err(db_err)?;
+    let row = RequirementRow {
+        id: r.try_get("id").map_err(db_err)?,
+        text: r.try_get("text").map_err(db_err)?,
+        normalized_text: r.try_get("normalized_text").map_err(db_err)?,
+        kind: r.try_get("kind").map_err(db_err)?,
+        necessity: r.try_get("necessity").map_err(db_err)?,
+        min_years: r.try_get("min_years").map_err(db_err)?,
+        is_blocker: r.try_get::<i64, _>("is_blocker").map_err(db_err)? != 0,
+        span_start: r.try_get("span_start").map_err(db_err)?,
+        span_end: r.try_get("span_end").map_err(db_err)?,
+        provenance: r.try_get("provenance").map_err(db_err)?,
+    };
+    Ok((job_id, row))
 }
 
 /// Mark every score for this job stale. A cheap UPDATE beats deleting rows: the UI can keep
@@ -2390,6 +2476,76 @@ mod tests {
         assert!(matches!(bad, Err(jobseeker_core::Error::BadRequest(_))));
         let still = get(&db, &id).await.unwrap().unwrap();
         assert_eq!(still.status, "closed");
+    }
+
+    #[tokio::test]
+    async fn patch_requirement_retypes_and_reclassifies() {
+        let db = Db::open_in_memory().await.unwrap();
+        let job_id = insert_job(
+            &db,
+            "Acme",
+            "Engineer",
+            JobStatus::Open,
+            WorkMode::Remote,
+            None,
+            SalaryPeriod::Year,
+            "2026-09-01T00:00:00Z",
+        )
+        .await;
+        let req_id = RequirementId::new();
+        sqlx::query(
+            "INSERT INTO requirement
+                (id, job_id, text, normalized_text, kind, necessity, created_at, updated_at)
+             VALUES (?1, ?2, 'Production Python', 'production python', 'skill', 'required', ?3, ?3)",
+        )
+        .bind(req_id.as_str())
+        .bind(job_id.as_str())
+        .bind("2026-09-01T00:00:00Z")
+        .execute(db.writer())
+        .await
+        .unwrap();
+
+        let empty = patch_requirement(&db, &req_id, &RequirementPatch::default()).await;
+        assert!(matches!(empty, Err(jobseeker_core::Error::BadRequest(_))));
+
+        let (got_job, row) = patch_requirement(
+            &db,
+            &req_id,
+            &RequirementPatch {
+                necessity: Some("preferred".into()),
+                kind: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(got_job, job_id);
+        assert_eq!(row.necessity, "preferred");
+        assert_eq!(row.kind, "skill");
+        assert_eq!(row.provenance, "manual");
+
+        let bad = patch_requirement(
+            &db,
+            &req_id,
+            &RequirementPatch {
+                kind: Some("vibes".into()),
+                ..Default::default()
+            },
+        )
+        .await;
+        assert!(matches!(bad, Err(jobseeker_core::Error::BadRequest(_))));
+        let still = get(&db, &job_id).await.unwrap().unwrap();
+        assert_eq!(still.requirements[0].kind, "skill");
+
+        let missing = patch_requirement(
+            &db,
+            &RequirementId::new(),
+            &RequirementPatch {
+                necessity: Some("implied".into()),
+                ..Default::default()
+            },
+        )
+        .await;
+        assert!(matches!(missing, Err(jobseeker_core::Error::NotFound(_))));
     }
 
     #[tokio::test]

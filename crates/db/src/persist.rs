@@ -15,6 +15,7 @@ use jobseeker_core::Result;
 use jobseeker_normalize::location::parse_location;
 use jobseeker_normalize::requirement::AtomizedRequirement;
 use jobseeker_normalize::salary::parse_salary;
+use sqlx::Row;
 
 use crate::repo::{company, listing};
 use crate::{db_err, Db};
@@ -467,6 +468,7 @@ async fn replace_requirements(
     job_id: &JobId,
     requirements: &[AtomizedRequirement],
 ) -> Result<()> {
+    let manual = snapshot_manual_requirements(tx, job_id).await?;
     sqlx::query("DELETE FROM requirement WHERE job_id = ?1")
         .bind(job_id.as_str())
         .execute(&mut **tx)
@@ -508,6 +510,60 @@ async fn replace_requirements(
         .bind(span_start)
         .bind(span_end)
         .bind(0.6_f64)
+        .bind(&ts)
+        .execute(&mut **tx)
+        .await
+        .map_err(db_err)?;
+    }
+    restore_manual_requirements(tx, job_id, &manual).await?;
+    Ok(())
+}
+
+/// Classifications the user set. A re-extract deletes every requirement row, so these
+/// are captured first and written back onto the matching `normalized_text`.
+async fn snapshot_manual_requirements(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    job_id: &JobId,
+) -> Result<Vec<(String, String, String)>> {
+    let rows = sqlx::query(
+        "SELECT normalized_text, kind, necessity FROM requirement
+          WHERE job_id = ?1 AND provenance = 'manual'",
+    )
+    .bind(job_id.as_str())
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(db_err)?;
+    let mut out = Vec::with_capacity(rows.len());
+    for r in rows {
+        out.push((
+            r.try_get("normalized_text").map_err(db_err)?,
+            r.try_get("kind").map_err(db_err)?,
+            r.try_get("necessity").map_err(db_err)?,
+        ));
+    }
+    Ok(out)
+}
+
+async fn restore_manual_requirements(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    job_id: &JobId,
+    saved: &[(String, String, String)],
+) -> Result<()> {
+    if saved.is_empty() {
+        return Ok(());
+    }
+    let ts = to_rfc3339(&now());
+    for (normalized, kind, necessity) in saved {
+        sqlx::query(
+            "UPDATE requirement
+                SET kind = ?3, necessity = ?4, provenance = 'manual', confidence = 1.0,
+                    updated_at = ?5
+              WHERE job_id = ?1 AND normalized_text = ?2",
+        )
+        .bind(job_id.as_str())
+        .bind(normalized)
+        .bind(kind)
+        .bind(necessity)
         .bind(&ts)
         .execute(&mut **tx)
         .await
@@ -844,6 +900,7 @@ async fn replace_requirements_from_file(
     job_id: &JobId,
     requirements: &[FileReqWrite],
 ) -> Result<()> {
+    let manual = snapshot_manual_requirements(tx, job_id).await?;
     sqlx::query("DELETE FROM requirement WHERE job_id = ?1")
         .bind(job_id.as_str())
         .execute(&mut **tx)
@@ -879,6 +936,7 @@ async fn replace_requirements_from_file(
         .await
         .map_err(db_err)?;
     }
+    restore_manual_requirements(tx, job_id, &manual).await?;
     Ok(())
 }
 
@@ -1169,5 +1227,102 @@ mod tests {
         );
         assert_eq!(detail.requirements[1].span_start, None);
         assert_eq!(detail.requirements[1].span_end, None);
+    }
+
+    #[tokio::test]
+    async fn a_manual_classification_survives_reextract() {
+        let db = Db::open_in_memory().await.unwrap();
+        let (listing_id, _) = listing::upsert_by_url(
+            &db,
+            &UpsertListing {
+                source: SourceKind::Greenhouse,
+                url: "https://boards.greenhouse.io/acme/jobs/manual".into(),
+                url_canonical: "https://boards.greenhouse.io/acme/jobs/manual".into(),
+                source_job_id: Some("manual".into()),
+                title_at_source: Some("Engineer".into()),
+                company_name_at_source: Some("Acme".into()),
+            },
+        )
+        .await
+        .unwrap();
+        let mut extracted = ExtractedJob::default();
+        extracted.title = Some(Sourced::new("Engineer".into(), Provenance::Rules));
+        extracted.company_name = Some(Sourced::new("Acme".into(), Provenance::Rules));
+        let kept = atom("Production Python");
+        let mut rewritten = atom("Applied modeling");
+        rewritten.kind = RequirementKind::Skill;
+        let out = persist_extracted(
+            &db,
+            PersistExtracted {
+                listing_id: Some(&listing_id),
+                job: &extracted,
+                requirements: &[kept, rewritten],
+                description_md: "md",
+                description_text: "md",
+                content_hash: "b3:m1",
+                partial: false,
+                model: None,
+            },
+        )
+        .await
+        .unwrap();
+        let detail = crate::repo::job::get(&db, &out.job_id)
+            .await
+            .unwrap()
+            .unwrap();
+        let python = detail
+            .requirements
+            .iter()
+            .find(|r| r.text == "Production Python")
+            .unwrap();
+        let id: jobseeker_core::ids::RequirementId = python.id.parse().unwrap();
+        crate::repo::job::patch_requirement(
+            &db,
+            &id,
+            &crate::repo::job::RequirementPatch {
+                kind: Some("responsibility".into()),
+                necessity: Some("preferred".into()),
+            },
+        )
+        .await
+        .unwrap();
+
+        let mut extracted_again = atom("Applied modeling");
+        extracted_again.kind = RequirementKind::Tool;
+        persist_extracted(
+            &db,
+            PersistExtracted {
+                listing_id: Some(&listing_id),
+                job: &extracted,
+                requirements: &[atom("Production Python"), extracted_again],
+                description_md: "md",
+                description_text: "md",
+                content_hash: "b3:m2",
+                partial: false,
+                model: None,
+            },
+        )
+        .await
+        .unwrap();
+        let again = crate::repo::job::get(&db, &out.job_id)
+            .await
+            .unwrap()
+            .unwrap();
+        let python = again
+            .requirements
+            .iter()
+            .find(|r| r.normalized_text == "production python")
+            .unwrap();
+        assert_eq!(python.kind, "responsibility");
+        assert_eq!(python.necessity, "preferred");
+        assert_eq!(python.provenance, "manual");
+        let modeling = again
+            .requirements
+            .iter()
+            .find(|r| r.normalized_text == "applied modeling")
+            .unwrap();
+        assert_eq!(modeling.kind, "tool");
+        assert_eq!(modeling.necessity, "required");
+        assert_eq!(modeling.provenance, "rules");
     }
 }

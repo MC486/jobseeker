@@ -95,8 +95,14 @@ PATCH /api/v1/jobs/:id            {title?, user_rating?, user_notes_md?, status?
 DELETE /api/v1/jobs/:id           ?purge_files=true  → soft delete by default
 GET  /api/v1/jobs/:id/requirements
 POST /api/v1/jobs/:id/requirements          create manual requirement
-PATCH /api/v1/requirements/:id              retype / reclassify / relink skill
-DELETE /api/v1/requirements/:id
+PATCH /api/v1/requirements/:id              {kind?, necessity?} — at least one.
+                                    Unknown values are 400. Provenance becomes
+                                    `manual` (confidence 1). Files are rewritten
+                                    and the job is rescored. A later extract keeps
+                                    this classification when `normalized_text`
+                                    still matches. Skill relink, create, and
+                                    delete are not implemented.
+DELETE /api/v1/requirements/:id             not implemented
 GET  /api/v1/jobs/:id/raw/:capture_id       sanitized original capture (restrictive CSP)
 GET  /api/v1/jobs/:id/revisions             change history
 GET  /api/v1/jobs/:id/conflicts             cross-source disagreements
