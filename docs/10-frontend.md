@@ -107,7 +107,11 @@ on every section. The URL picks the rest: `/jobs/$jobId` overview (comp,
 location, posted, a link to the score), `/requirements`, `/match`,
 `/description`, `/sources` (listings, split, duplicates, extraction
 conflicts). Provenance is a dot on the title and on comp. Clicking a
-requirement does not highlight its sentence. There is no documents section.
+requirement opens `/description?req=<id>` and highlights that requirement's
+`span_start`/`span_end` bytes in the description (the whole bullet when
+several atoms share it). A span that is missing or out of range leaves the
+description unmarked and says the sentence was not located. There is no
+documents section, and requirement rows are not editable inline.
 
 **Job list** (`/jobs`) is a dense virtualized table of the first 200 jobs: title,
 company, comp, location/mode, posted age, close date, match overall plus the diagnostic

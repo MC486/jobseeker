@@ -1127,4 +1127,47 @@ mod tests {
             .unwrap();
         assert_eq!(count, 1);
     }
+
+    #[tokio::test]
+    async fn job_detail_returns_requirement_source_spans() {
+        let db = Db::open_in_memory().await.unwrap();
+        let mut extracted = ExtractedJob::default();
+        extracted.title = Some(Sourced::new("Engineer".into(), Provenance::Rules));
+        extracted.company_name = Some(Sourced::new("Acme".into(), Provenance::Rules));
+        let md = "\n## Requirements\n\n  - Production Python and SQL\n  - Applied modeling\n";
+        let mut spanned = atom("Production Python and SQL");
+        spanned.source_span = Some((22, 47));
+        let bare = atom("Applied modeling");
+        let out = persist_extracted(
+            &db,
+            PersistExtracted {
+                listing_id: None,
+                job: &extracted,
+                requirements: &[spanned, bare],
+                description_md: md,
+                description_text: md,
+                content_hash: "b3:span",
+                partial: false,
+                model: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let detail = crate::repo::job::get(&db, &out.job_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(detail.requirements.len(), 2);
+        assert_eq!(detail.requirements[0].span_start, Some(22));
+        assert_eq!(detail.requirements[0].span_end, Some(47));
+        let start = detail.requirements[0].span_start.unwrap() as usize;
+        let end = detail.requirements[0].span_end.unwrap() as usize;
+        assert_eq!(
+            &detail.description_md[start..end],
+            "Production Python and SQL"
+        );
+        assert_eq!(detail.requirements[1].span_start, None);
+        assert_eq!(detail.requirements[1].span_end, None);
+    }
 }

@@ -25,17 +25,24 @@ pair with a hashed, ingest-scoped device token.
 
 ## Do next (M0 remaining → M1)
 
-1. **Requirement evidence in the description.** A requirement row does not
-   highlight its sentence. Inline requirement edits and a documents section
-   (tailored resume / cover letter) are not this slice.
+1. **Inline requirement edits.** Retype or reclassify a requirement on
+   `/jobs/$jobId/requirements` without leaving the page. A documents section
+   (tailored resume / cover letter) is still later.
 
 ## Just shipped
+
+- **Requirement evidence in the description.** Job detail returns
+  `span_start` / `span_end` (UTF-8 byte offsets into `description_md`).
+  A requirement links to `/jobs/$jobId/description?req=<id>`, which marks
+  that span and scrolls it into view. Compound atoms that share a bullet
+  highlight the whole bullet. A missing or out-of-range span says the
+  sentence was not located. Inline edits and a documents section are not
+  this slice.
 
 - **Job detail sections.** `/jobs/$jobId` is the overview. Requirements,
   match, description, and sources are their own routes. Your call stays
   above the section nav on every one. Unresolved conflicts and possible
-  duplicates are counted on Sources. Clicking a requirement does not
-  highlight description text. There is no documents section.
+  duplicates are counted on Sources. There is no documents section.
 
 - **File-based routes + virtualized job table.** Routes live in
   `web/src/routes` and `tsr generate` writes `routeTree.gen.ts`. `/jobs` is a
@@ -231,5 +238,5 @@ A LinkedIn URL must still fail with `needs_browser` and must not be fetched.
 
 - `crates/api/src/lib.rs` — SSE events, password login
 - `crates/pipeline/src/lib.rs` — `refresh_listing`, reconcile handlers
-- `web/src/routes/` — file-based TanStack routes, including `/jobs/$jobId` sections; `web/src/compare.ts` — compare ids
+- `web/src/routes/` — file-based TanStack routes, including `/jobs/$jobId` sections and `description?req=`; `web/src/compare.ts` — compare ids
 - `extension/popup.js` — capture polish / origin allowlist

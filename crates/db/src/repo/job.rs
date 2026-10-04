@@ -626,6 +626,9 @@ pub struct RequirementRow {
     pub necessity: String,
     pub min_years: Option<f64>,
     pub is_blocker: bool,
+    /// UTF-8 byte offsets into `description_md`. Both absent when the atom has no origin.
+    pub span_start: Option<i64>,
+    pub span_end: Option<i64>,
 }
 
 /// Full job record for the detail view and the CLI `show` command.
@@ -740,7 +743,8 @@ pub async fn get(db: &Db, id: &JobId) -> Result<Option<JobDetail>> {
     .map_err(db_err)?;
 
     let req_rows = sqlx::query(
-        "SELECT id, text, normalized_text, kind, necessity, min_years, is_blocker
+        "SELECT id, text, normalized_text, kind, necessity, min_years, is_blocker,
+                span_start, span_end
            FROM requirement WHERE job_id = ?1 ORDER BY ordinal ASC",
     )
     .bind(id.as_str())
@@ -757,6 +761,8 @@ pub async fn get(db: &Db, id: &JobId) -> Result<Option<JobDetail>> {
             necessity: r.try_get("necessity").map_err(db_err)?,
             min_years: r.try_get("min_years").map_err(db_err)?,
             is_blocker: r.try_get::<i64, _>("is_blocker").map_err(db_err)? != 0,
+            span_start: r.try_get("span_start").map_err(db_err)?,
+            span_end: r.try_get("span_end").map_err(db_err)?,
         });
     }
 

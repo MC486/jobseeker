@@ -35,6 +35,9 @@ export type RequirementRow = {
   necessity: string;
   min_years: number | null;
   is_blocker: boolean;
+  /** UTF-8 byte offsets into `description_md`. Null when the atom has no origin. */
+  span_start: number | null;
+  span_end: number | null;
 };
 
 export type JobDetail = {
