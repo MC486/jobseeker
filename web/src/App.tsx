@@ -1692,7 +1692,16 @@ export function JobSources() {
       <section>
         <h2 className="mb-2 text-lg font-medium">Listings</h2>
         {listings.length === 0 ? (
-          <p className="text-sm text-zinc-500">No source URL attached.</p>
+          detail.apply_url ? (
+            <p className="text-sm text-zinc-300">
+              Posting URL{" "}
+              <a className="break-all text-indigo-300" href={detail.apply_url}>
+                {detail.apply_url}
+              </a>
+            </p>
+          ) : (
+            <p className="text-sm text-zinc-500">No source URL attached.</p>
+          )
         ) : (
           <>
             <p className="mb-2 text-xs text-zinc-500">
