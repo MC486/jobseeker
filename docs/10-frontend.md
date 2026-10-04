@@ -102,13 +102,12 @@ with a count. Cards are jobs that already have a pipeline status. Drag a
 card, or use Move, to change that status. This does not change posting
 liveness. The board is the first 200 jobs from `GET /api/v1/jobs`.
 
-**Job detail** is the center of the product. Left: structured facts (comp, location, mode,
-dates, seniority, blockers) each with a subtle provenance dot — hover shows "from Greenhouse
-API, 0.98" or "edited by you". Center: requirement table, one row per requirement, with
-kind, necessity, years, your verdict chip, and the evidence that produced it; clicking a row
-highlights the originating sentence in the description. Right: match summary with per-subscore
-bars, top strengths, top gaps, and the actions (Tailor resume · Draft cover letter · Track
-application · Refresh · Archive).
+**Job detail** is the center of the product. The header and **Your call** stay
+on every section. The URL picks the rest: `/jobs/$jobId` overview (comp,
+location, posted, a link to the score), `/requirements`, `/match`,
+`/description`, `/sources` (listings, split, duplicates, extraction
+conflicts). Provenance is a dot on the title and on comp. Clicking a
+requirement does not highlight its sentence. There is no documents section.
 
 **Job list** (`/jobs`) is a dense virtualized table of the first 200 jobs: title,
 company, comp, location/mode, posted age, close date, match overall plus the diagnostic

@@ -17,6 +17,11 @@ import { Route as TodayRouteImport } from './routes/today';
 import { Route as JobsJobIdRouteImport } from './routes/jobs_.$jobId';
 import { Route as JobsCompareRouteImport } from './routes/jobs_.compare';
 import { Route as TasksTaskIdRouteImport } from './routes/tasks.$taskId';
+import { Route as JobsJobIdIndexRouteImport } from './routes/jobs_.$jobId.index';
+import { Route as JobsJobIdDescriptionRouteImport } from './routes/jobs_.$jobId.description';
+import { Route as JobsJobIdMatchRouteImport } from './routes/jobs_.$jobId.match';
+import { Route as JobsJobIdRequirementsRouteImport } from './routes/jobs_.$jobId.requirements';
+import { Route as JobsJobIdSourcesRouteImport } from './routes/jobs_.$jobId.sources';
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -58,6 +63,31 @@ const TasksTaskIdRoute = TasksTaskIdRouteImport.update({
   path: '/tasks/$taskId',
   getParentRoute: () => rootRouteImport,
 } as any);
+const JobsJobIdIndexRoute = JobsJobIdIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => JobsJobIdRoute,
+} as any);
+const JobsJobIdDescriptionRoute = JobsJobIdDescriptionRouteImport.update({
+  id: '/description',
+  path: '/description',
+  getParentRoute: () => JobsJobIdRoute,
+} as any);
+const JobsJobIdMatchRoute = JobsJobIdMatchRouteImport.update({
+  id: '/match',
+  path: '/match',
+  getParentRoute: () => JobsJobIdRoute,
+} as any);
+const JobsJobIdRequirementsRoute = JobsJobIdRequirementsRouteImport.update({
+  id: '/requirements',
+  path: '/requirements',
+  getParentRoute: () => JobsJobIdRoute,
+} as any);
+const JobsJobIdSourcesRoute = JobsJobIdSourcesRouteImport.update({
+  id: '/sources',
+  path: '/sources',
+  getParentRoute: () => JobsJobIdRoute,
+} as any);
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute;
@@ -65,9 +95,14 @@ export interface FileRoutesByFullPath {
   '/pipeline': typeof PipelineRoute;
   '/profile': typeof ProfileRoute;
   '/today': typeof TodayRoute;
-  '/jobs/$jobId': typeof JobsJobIdRoute;
+  '/jobs/$jobId': typeof JobsJobIdRouteWithChildren;
   '/jobs/compare': typeof JobsCompareRoute;
   '/tasks/$taskId': typeof TasksTaskIdRoute;
+  '/jobs/$jobId/description': typeof JobsJobIdDescriptionRoute;
+  '/jobs/$jobId/match': typeof JobsJobIdMatchRoute;
+  '/jobs/$jobId/requirements': typeof JobsJobIdRequirementsRoute;
+  '/jobs/$jobId/sources': typeof JobsJobIdSourcesRoute;
+  '/jobs/$jobId/': typeof JobsJobIdIndexRoute;
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute;
@@ -75,9 +110,13 @@ export interface FileRoutesByTo {
   '/pipeline': typeof PipelineRoute;
   '/profile': typeof ProfileRoute;
   '/today': typeof TodayRoute;
-  '/jobs/$jobId': typeof JobsJobIdRoute;
   '/jobs/compare': typeof JobsCompareRoute;
   '/tasks/$taskId': typeof TasksTaskIdRoute;
+  '/jobs/$jobId/description': typeof JobsJobIdDescriptionRoute;
+  '/jobs/$jobId/match': typeof JobsJobIdMatchRoute;
+  '/jobs/$jobId/requirements': typeof JobsJobIdRequirementsRoute;
+  '/jobs/$jobId/sources': typeof JobsJobIdSourcesRoute;
+  '/jobs/$jobId': typeof JobsJobIdIndexRoute;
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport;
@@ -86,9 +125,14 @@ export interface FileRoutesById {
   '/pipeline': typeof PipelineRoute;
   '/profile': typeof ProfileRoute;
   '/today': typeof TodayRoute;
-  '/jobs_/$jobId': typeof JobsJobIdRoute;
+  '/jobs_/$jobId': typeof JobsJobIdRouteWithChildren;
   '/jobs_/compare': typeof JobsCompareRoute;
   '/tasks/$taskId': typeof TasksTaskIdRoute;
+  '/jobs_/$jobId/description': typeof JobsJobIdDescriptionRoute;
+  '/jobs_/$jobId/match': typeof JobsJobIdMatchRoute;
+  '/jobs_/$jobId/requirements': typeof JobsJobIdRequirementsRoute;
+  '/jobs_/$jobId/sources': typeof JobsJobIdSourcesRoute;
+  '/jobs_/$jobId/': typeof JobsJobIdIndexRoute;
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath;
@@ -100,7 +144,12 @@ export interface FileRouteTypes {
     | '/today'
     | '/jobs/$jobId'
     | '/jobs/compare'
-    | '/tasks/$taskId';
+    | '/tasks/$taskId'
+    | '/jobs/$jobId/description'
+    | '/jobs/$jobId/match'
+    | '/jobs/$jobId/requirements'
+    | '/jobs/$jobId/sources'
+    | '/jobs/$jobId/';
   fileRoutesByTo: FileRoutesByTo;
   to:
     | '/'
@@ -108,9 +157,13 @@ export interface FileRouteTypes {
     | '/pipeline'
     | '/profile'
     | '/today'
-    | '/jobs/$jobId'
     | '/jobs/compare'
-    | '/tasks/$taskId';
+    | '/tasks/$taskId'
+    | '/jobs/$jobId/description'
+    | '/jobs/$jobId/match'
+    | '/jobs/$jobId/requirements'
+    | '/jobs/$jobId/sources'
+    | '/jobs/$jobId';
   id:
     | '__root__'
     | '/'
@@ -120,7 +173,12 @@ export interface FileRouteTypes {
     | '/today'
     | '/jobs_/$jobId'
     | '/jobs_/compare'
-    | '/tasks/$taskId';
+    | '/tasks/$taskId'
+    | '/jobs_/$jobId/description'
+    | '/jobs_/$jobId/match'
+    | '/jobs_/$jobId/requirements'
+    | '/jobs_/$jobId/sources'
+    | '/jobs_/$jobId/';
   fileRoutesById: FileRoutesById;
 }
 export interface RootRouteChildren {
@@ -129,7 +187,7 @@ export interface RootRouteChildren {
   PipelineRoute: typeof PipelineRoute;
   ProfileRoute: typeof ProfileRoute;
   TodayRoute: typeof TodayRoute;
-  JobsJobIdRoute: typeof JobsJobIdRoute;
+  JobsJobIdRoute: typeof JobsJobIdRouteWithChildren;
   JobsCompareRoute: typeof JobsCompareRoute;
   TasksTaskIdRoute: typeof TasksTaskIdRoute;
 }
@@ -192,8 +250,63 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof TasksTaskIdRouteImport;
       parentRoute: typeof rootRouteImport;
     };
+    '/jobs_/$jobId/': {
+      id: '/jobs_/$jobId/';
+      path: '/';
+      fullPath: '/jobs/$jobId/';
+      preLoaderRoute: typeof JobsJobIdIndexRouteImport;
+      parentRoute: typeof JobsJobIdRoute;
+    };
+    '/jobs_/$jobId/description': {
+      id: '/jobs_/$jobId/description';
+      path: '/description';
+      fullPath: '/jobs/$jobId/description';
+      preLoaderRoute: typeof JobsJobIdDescriptionRouteImport;
+      parentRoute: typeof JobsJobIdRoute;
+    };
+    '/jobs_/$jobId/match': {
+      id: '/jobs_/$jobId/match';
+      path: '/match';
+      fullPath: '/jobs/$jobId/match';
+      preLoaderRoute: typeof JobsJobIdMatchRouteImport;
+      parentRoute: typeof JobsJobIdRoute;
+    };
+    '/jobs_/$jobId/requirements': {
+      id: '/jobs_/$jobId/requirements';
+      path: '/requirements';
+      fullPath: '/jobs/$jobId/requirements';
+      preLoaderRoute: typeof JobsJobIdRequirementsRouteImport;
+      parentRoute: typeof JobsJobIdRoute;
+    };
+    '/jobs_/$jobId/sources': {
+      id: '/jobs_/$jobId/sources';
+      path: '/sources';
+      fullPath: '/jobs/$jobId/sources';
+      preLoaderRoute: typeof JobsJobIdSourcesRouteImport;
+      parentRoute: typeof JobsJobIdRoute;
+    };
   }
 }
+
+interface JobsJobIdRouteChildren {
+  JobsJobIdDescriptionRoute: typeof JobsJobIdDescriptionRoute;
+  JobsJobIdMatchRoute: typeof JobsJobIdMatchRoute;
+  JobsJobIdRequirementsRoute: typeof JobsJobIdRequirementsRoute;
+  JobsJobIdSourcesRoute: typeof JobsJobIdSourcesRoute;
+  JobsJobIdIndexRoute: typeof JobsJobIdIndexRoute;
+}
+
+const JobsJobIdRouteChildren: JobsJobIdRouteChildren = {
+  JobsJobIdDescriptionRoute: JobsJobIdDescriptionRoute,
+  JobsJobIdMatchRoute: JobsJobIdMatchRoute,
+  JobsJobIdRequirementsRoute: JobsJobIdRequirementsRoute,
+  JobsJobIdSourcesRoute: JobsJobIdSourcesRoute,
+  JobsJobIdIndexRoute: JobsJobIdIndexRoute,
+};
+
+const JobsJobIdRouteWithChildren = JobsJobIdRoute._addFileChildren(
+  JobsJobIdRouteChildren,
+);
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
@@ -201,7 +314,7 @@ const rootRouteChildren: RootRouteChildren = {
   PipelineRoute: PipelineRoute,
   ProfileRoute: ProfileRoute,
   TodayRoute: TodayRoute,
-  JobsJobIdRoute: JobsJobIdRoute,
+  JobsJobIdRoute: JobsJobIdRouteWithChildren,
   JobsCompareRoute: JobsCompareRoute,
   TasksTaskIdRoute: TasksTaskIdRoute,
 };

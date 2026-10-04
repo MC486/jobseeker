@@ -1350,17 +1350,20 @@ function provenanceDot(job: JobDetail, field: string) {
   );
 }
 
-export function JobPage() {
+function useJobRecord() {
   const { jobId } = useParams({ from: "/jobs_/$jobId" });
-  const navigate = useNavigate();
-  const qc = useQueryClient();
-  const [splitError, setSplitError] = useState<string | null>(null);
   const job = useQuery({ queryKey: keys.job(jobId), queryFn: () => fetchers.job(jobId) });
   const match = useQuery({
     queryKey: keys.match(jobId),
     queryFn: () => fetchers.match(jobId),
     retry: false,
   });
+  return { jobId, job, detail: job.data, score: match.data ?? null, match };
+}
+
+export function JobFrame() {
+  const path = useRouterState({ select: (s) => s.location.pathname });
+  const { jobId, job, detail } = useJobRecord();
   const dups = useQuery({
     queryKey: keys.duplicates(jobId),
     queryFn: () => fetchers.duplicates(jobId),
@@ -1369,17 +1372,8 @@ export function JobPage() {
     queryKey: keys.conflicts(jobId),
     queryFn: () => fetchers.conflicts(jobId),
   });
-  const split = useMutation({
-    mutationFn: (listingId: string) => api.splitJob(jobId, listingId),
-    onSuccess: async (report) => {
-      await qc.invalidateQueries({ queryKey: ["jobs"] });
-      await qc.invalidateQueries({ queryKey: keys.job(jobId) });
-      await navigate({ to: "/jobs/$jobId", params: { jobId: report.new_id } });
-    },
-    onError: (err) => {
-      setSplitError(err instanceof Error ? err.message : String(err));
-    },
-  });
+  const openConflicts = (conflicts.data ?? []).filter((c) => c.resolution === "unresolved").length;
+  const dupCount = (dups.data ?? []).length;
 
   if (job.isError) {
     return (
@@ -1388,10 +1382,7 @@ export function JobPage() {
       </p>
     );
   }
-  if (!job.data) return <p className="text-zinc-500">Loading…</p>;
-  const detail = job.data;
-  const score = match.data ?? null;
-  const verdictByReq = new Map((score?.verdicts ?? []).map((v) => [v.requirement_id, v]));
+  if (!detail) return <p className="text-zinc-500">Loading…</p>;
   return (
     <article className="space-y-6">
       <div>
@@ -1432,21 +1423,255 @@ export function JobPage() {
         )}
       </div>
       <JobTriage jobId={jobId} detail={detail} />
-      {(conflicts.data ?? []).some((c) => c.resolution === "unresolved") && (
+      <JobSectionNav
+        jobId={jobId}
+        path={path}
+        requirementCount={detail.requirements.length}
+        sourceNotes={openConflicts + dupCount}
+      />
+      <Outlet />
+    </article>
+  );
+}
+
+function jobSectionOn(path: string, jobId: string, suffix: string): boolean {
+  const base = `/jobs/${jobId}`;
+  if (!suffix) return path === base || path === `${base}/`;
+  return path === `${base}${suffix}`;
+}
+
+function JobSectionNav({
+  jobId,
+  path,
+  requirementCount,
+  sourceNotes,
+}: {
+  jobId: string;
+  path: string;
+  requirementCount: number;
+  sourceNotes: number;
+}) {
+  const tab = (on: boolean) =>
+    on
+      ? "rounded-md bg-zinc-700 px-2 py-1 text-zinc-50"
+      : "rounded-md px-2 py-1 text-zinc-400 hover:text-zinc-200";
+  return (
+    <nav className="flex flex-wrap gap-2 text-sm">
+      <Link
+        to="/jobs/$jobId"
+        params={{ jobId }}
+        className={tab(jobSectionOn(path, jobId, ""))}
+      >
+        Overview
+      </Link>
+      <Link
+        to="/jobs/$jobId/requirements"
+        params={{ jobId }}
+        className={tab(jobSectionOn(path, jobId, "/requirements"))}
+      >
+        Requirements{requirementCount ? ` · ${requirementCount}` : ""}
+      </Link>
+      <Link
+        to="/jobs/$jobId/match"
+        params={{ jobId }}
+        className={tab(jobSectionOn(path, jobId, "/match"))}
+      >
+        Match
+      </Link>
+      <Link
+        to="/jobs/$jobId/description"
+        params={{ jobId }}
+        className={tab(jobSectionOn(path, jobId, "/description"))}
+      >
+        Description
+      </Link>
+      <Link
+        to="/jobs/$jobId/sources"
+        params={{ jobId }}
+        className={tab(jobSectionOn(path, jobId, "/sources"))}
+      >
+        Sources{sourceNotes ? ` · ${sourceNotes}` : ""}
+      </Link>
+    </nav>
+  );
+}
+
+export function JobOverview() {
+  const { detail, score } = useJobRecord();
+  if (!detail) return null;
+  return (
+    <div className="space-y-3 text-sm">
+      {detail.salary_raw ? (
+        <p>
+          Comp: {detail.salary_raw}
+          {provenanceDot(detail, "salary")}
+        </p>
+      ) : (
+        <p className="text-zinc-500">No compensation extracted.</p>
+      )}
+      <p className="text-zinc-300">
+        {detail.locations.length > 0
+          ? `Location: ${detail.locations.join(" · ")}`
+          : "No location extracted."}
+      </p>
+      <p className="text-zinc-400">
+        Posted {detail.posted_at ? detail.posted_at.slice(0, 10) : "unknown"}
+      </p>
+      {score ? (
+        <p>
+          <Link
+            to="/jobs/$jobId/match"
+            params={{ jobId: detail.id }}
+            className="text-indigo-300"
+          >
+            Match {pct(score.overall)}
+            {score.is_stale ? " · stale" : ""}
+          </Link>
+        </p>
+      ) : (
+        <p className="text-zinc-500">No match score yet.</p>
+      )}
+    </div>
+  );
+}
+
+export function JobRequirements() {
+  const { detail, score } = useJobRecord();
+  if (!detail) return null;
+  const verdictByReq = new Map((score?.verdicts ?? []).map((v) => [v.requirement_id, v]));
+  if (detail.requirements.length === 0) {
+    return <p className="text-sm text-zinc-500">No requirements extracted.</p>;
+  }
+  return (
+    <ul className="space-y-2 text-sm">
+      {detail.requirements.map((r) => {
+        const verdict = verdictByReq.get(r.id);
+        return (
+          <li key={r.id}>
+            <div>
+              <span className="text-zinc-500">{r.necessity}</span> {r.text}
+              {r.is_blocker && verdict?.status !== "met" ? " · blocker" : ""}
+              {verdict ? (
+                <span className="ml-2 text-zinc-400">
+                  · {verdict.status} ({Math.round(verdict.score * 100)}%)
+                  {verdict.years_needed != null
+                    ? ` · ${fmtYears(verdict.years_have)} / ${fmtYears(verdict.years_needed)} yr`
+                    : ""}
+                </span>
+              ) : null}
+            </div>
+            {verdict?.rationale ? <p className="text-zinc-500">{verdict.rationale}</p> : null}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+export function JobMatch() {
+  const { score, match } = useJobRecord();
+  if (match.isPending) return <p className="text-sm text-zinc-500">Loading…</p>;
+  if (!score) return <p className="text-sm text-zinc-500">No match score yet.</p>;
+  return (
+    <section className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+      <h2 className="text-lg font-medium">
+        Match {Math.round(score.overall * 100)}%
+        {score.is_stale ? " · stale" : ""}
+      </h2>
+      <p className="mt-1 text-xs text-zinc-500">
+        Overall is qualification (skills, required bars, seniority). Preference
+        (comp, remote vs on-site) is separate — an on-site role you can do is
+        not a low match just because you prefer remote. Skills ignore year
+        shortfalls when the skill is on the bank; Years is the tenure bar
+        recruiters overfit.
+      </p>
+      <dl className="mt-3 grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
+        <ScoreCell label="Skills" value={score.skills_coverage} hint="required bars, tenure stripped" />
+        <ScoreCell label="Years" value={score.years_fit} hint="required year-count asks" />
+        <ScoreCell
+          label="Required"
+          value={score.required_coverage}
+          hint="feeds overall (includes years)"
+        />
+        <ScoreCell label="Preferred" value={score.preferred_coverage} />
+        <ScoreCell label="Seniority" value={score.seniority_fit} />
+        <ScoreCell label="Preference" value={score.preference_fit} hint="comp + location; not overall" />
+        <ScoreCell label="Comp" value={score.comp_fit} hint="preference" />
+        <ScoreCell label="Location" value={score.location_fit} hint="preference" />
+      </dl>
+      {score.flags?.includes("clearance_obtainable") ? (
+        <p className="mt-2 text-sm text-zinc-300">
+          Clearance is not held and is not required to start. Profile is eligible to obtain.
+        </p>
+      ) : null}
+      {score.flags?.includes("clearance_eligibility_unknown") ? (
+        <p className="mt-2 text-sm text-zinc-400">
+          Clearance type is named but not required to start. Eligibility to obtain is not on the
+          profile.
+        </p>
+      ) : null}
+      {score.blocker_count > 0 ? (
+        <p className="mt-2 text-sm text-amber-300">
+          {score.blocker_count} blocker(s) — overall is capped
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
+export function JobDescription() {
+  const { detail } = useJobRecord();
+  if (!detail) return null;
+  if (!detail.description_md.trim()) {
+    return <p className="text-sm text-zinc-500">No description extracted.</p>;
+  }
+  return (
+    <pre className="whitespace-pre-wrap text-sm text-zinc-300">{detail.description_md}</pre>
+  );
+}
+
+export function JobSources() {
+  const navigate = useNavigate();
+  const qc = useQueryClient();
+  const { jobId, detail } = useJobRecord();
+  const [splitError, setSplitError] = useState<string | null>(null);
+  const dups = useQuery({
+    queryKey: keys.duplicates(jobId),
+    queryFn: () => fetchers.duplicates(jobId),
+  });
+  const conflicts = useQuery({
+    queryKey: keys.conflicts(jobId),
+    queryFn: () => fetchers.conflicts(jobId),
+  });
+  const split = useMutation({
+    mutationFn: (listingId: string) => api.splitJob(jobId, listingId),
+    onSuccess: async (report) => {
+      await qc.invalidateQueries({ queryKey: ["jobs"] });
+      await qc.invalidateQueries({ queryKey: keys.job(jobId) });
+      await navigate({ to: "/jobs/$jobId/sources", params: { jobId: report.new_id } });
+    },
+    onError: (err) => {
+      setSplitError(err instanceof Error ? err.message : String(err));
+    },
+  });
+  if (!detail) return null;
+  const unresolved = (conflicts.data ?? []).filter((c) => c.resolution === "unresolved");
+  const listings = detail.listings ?? [];
+  return (
+    <div className="space-y-6">
+      {unresolved.length > 0 ? (
         <section className="space-y-2 rounded-xl border border-sky-900/60 bg-sky-950/20 p-4">
           <h2 className="text-lg font-medium text-sky-100">Extraction conflicts</h2>
           <p className="text-xs text-zinc-500">
-            Sources disagreed. Nothing is picked until you say so — the ATS wording is
-            usually the one you want.
+            Sources disagreed. Nothing is picked until you say so — the ATS wording is usually
+            the one you want.
           </p>
-          {(conflicts.data ?? [])
-            .filter((c) => c.resolution === "unresolved")
-            .map((c) => (
-              <ConflictRow key={c.id} currentSalary={detail.salary_raw} conflict={c} />
-            ))}
+          {unresolved.map((c) => (
+            <ConflictRow key={c.id} currentSalary={detail.salary_raw} conflict={c} />
+          ))}
         </section>
-      )}
-      {(dups.data ?? []).length > 0 && (
+      ) : null}
+      {(dups.data ?? []).length > 0 ? (
         <section className="space-y-2 rounded-xl border border-amber-900/60 bg-amber-950/20 p-4">
           <h2 className="text-lg font-medium text-amber-100">Possible duplicates</h2>
           <p className="text-xs text-zinc-500">
@@ -1463,144 +1688,46 @@ export function JobPage() {
             />
           ))}
         </section>
-      )}
-      {score && (
-        <section className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
-          <h2 className="text-lg font-medium">
-            Match {Math.round(score.overall * 100)}%
-            {score.is_stale ? " · stale" : ""}
-          </h2>
-          <p className="mt-1 text-xs text-zinc-500">
-            Overall is qualification (skills, required bars, seniority). Preference
-            (comp, remote vs on-site) is separate — an on-site role you can do is
-            not a low match just because you prefer remote. Skills ignore year
-            shortfalls when the skill is on the bank; Years is the tenure bar
-            recruiters overfit.
-          </p>
-          <dl className="mt-3 grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
-            <ScoreCell
-              label="Skills"
-              value={score.skills_coverage}
-              hint="required bars, tenure stripped"
-            />
-            <ScoreCell
-              label="Years"
-              value={score.years_fit}
-              hint="required year-count asks"
-            />
-            <ScoreCell
-              label="Required"
-              value={score.required_coverage}
-              hint="feeds overall (includes years)"
-            />
-            <ScoreCell label="Preferred" value={score.preferred_coverage} />
-            <ScoreCell label="Seniority" value={score.seniority_fit} />
-            <ScoreCell
-              label="Preference"
-              value={score.preference_fit}
-              hint="comp + location; not overall"
-            />
-            <ScoreCell label="Comp" value={score.comp_fit} hint="preference" />
-            <ScoreCell label="Location" value={score.location_fit} hint="preference" />
-          </dl>
-          {score.flags?.includes("clearance_obtainable") ? (
-            <p className="mt-2 text-sm text-zinc-300">
-              Clearance is not held and is not required to start. Profile is
-              eligible to obtain.
-            </p>
-          ) : null}
-          {score.flags?.includes("clearance_eligibility_unknown") ? (
-            <p className="mt-2 text-sm text-zinc-400">
-              Clearance type is named but not required to start. Eligibility to
-              obtain is not on the profile.
-            </p>
-          ) : null}
-          {score.blocker_count > 0 ? (
-            <p className="mt-2 text-sm text-amber-300">
-              {score.blocker_count} blocker(s) — overall is capped
-            </p>
-          ) : null}
-        </section>
-      )}
-      {detail.salary_raw && (
-        <p>
-          Comp: {detail.salary_raw}
-          {provenanceDot(detail, "salary")}
-        </p>
-      )}
-      {detail.locations.length > 0 && (
-        <p className="text-zinc-300">Location: {detail.locations.join(" · ")}</p>
-      )}
-      {(detail.listings ?? []).length > 0 && (
-        <section>
-          <h2 className="mb-2 text-lg font-medium">Listings</h2>
-          <p className="mb-2 text-xs text-zinc-500">
-            {(detail.listings ?? []).length >= 2
-              ? "Split off a listing to undo a merge. The original keeps its title and description."
-              : "This job has one source URL."}
-          </p>
-          {splitError && <p className="mb-2 text-sm text-red-300">{splitError}</p>}
-          <ul className="space-y-2 text-sm text-zinc-300">
-            {(detail.listings ?? []).map((listing) => (
-              <li key={listing.id} className="flex flex-wrap items-baseline gap-x-2">
-                <span className="text-zinc-500">{listing.source}</span>
-                {listing.is_canonical ? (
-                  <span className="text-xs text-emerald-400">canonical</span>
-                ) : null}
-                <a className="break-all text-indigo-300" href={listing.url}>
-                  {listing.url}
-                </a>
-                {(detail.listings ?? []).length >= 2 ? (
-                  <button
-                    type="button"
-                    disabled={split.isPending}
-                    onClick={() => split.mutate(listing.id)}
-                    className="text-xs text-zinc-500 hover:text-zinc-200 disabled:opacity-50"
-                  >
-                    {split.isPending && split.variables === listing.id
-                      ? "Splitting…"
-                      : "Split off"}
-                  </button>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
+      ) : null}
       <section>
-        <h2 className="mb-2 text-lg font-medium">Requirements</h2>
-        <ul className="space-y-2 text-sm">
-          {detail.requirements.map((r) => {
-            const verdict = verdictByReq.get(r.id);
-            return (
-              <li key={r.id}>
-                <div>
-                  <span className="text-zinc-500">{r.necessity}</span> {r.text}
-                  {r.is_blocker && verdict?.status !== "met"
-                    ? " · blocker"
-                    : ""}
-                  {verdict ? (
-                    <span className="ml-2 text-zinc-400">
-                      · {verdict.status} ({Math.round(verdict.score * 100)}%)
-                      {verdict.years_needed != null
-                        ? ` · ${fmtYears(verdict.years_have)} / ${fmtYears(verdict.years_needed)} yr`
-                        : ""}
-                    </span>
+        <h2 className="mb-2 text-lg font-medium">Listings</h2>
+        {listings.length === 0 ? (
+          <p className="text-sm text-zinc-500">No source URL attached.</p>
+        ) : (
+          <>
+            <p className="mb-2 text-xs text-zinc-500">
+              {listings.length >= 2
+                ? "Split off a listing to undo a merge. The original keeps its title and description."
+                : "This job has one source URL."}
+            </p>
+            {splitError ? <p className="mb-2 text-sm text-red-300">{splitError}</p> : null}
+            <ul className="space-y-2 text-sm text-zinc-300">
+              {listings.map((listing) => (
+                <li key={listing.id} className="flex flex-wrap items-baseline gap-x-2">
+                  <span className="text-zinc-500">{listing.source}</span>
+                  {listing.is_canonical ? (
+                    <span className="text-xs text-emerald-400">canonical</span>
                   ) : null}
-                </div>
-                {verdict?.rationale && (
-                  <p className="text-zinc-500">{verdict.rationale}</p>
-                )}
-              </li>
-            );
-          })}
-        </ul>
+                  <a className="break-all text-indigo-300" href={listing.url}>
+                    {listing.url}
+                  </a>
+                  {listings.length >= 2 ? (
+                    <button
+                      type="button"
+                      disabled={split.isPending}
+                      onClick={() => split.mutate(listing.id)}
+                      className="text-xs text-zinc-500 hover:text-zinc-200 disabled:opacity-50"
+                    >
+                      {split.isPending && split.variables === listing.id ? "Splitting…" : "Split off"}
+                    </button>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
       </section>
-      <section>
-        <h2 className="mb-2 text-lg font-medium">Description</h2>
-        <pre className="whitespace-pre-wrap text-sm text-zinc-300">{detail.description_md}</pre>
-      </section>
-    </article>
+    </div>
   );
 }
 
