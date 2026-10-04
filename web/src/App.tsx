@@ -1564,12 +1564,24 @@ export function JobRequirements() {
   const [draft, setDraft] = useState("");
   const [draftNecessity, setDraftNecessity] = useState("required");
   const [draftKind, setDraftKind] = useState("skill");
+  const skills = useQuery({ queryKey: keys.skills, queryFn: fetchers.skills, staleTime: 60_000 });
+  const catalog = skills.data ?? [];
   const edit = useMutation({
-    mutationFn: (body: { id: string; kind?: string; necessity?: string }) =>
-      api.patchRequirement(body.id, { kind: body.kind, necessity: body.necessity }),
+    mutationFn: (body: {
+      id: string;
+      kind?: string;
+      necessity?: string;
+      skill_id?: string | null;
+    }) =>
+      api.patchRequirement(body.id, {
+        kind: body.kind,
+        necessity: body.necessity,
+        skill_id: body.skill_id,
+      }),
     onMutate: async (body) => {
       await qc.cancelQueries({ queryKey: keys.job(jobId) });
       const prev = qc.getQueryData<JobDetail>(keys.job(jobId));
+      const linked = body.skill_id ? catalog.find((s) => s.id === body.skill_id) : undefined;
       qc.setQueryData<JobDetail>(keys.job(jobId), (old) => {
         if (!old) return old;
         return {
@@ -1580,6 +1592,11 @@ export function JobRequirements() {
                   ...r,
                   kind: body.kind ?? r.kind,
                   necessity: body.necessity ?? r.necessity,
+                  skill_id: body.skill_id === undefined ? r.skill_id : body.skill_id,
+                  skill_slug:
+                    body.skill_id === undefined ? r.skill_slug : (linked?.slug ?? null),
+                  skill_name:
+                    body.skill_id === undefined ? r.skill_name : (linked?.name ?? null),
                   provenance: "manual",
                 }
               : r,
@@ -1675,6 +1692,30 @@ export function JobRequirements() {
                   {KIND_OPTIONS.map(([value, label]) => (
                     <option key={value} value={value}>
                       {label}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  aria-label={`${r.text} skill`}
+                  className="max-w-48 rounded border border-zinc-700 bg-zinc-950 px-1.5 py-0.5 text-xs text-zinc-300"
+                  value={r.skill_id ?? ""}
+                  disabled={pending}
+                  onChange={(e) =>
+                    edit.mutate({
+                      id: r.id,
+                      skill_id: e.target.value === "" ? null : e.target.value,
+                    })
+                  }
+                >
+                  <option value="">no skill</option>
+                  {r.skill_id && !catalog.some((s) => s.id === r.skill_id) ? (
+                    <option value={r.skill_id}>
+                      {r.skill_name ?? r.skill_slug ?? "linked skill"}
+                    </option>
+                  ) : null}
+                  {catalog.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
                     </option>
                   ))}
                 </select>

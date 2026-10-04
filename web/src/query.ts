@@ -21,6 +21,7 @@ export const keys = {
   duplicates: (id: string) => ["duplicates", id] as const,
   conflicts: (id: string) => ["conflicts", id] as const,
   application: (id: string) => ["application", id] as const,
+  skills: ["skills"] as const,
   profile: ["profile"] as const,
   task: (id: string) => ["task", id] as const,
 };
@@ -70,6 +71,7 @@ export const fetchers = {
   duplicates: (id: string) => api.duplicates(id),
   conflicts: (id: string) => api.conflicts(id),
   application: (id: string) => api.application(id),
+  skills: () => api.skills(),
   profile: () => api.profile(),
   task: (id: string) => api.task(id),
 };

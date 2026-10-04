@@ -167,6 +167,7 @@ pub struct PageDto<T: Serialize> {
         patch_requirement,
         create_requirement,
         delete_requirement,
+        list_skills,
         get_job_match,
         merge_job,
         split_job,
@@ -230,6 +231,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/today", get(today))
         .route("/api/v1/jobs/{id}", get(get_job).patch(patch_job))
         .route("/api/v1/jobs/{id}/requirements", post(create_requirement))
+        .route("/api/v1/skills", get(list_skills))
         .route(
             "/api/v1/requirements/{id}",
             patch(patch_requirement).delete(delete_requirement),
@@ -507,12 +509,24 @@ async fn patch_job(
     Ok(Json(job))
 }
 
+fn deserialize_some<'de, T, D>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    T: Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    T::deserialize(deserializer).map(Some)
+}
+
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct PatchRequirementRequest {
     #[serde(default)]
     pub kind: Option<String>,
     #[serde(default)]
     pub necessity: Option<String>,
+    /// Absent leaves the link. JSON `null` clears it. A skill id sets it.
+    #[serde(default, deserialize_with = "deserialize_some")]
+    #[schema(value_type = Option<String>)]
+    pub skill_id: Option<Option<String>>,
 }
 
 fn trimmed_field(value: Option<String>) -> Option<String> {
@@ -540,6 +554,7 @@ async fn patch_requirement(
             &jobseeker_db::repo::job::RequirementPatch {
                 kind: trimmed_field(body.kind),
                 necessity: trimmed_field(body.necessity),
+                skill_id: body.skill_id.map(trimmed_field),
             },
         )
         .await
@@ -599,6 +614,28 @@ async fn delete_requirement(
         .await
         .map_err(ApiError)?;
     Ok(Json(row))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SkillsQuery {
+    #[serde(default)]
+    pub q: Option<String>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/skills",
+    params(("q" = Option<String>, Query, description = "Filter by name or slug")),
+    responses((status = 200))
+)]
+async fn list_skills(
+    State(state): State<AppState>,
+    Query(q): Query<SkillsQuery>,
+) -> ApiResult<Json<Vec<jobseeker_db::repo::skill::SkillListItem>>> {
+    let rows = jobseeker_db::repo::skill::list(&state.pipeline.db, q.q.as_deref())
+        .await
+        .map_err(ApiError)?;
+    Ok(Json(rows))
 }
 
 #[utoipa::path(get, path = "/api/v1/jobs/{id}/match", responses((status = 200), (status = 404)))]
@@ -2450,6 +2487,154 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+        std::mem::forget(dir);
+    }
+
+    #[tokio::test]
+    async fn relink_requirement_skill_changes_the_verdict() {
+        let dir = tempfile::tempdir().unwrap();
+        let pipe = jobseeker_pipeline::for_test(dir.path().to_path_buf())
+            .await
+            .unwrap();
+        let html = r#"<html><head><script type="application/ld+json">{"@type":"JobPosting","title":"Data Scientist","hiringOrganization":{"name":"Zillow"},"description":"<h2>Requirements</h2><ul><li>Production Python</li></ul>"}</script></head></html>"#;
+        pipe.ingest_paste(html, Some("https://boards.greenhouse.io/zillow/jobs/skill"))
+            .await
+            .unwrap();
+        pipe.drain().await.unwrap();
+        let page =
+            jobseeker_db::repo::job::list(&pipe.db, &jobseeker_db::repo::job::JobFilter::default())
+                .await
+                .unwrap();
+        let job_id = page.items[0].id.clone();
+        let detail = jobseeker_db::repo::job::get(&pipe.db, &job_id.parse().unwrap())
+            .await
+            .unwrap()
+            .unwrap();
+        let python = detail
+            .requirements
+            .iter()
+            .find(|r| r.text == "Production Python")
+            .expect("python atom");
+        let req_id = python.id.clone();
+        let span = (python.span_start, python.span_end);
+        assert!(python.skill_id.is_none());
+
+        let app = router(AppState::new(pipe));
+        let skills = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/skills?q=rust")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(skills.status(), StatusCode::OK);
+        let listed: serde_json::Value = body_json(skills).await;
+        let rust = listed
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["slug"] == "rust")
+            .unwrap();
+        let rust_id = rust["id"].as_str().unwrap();
+
+        let before = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/jobs/{job_id}/match"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let before: serde_json::Value = body_json(before).await;
+        let before_verdict = before["verdicts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|v| v["requirement_id"] == req_id)
+            .unwrap();
+        assert_eq!(before_verdict["status"], "gap");
+
+        let patched = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PATCH")
+                    .uri(format!("/api/v1/requirements/{req_id}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "skill_id": rust_id }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(patched.status(), StatusCode::OK);
+        let row: serde_json::Value = body_json(patched).await;
+        assert_eq!(row["skill_slug"], "rust");
+        assert_eq!(row["skill_name"], "Rust");
+        assert_eq!(row["provenance"], "manual");
+        assert_eq!(row["span_start"], serde_json::json!(span.0));
+        assert_eq!(row["kind"], "skill");
+
+        let after = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/jobs/{job_id}/match"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let after: serde_json::Value = body_json(after).await;
+        let after_verdict = after["verdicts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|v| v["requirement_id"] == req_id)
+            .unwrap();
+        assert_eq!(after_verdict["status"], "met");
+        assert!(after["overall"].as_f64().unwrap() > before["overall"].as_f64().unwrap());
+
+        let cleared = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PATCH")
+                    .uri(format!("/api/v1/requirements/{req_id}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "skill_id": null }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(cleared.status(), StatusCode::OK);
+        let cleared: serde_json::Value = body_json(cleared).await;
+        assert!(cleared["skill_id"].is_null());
+        assert_eq!(cleared["provenance"], "manual");
+
+        let missing_skill = app
+            .oneshot(
+                Request::builder()
+                    .method("PATCH")
+                    .uri(format!("/api/v1/requirements/{req_id}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "skill_id": "00000000-0000-7000-8000-000000000099" })
+                            .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(missing_skill.status(), StatusCode::NOT_FOUND);
         std::mem::forget(dir);
     }
 

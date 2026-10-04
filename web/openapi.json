@@ -688,6 +688,28 @@
         }
       }
     },
+    "/api/v1/skills": {
+      "get": {
+        "tags": [],
+        "operationId": "list_skills",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Filter by name or slug",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        }
+      }
+    },
     "/api/v1/tasks/{id}": {
       "get": {
         "tags": [],
@@ -1018,6 +1040,13 @@
               "string",
               "null"
             ]
+          },
+          "skill_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Absent leaves the link. JSON `null` clears it. A skill id sets it."
           }
         }
       },

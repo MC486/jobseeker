@@ -25,6 +25,10 @@ pub struct Requirement {
     pub kind: RequirementKind,
     pub necessity: Necessity,
     pub skill_id: Option<SkillId>,
+    /// Slug of `skill_id` when this row was loaded for scoring. The database stores the
+    /// id; the matcher compares slugs. Absent means "resolve the requirement text".
+    #[serde(default)]
+    pub skill_slug: Option<String>,
 
     pub min_years: Option<f32>,
     pub max_years: Option<f32>,
@@ -177,6 +181,7 @@ mod tests {
             kind,
             necessity,
             skill_id: None,
+            skill_slug: None,
             min_years,
             max_years: None,
             level: None,

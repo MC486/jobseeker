@@ -25,11 +25,17 @@ pair with a hashed, ingest-scoped device token.
 
 ## Do next (M0 remaining → M1)
 
-1. **Relink a requirement to a skill.** Point a requirement at a taxonomy
-   skill from `/jobs/$jobId/requirements`. A documents section (tailored
-   resume / cover letter) is still later.
+1. **A documents section.** Tailored resume and cover letter for one job.
+   The facet rail on `/jobs` is still later.
 
 ## Just shipped
+
+- **Relink a requirement to a skill.** `/jobs/$jobId/requirements` points a
+  requirement at a taxonomy skill (`PATCH` `skill_id`, or `null` to clear).
+  `GET /api/v1/skills?q=` lists the seed taxonomy. The link is provenance
+  `manual`, kept when that posting is extracted again, and is what the
+  scorer compares — the posting text is only the fallback. A documents
+  section is not this slice.
 
 - **Add or remove a requirement.** `/jobs/$jobId/requirements` adds one
   (`POST /api/v1/jobs/:id/requirements`) and removes one

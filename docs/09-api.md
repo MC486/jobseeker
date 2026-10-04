@@ -101,12 +101,17 @@ POST /api/v1/jobs/:id/requirements          {text, kind?, necessity?}
                                       is 400. The same normalized text already
                                       on the job is 409. Adding it again clears
                                       a previous dismissal.
-PATCH /api/v1/requirements/:id              {kind?, necessity?} — at least one.
-                                    Unknown values are 400. Provenance becomes
-                                    `manual` (confidence 1). Files are rewritten
-                                    and the job is rescored. A later extract keeps
-                                    this classification when `normalized_text`
-                                    still matches. Skill relink is not implemented.
+PATCH /api/v1/requirements/:id              {kind?, necessity?, skill_id?}
+                                    — at least one. Unknown kind or necessity
+                                    is 400. `skill_id` absent leaves the link;
+                                    JSON null clears it; an unknown id is 404.
+                                    Provenance becomes `manual` (confidence 1).
+                                    Files are rewritten and the job is rescored
+                                    against that skill's slug (the posting text
+                                    is the fallback when the link is empty).
+                                    A later extract keeps this classification,
+                                    including the skill link, when
+                                    `normalized_text` still matches.
 DELETE /api/v1/requirements/:id             removes the row and remembers the
                                     normalized text, so a later extract does not
                                     put that demand back. A requirement the user
@@ -145,8 +150,10 @@ GET  /api/v1/jobs/:id/similar    → nearest neighbours by embedding (not implem
 
 ```
 GET/POST/PATCH  /api/v1/companies[/:id]         GET /:id/jobs
-GET  /api/v1/skills?q=  POST /api/v1/skills  POST /api/v1/skills/:id/aliases
-GET  /api/v1/skills/candidates  POST /api/v1/skills/candidates/:id/promote
+GET  /api/v1/skills?q=            → [{id, name, slug}] of the seeded taxonomy.
+                                  `q` matches name or slug. Creating skills,
+                                  aliases, and promoting candidates are not
+                                  implemented.
 GET/POST/DELETE /api/v1/tags[/:id]              POST/DELETE /api/v1/jobs/:id/tags/:tag_id
 GET/POST/PATCH/DELETE /api/v1/views[/:id]       saved filter sets
 ```
