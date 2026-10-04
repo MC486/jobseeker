@@ -1547,9 +1547,17 @@ export function JobRequirements() {
       {detail.requirements.map((r) => {
         const verdict = verdictByReq.get(r.id);
         return (
-          <li key={r.id}>
+          <li key={r.id} data-requirement-id={r.id}>
             <div>
-              <span className="text-zinc-500">{r.necessity}</span> {r.text}
+              <span className="text-zinc-500">{r.necessity}</span>{" "}
+              <Link
+                to="/jobs/$jobId/description"
+                params={{ jobId: detail.id }}
+                search={{ req: r.id }}
+                className="text-indigo-300"
+              >
+                {r.text}
+              </Link>
               {r.is_blocker && verdict?.status !== "met" ? " · blocker" : ""}
               {verdict ? (
                 <span className="ml-2 text-zinc-400">
@@ -1619,14 +1627,97 @@ export function JobMatch() {
   );
 }
 
+/** Map Rust UTF-8 byte offsets into a JS string. Spans are char boundaries. */
+function utf8Slice(
+  text: string,
+  start: number,
+  end: number,
+): { before: string; mid: string; after: string } | null {
+  if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end <= start) {
+    return null;
+  }
+  const bytes = new TextEncoder().encode(text);
+  if (end > bytes.length) return null;
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  try {
+    const before = decoder.decode(bytes.subarray(0, start));
+    const mid = decoder.decode(bytes.subarray(start, end));
+    const after = decoder.decode(bytes.subarray(end));
+    if (!mid) return null;
+    return { before, mid, after };
+  } catch {
+    return null;
+  }
+}
+
 export function JobDescription() {
   const { detail } = useJobRecord();
+  const { req } = useSearch({ from: "/jobs_/$jobId/description" });
+  const markRef = useRef<HTMLElement>(null);
+  const picked = detail?.requirements.find((r) => r.id === req) ?? null;
+  const slice =
+    detail && picked && picked.span_start != null && picked.span_end != null
+      ? utf8Slice(detail.description_md, picked.span_start, picked.span_end)
+      : null;
+
+  useEffect(() => {
+    markRef.current?.scrollIntoView({ block: "center" });
+  }, [req, detail?.id, picked?.span_start, picked?.span_end]);
+
   if (!detail) return null;
-  if (!detail.description_md.trim()) {
-    return <p className="text-sm text-zinc-500">No description extracted.</p>;
-  }
+  const missing = req && !slice;
   return (
-    <pre className="whitespace-pre-wrap text-sm text-zinc-300">{detail.description_md}</pre>
+    <div className="space-y-3">
+      {picked && slice ? (
+        <p className="text-sm text-zinc-400">
+          From “{picked.text}”.{" "}
+          <Link
+            to="/jobs/$jobId/description"
+            params={{ jobId: detail.id }}
+            search={{ req: undefined }}
+            className="text-indigo-300"
+          >
+            Clear
+          </Link>
+        </p>
+      ) : null}
+      {missing ? (
+        <p className="text-sm text-amber-300">
+          {picked
+            ? `The sentence for “${picked.text}” was not located in this description.`
+            : "That requirement is not on this job."}{" "}
+          <Link
+            to="/jobs/$jobId/description"
+            params={{ jobId: detail.id }}
+            search={{ req: undefined }}
+            className="text-indigo-300"
+          >
+            Clear
+          </Link>
+        </p>
+      ) : null}
+      {!detail.description_md.trim() ? (
+        <p className="text-sm text-zinc-500">No description extracted.</p>
+      ) : (
+        <pre className="whitespace-pre-wrap text-sm text-zinc-300">
+          {slice ? (
+            <>
+              {slice.before}
+              <mark
+                id="requirement-span"
+                ref={markRef}
+                className="rounded bg-amber-400/35 px-0.5 text-amber-50"
+              >
+                {slice.mid}
+              </mark>
+              {slice.after}
+            </>
+          ) : (
+            detail.description_md
+          )}
+        </pre>
+      )}
+    </div>
   );
 }
 
