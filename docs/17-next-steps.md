@@ -25,18 +25,26 @@ pair with a hashed, ingest-scoped device token.
 
 ## Do next (M0 remaining → M1)
 
-1. **Add or remove a requirement.** Create or delete one on
-   `/jobs/$jobId/requirements`. Relinking a skill and a documents section
-   (tailored resume / cover letter) are still later.
+1. **Relink a requirement to a skill.** Point a requirement at a taxonomy
+   skill from `/jobs/$jobId/requirements`. A documents section (tailored
+   resume / cover letter) is still later.
 
 ## Just shipped
+
+- **Add or remove a requirement.** `/jobs/$jobId/requirements` adds one
+  (`POST /api/v1/jobs/:id/requirements`) and removes one
+  (`DELETE /api/v1/requirements/:id`). An added row is provenance `manual`
+  and has no sentence span. The same normalized text already on the job is
+  409. A removed demand is remembered, so a later extract does not put it
+  back. A requirement the user added stays when the posting does not mention
+  it. Relinking a skill is not this slice.
 
 - **Inline requirement edits.** Necessity and kind are selects on
   `/jobs/$jobId/requirements`. `PATCH /api/v1/requirements/:id` sets
   provenance `manual`, rewrites the job files, and rescores. A later extract
   keeps that classification when the normalized text still matches. The
   sentence span is unchanged, so the description highlight still lands.
-  Adding, removing, and relinking a skill are not this slice.
+  Relinking a skill is not this slice.
 
 - **Requirement evidence in the description.** Job detail returns
   `span_start` / `span_end` (UTF-8 byte offsets into `description_md`).

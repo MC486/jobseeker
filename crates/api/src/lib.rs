@@ -165,6 +165,8 @@ pub struct PageDto<T: Serialize> {
         get_job,
         patch_job,
         patch_requirement,
+        create_requirement,
+        delete_requirement,
         get_job_match,
         merge_job,
         split_job,
@@ -193,6 +195,7 @@ pub struct PageDto<T: Serialize> {
         MetaResponse,
         PatchJobRequest,
         PatchRequirementRequest,
+        NewRequirementRequest,
         MergeJobRequest,
         SplitJobRequest,
         ResolveConflictRequest,
@@ -226,7 +229,11 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/jobs", get(list_jobs))
         .route("/api/v1/today", get(today))
         .route("/api/v1/jobs/{id}", get(get_job).patch(patch_job))
-        .route("/api/v1/requirements/{id}", patch(patch_requirement))
+        .route("/api/v1/jobs/{id}/requirements", post(create_requirement))
+        .route(
+            "/api/v1/requirements/{id}",
+            patch(patch_requirement).delete(delete_requirement),
+        )
         .route("/api/v1/jobs/{id}/match", get(get_job_match))
         .route("/api/v1/jobs/{id}/merge", post(merge_job))
         .route("/api/v1/jobs/{id}/split", post(split_job))
@@ -535,6 +542,60 @@ async fn patch_requirement(
                 necessity: trimmed_field(body.necessity),
             },
         )
+        .await
+        .map_err(ApiError)?;
+    Ok(Json(row))
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct NewRequirementRequest {
+    pub text: String,
+    #[serde(default)]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub necessity: Option<String>,
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/jobs/{id}/requirements",
+    request_body = NewRequirementRequest,
+    responses((status = 200), (status = 400), (status = 404), (status = 409))
+)]
+async fn create_requirement(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<NewRequirementRequest>,
+) -> ApiResult<Json<jobseeker_db::repo::job::RequirementRow>> {
+    let id: JobId = id.parse().map_err(ApiError)?;
+    let row = state
+        .pipeline
+        .create_requirement(
+            &id,
+            &jobseeker_db::repo::job::NewRequirement {
+                text: body.text,
+                kind: trimmed_field(body.kind),
+                necessity: trimmed_field(body.necessity),
+            },
+        )
+        .await
+        .map_err(ApiError)?;
+    Ok(Json(row))
+}
+
+#[utoipa::path(
+    delete,
+    path = "/api/v1/requirements/{id}",
+    responses((status = 200), (status = 404))
+)]
+async fn delete_requirement(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<jobseeker_db::repo::job::RequirementRow>> {
+    let id: RequirementId = id.parse().map_err(ApiError)?;
+    let row = state
+        .pipeline
+        .delete_requirement(&id)
         .await
         .map_err(ApiError)?;
     Ok(Json(row))
@@ -2389,6 +2450,94 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+        std::mem::forget(dir);
+    }
+
+    #[tokio::test]
+    async fn create_and_delete_requirement_over_http() {
+        let dir = tempfile::tempdir().unwrap();
+        let pipe = jobseeker_pipeline::for_test(dir.path().to_path_buf())
+            .await
+            .unwrap();
+        let html = r#"<html><head><script type="application/ld+json">{"@type":"JobPosting","title":"Data Scientist","hiringOrganization":{"name":"Zillow"},"description":"<h2>Requirements</h2><ul><li>Production Python and SQL</li></ul>"}</script></head></html>"#;
+        pipe.ingest_paste(html, Some("https://boards.greenhouse.io/zillow/jobs/3"))
+            .await
+            .unwrap();
+        pipe.drain().await.unwrap();
+        let page =
+            jobseeker_db::repo::job::list(&pipe.db, &jobseeker_db::repo::job::JobFilter::default())
+                .await
+                .unwrap();
+        let job_id = page.items[0].id.clone();
+        let app = router(AppState::new(pipe));
+
+        let created = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/v1/jobs/{job_id}/requirements"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "text": "Distributed tracing",
+                            "necessity": "preferred"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(created.status(), StatusCode::OK);
+        let row: serde_json::Value = body_json(created).await;
+        assert_eq!(row["text"], "Distributed tracing");
+        assert_eq!(row["provenance"], "manual");
+        assert!(row["span_start"].is_null());
+        let req_id = row["id"].as_str().unwrap();
+
+        let dup = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/v1/jobs/{job_id}/requirements"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "text": "tracing, distributed" }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(dup.status(), StatusCode::CONFLICT);
+
+        let removed = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri(format!("/api/v1/requirements/{req_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(removed.status(), StatusCode::OK);
+
+        let again = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/jobs/{job_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let detail: serde_json::Value = body_json(again).await;
+        let reqs = detail["requirements"].as_array().unwrap();
+        assert!(reqs.iter().all(|r| r["text"] != "Distributed tracing"));
+        assert!(reqs.iter().any(|r| r["text"] == "SQL"));
         std::mem::forget(dir);
     }
 

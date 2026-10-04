@@ -1561,6 +1561,9 @@ export function JobRequirements() {
   const qc = useQueryClient();
   const { jobId, detail, score } = useJobRecord();
   const [error, setError] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+  const [draftNecessity, setDraftNecessity] = useState("required");
+  const [draftKind, setDraftKind] = useState("skill");
   const edit = useMutation({
     mutationFn: (body: { id: string; kind?: string; necessity?: string }) =>
       api.patchRequirement(body.id, { kind: body.kind, necessity: body.necessity }),
@@ -1595,11 +1598,51 @@ export function JobRequirements() {
       setError(err instanceof Error ? err.message : String(err));
     },
   });
+  const add = useMutation({
+    mutationFn: () =>
+      api.createRequirement(jobId, {
+        text: draft.trim(),
+        kind: draftKind,
+        necessity: draftNecessity,
+      }),
+    onSuccess: async (row) => {
+      setError(null);
+      setDraft("");
+      qc.setQueryData<JobDetail>(keys.job(jobId), (old) => {
+        if (!old) return old;
+        if (old.requirements.some((r) => r.id === row.id)) return old;
+        return { ...old, requirements: [...old.requirements, row] };
+      });
+      await qc.invalidateQueries({ queryKey: keys.job(jobId) });
+      await qc.invalidateQueries({ queryKey: keys.match(jobId) });
+    },
+    onError: (err) => {
+      setError(err instanceof Error ? err.message : String(err));
+    },
+  });
+  const remove = useMutation({
+    mutationFn: (id: string) => api.deleteRequirement(id),
+    onMutate: async (id) => {
+      await qc.cancelQueries({ queryKey: keys.job(jobId) });
+      const prev = qc.getQueryData<JobDetail>(keys.job(jobId));
+      qc.setQueryData<JobDetail>(keys.job(jobId), (old) => {
+        if (!old) return old;
+        return { ...old, requirements: old.requirements.filter((r) => r.id !== id) };
+      });
+      return { prev };
+    },
+    onSuccess: async () => {
+      setError(null);
+      await qc.invalidateQueries({ queryKey: keys.job(jobId) });
+      await qc.invalidateQueries({ queryKey: keys.match(jobId) });
+    },
+    onError: (err, _id, ctx) => {
+      if (ctx?.prev) qc.setQueryData(keys.job(jobId), ctx.prev);
+      setError(err instanceof Error ? err.message : String(err));
+    },
+  });
   if (!detail) return null;
   const verdictByReq = new Map((score?.verdicts ?? []).map((v) => [v.requirement_id, v]));
-  if (detail.requirements.length === 0) {
-    return <p className="text-sm text-zinc-500">No requirements extracted.</p>;
-  }
   return (
     <div className="space-y-3">
       <ul className="space-y-3 text-sm">
@@ -1655,12 +1698,72 @@ export function JobRequirements() {
                       : ""}
                   </span>
                 ) : null}
+                <button
+                  type="button"
+                  aria-label={`Remove ${r.text}`}
+                  className="text-xs text-zinc-500 hover:text-zinc-200"
+                  disabled={remove.isPending && remove.variables === r.id}
+                  onClick={() => remove.mutate(r.id)}
+                >
+                  Remove
+                </button>
               </div>
               {verdict?.rationale ? <p className="text-zinc-500">{verdict.rationale}</p> : null}
             </li>
           );
         })}
       </ul>
+      {detail.requirements.length === 0 ? (
+        <p className="text-sm text-zinc-500">No requirements yet.</p>
+      ) : null}
+      <form
+        className="flex flex-wrap items-end gap-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (draft.trim()) add.mutate();
+        }}
+      >
+        <label className="text-xs text-zinc-400">
+          New requirement
+          <input
+            aria-label="New requirement"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            className="mt-1 block w-64 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-sm text-zinc-100"
+          />
+        </label>
+        <select
+          aria-label="New requirement necessity"
+          className="rounded border border-zinc-700 bg-zinc-950 px-1.5 py-1 text-xs text-zinc-300"
+          value={draftNecessity}
+          onChange={(e) => setDraftNecessity(e.target.value)}
+        >
+          {NECESSITY_OPTIONS.map(([value, label]) => (
+            <option key={value} value={value}>
+              {label}
+            </option>
+          ))}
+        </select>
+        <select
+          aria-label="New requirement kind"
+          className="rounded border border-zinc-700 bg-zinc-950 px-1.5 py-1 text-xs text-zinc-300"
+          value={draftKind}
+          onChange={(e) => setDraftKind(e.target.value)}
+        >
+          {KIND_OPTIONS.map(([value, label]) => (
+            <option key={value} value={value}>
+              {label}
+            </option>
+          ))}
+        </select>
+        <button
+          type="submit"
+          disabled={add.isPending || !draft.trim()}
+          className="rounded-lg bg-indigo-400 px-3 py-1.5 text-sm font-semibold text-zinc-950 disabled:opacity-50"
+        >
+          Add requirement
+        </button>
+      </form>
       {error ? <p className="text-sm text-red-300">{error}</p> : null}
     </div>
   );

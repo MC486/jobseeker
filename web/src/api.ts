@@ -289,6 +289,13 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(body),
     }),
+  createRequirement: (jobId: string, body: { text: string; kind?: string; necessity?: string }) =>
+    request<RequirementRow>(`/api/v1/jobs/${jobId}/requirements`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  deleteRequirement: (id: string) =>
+    request<RequirementRow>(`/api/v1/requirements/${id}`, { method: "DELETE" }),
   mergeJob: (from: string, into: string) =>
     request<{ from_id: string; into_id: string; listings_moved: number; requirements_added: number }>(
       `/api/v1/jobs/${from}/merge`,

@@ -6,6 +6,7 @@
 use jobseeker_core::domain::enums::{JobStatus, Necessity, RequirementKind, Seniority, WorkMode};
 use jobseeker_core::ids::{CompanyId, JobId, ListingId, RequirementId};
 use jobseeker_core::Result;
+use jobseeker_normalize::text::comparison_key;
 use sqlx::Row;
 
 use crate::repo::{clamp_limit, Cursor, Page};
@@ -1617,6 +1618,176 @@ pub async fn patch_requirement(
     Ok((job_id, row))
 }
 
+/// Tombstone kind for a requirement the user removed, keyed by normalized text so a
+/// later extract of the same demand does not put it back.
+pub const REQUIREMENT_DISMISSAL: &str = "requirement_norm";
+
+pub fn requirement_dismissal_id(job_id: &JobId, normalized_text: &str) -> String {
+    format!("{}|{normalized_text}", job_id.as_str())
+}
+
+/// A requirement the user typed. Kind defaults to `skill` and necessity to `required`
+/// when omitted. No sentence span — it did not come from the description.
+#[derive(Debug, Clone, Default)]
+pub struct NewRequirement {
+    pub text: String,
+    pub kind: Option<String>,
+    pub necessity: Option<String>,
+}
+
+const MAX_REQUIREMENT_TEXT: usize = 500;
+
+pub async fn create_requirement(
+    db: &Db,
+    job_id: &JobId,
+    new: &NewRequirement,
+) -> Result<RequirementRow> {
+    let text = new.text.trim();
+    if text.is_empty() {
+        return Err(jobseeker_core::Error::BadRequest(
+            "requirement text is required".into(),
+        ));
+    }
+    if text.chars().count() > MAX_REQUIREMENT_TEXT {
+        return Err(jobseeker_core::Error::BadRequest(
+            "requirement text is too long".into(),
+        ));
+    }
+    let kind = new.kind.as_deref().unwrap_or("skill");
+    let necessity = new.necessity.as_deref().unwrap_or("required");
+    let _: RequirementKind = kind.parse()?;
+    let _: Necessity = necessity.parse()?;
+    let normalized = comparison_key(text);
+    if normalized.is_empty() {
+        return Err(jobseeker_core::Error::BadRequest(
+            "requirement text has no comparable words".into(),
+        ));
+    }
+
+    let mut tx = db.writer().begin().await.map_err(db_err)?;
+    let job_exists: Option<String> =
+        sqlx::query_scalar("SELECT id FROM job WHERE id = ?1 AND deleted_at IS NULL")
+            .bind(job_id.as_str())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(db_err)?;
+    if job_exists.is_none() {
+        return Err(jobseeker_core::Error::NotFound("job"));
+    }
+    let duplicate: Option<String> =
+        sqlx::query_scalar("SELECT id FROM requirement WHERE job_id = ?1 AND normalized_text = ?2")
+            .bind(job_id.as_str())
+            .bind(&normalized)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(db_err)?;
+    if duplicate.is_some() {
+        return Err(jobseeker_core::Error::Conflict(
+            "this requirement is already on the job".into(),
+        ));
+    }
+    let dismissal = requirement_dismissal_id(job_id, &normalized);
+    sqlx::query("DELETE FROM tombstone WHERE entity_kind = ?1 AND entity_id = ?2")
+        .bind(REQUIREMENT_DISMISSAL)
+        .bind(&dismissal)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?;
+    let ordinal: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(MAX(ordinal), -1) + 1 FROM requirement WHERE job_id = ?1",
+    )
+    .bind(job_id.as_str())
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(db_err)?;
+    let id = RequirementId::new();
+    let ts = jobseeker_core::time::to_rfc3339(&jobseeker_core::time::now());
+    sqlx::query(
+        r#"INSERT INTO requirement (
+            id, job_id, ordinal, text, normalized_text, kind, necessity,
+            confidence, provenance, created_at, updated_at
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1.0, 'manual', ?8, ?8)"#,
+    )
+    .bind(id.as_str())
+    .bind(job_id.as_str())
+    .bind(ordinal)
+    .bind(text)
+    .bind(&normalized)
+    .bind(kind)
+    .bind(necessity)
+    .bind(&ts)
+    .execute(&mut *tx)
+    .await
+    .map_err(db_err)?;
+    tx.commit().await.map_err(db_err)?;
+    reindex_fts(db, job_id).await?;
+    Ok(RequirementRow {
+        id: id.as_str().to_string(),
+        text: text.to_string(),
+        normalized_text: normalized,
+        kind: kind.to_string(),
+        necessity: necessity.to_string(),
+        min_years: None,
+        is_blocker: false,
+        span_start: None,
+        span_end: None,
+        provenance: "manual".into(),
+    })
+}
+
+/// Remove a requirement and remember its normalized text so extraction cannot put it back.
+pub async fn delete_requirement(db: &Db, id: &RequirementId) -> Result<(JobId, RequirementRow)> {
+    let mut tx = db.writer().begin().await.map_err(db_err)?;
+    let r = sqlx::query(
+        "SELECT r.id, r.job_id, r.text, r.normalized_text, r.kind, r.necessity, r.min_years,
+                r.is_blocker, r.span_start, r.span_end, r.provenance
+           FROM requirement r
+           JOIN job j ON j.id = r.job_id
+          WHERE r.id = ?1 AND j.deleted_at IS NULL",
+    )
+    .bind(id.as_str())
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(db_err)?;
+    let Some(r) = r else {
+        return Err(jobseeker_core::Error::NotFound("requirement"));
+    };
+    let job_id: JobId = r.try_get::<String, _>("job_id").map_err(db_err)?.parse()?;
+    let normalized: String = r.try_get("normalized_text").map_err(db_err)?;
+    let row = RequirementRow {
+        id: r.try_get("id").map_err(db_err)?,
+        text: r.try_get("text").map_err(db_err)?,
+        normalized_text: normalized.clone(),
+        kind: r.try_get("kind").map_err(db_err)?,
+        necessity: r.try_get("necessity").map_err(db_err)?,
+        min_years: r.try_get("min_years").map_err(db_err)?,
+        is_blocker: r.try_get::<i64, _>("is_blocker").map_err(db_err)? != 0,
+        span_start: r.try_get("span_start").map_err(db_err)?,
+        span_end: r.try_get("span_end").map_err(db_err)?,
+        provenance: r.try_get("provenance").map_err(db_err)?,
+    };
+    let ts = jobseeker_core::time::to_rfc3339(&jobseeker_core::time::now());
+    sqlx::query(
+        "INSERT OR IGNORE INTO tombstone (entity_kind, entity_id, deleted_at, reason)
+         VALUES (?1, ?2, ?3, ?4)",
+    )
+    .bind(REQUIREMENT_DISMISSAL)
+    .bind(requirement_dismissal_id(&job_id, &normalized))
+    .bind(&ts)
+    .bind(job_id.as_str())
+    .execute(&mut *tx)
+    .await
+    .map_err(db_err)?;
+    sqlx::query("DELETE FROM requirement WHERE id = ?1")
+        .bind(id.as_str())
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?;
+    tx.commit().await.map_err(db_err)?;
+    reindex_fts(db, &job_id).await?;
+    Ok((job_id, row))
+}
+
 /// Mark every score for this job stale. A cheap UPDATE beats deleting rows: the UI can keep
 /// showing the last known value while a recompute is queued (FR-M-03).
 pub async fn mark_scores_stale(db: &Db, job_id: &JobId) -> Result<u64> {
@@ -2546,6 +2717,80 @@ mod tests {
         )
         .await;
         assert!(matches!(missing, Err(jobseeker_core::Error::NotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn create_and_delete_requirement_round_trip() {
+        let db = Db::open_in_memory().await.unwrap();
+        let job_id = insert_job(
+            &db,
+            "Acme",
+            "Engineer",
+            JobStatus::Open,
+            WorkMode::Remote,
+            None,
+            SalaryPeriod::Year,
+            "2026-09-01T00:00:00Z",
+        )
+        .await;
+        let missing = create_requirement(
+            &db,
+            &JobId::new(),
+            &NewRequirement {
+                text: "Distributed tracing".into(),
+                ..Default::default()
+            },
+        )
+        .await;
+        assert!(matches!(missing, Err(jobseeker_core::Error::NotFound(_))));
+
+        let created = create_requirement(
+            &db,
+            &job_id,
+            &NewRequirement {
+                text: "Distributed tracing".into(),
+                necessity: Some("preferred".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(created.kind, "skill");
+        assert_eq!(created.necessity, "preferred");
+        assert_eq!(created.provenance, "manual");
+        assert_eq!(created.span_start, None);
+        assert_eq!(created.normalized_text, "distributed tracing");
+
+        let again = create_requirement(
+            &db,
+            &job_id,
+            &NewRequirement {
+                text: "tracing distributed".into(),
+                ..Default::default()
+            },
+        )
+        .await;
+        assert!(matches!(again, Err(jobseeker_core::Error::Conflict(_))));
+
+        let vague = create_requirement(
+            &db,
+            &job_id,
+            &NewRequirement {
+                text: "and the".into(),
+                ..Default::default()
+            },
+        )
+        .await;
+        assert!(matches!(vague, Err(jobseeker_core::Error::BadRequest(_))));
+
+        let id: RequirementId = created.id.parse().unwrap();
+        let (got_job, _) = delete_requirement(&db, &id).await.unwrap();
+        assert_eq!(got_job, job_id);
+        let detail = get(&db, &job_id).await.unwrap().unwrap();
+        assert!(detail.requirements.is_empty());
+
+        let gone = delete_requirement(&db, &id).await;
+        assert!(matches!(gone, Err(jobseeker_core::Error::NotFound(_))));
     }
 
     #[tokio::test]
