@@ -1359,8 +1359,8 @@ pub async fn scoring_inputs(
     let now = jobseeker_core::time::now();
     let req_rows = sqlx::query(
         "SELECT r.id, r.ordinal, r.text, r.normalized_text, r.kind, r.necessity, r.min_years,
-                r.max_years, r.is_blocker, r.quantity_raw, r.confidence, r.provenance,
-                r.skill_id, s.slug AS skill_slug
+                r.max_years, r.education_level, r.is_blocker, r.quantity_raw, r.confidence,
+                r.provenance, r.skill_id, s.slug AS skill_slug
            FROM requirement r
            LEFT JOIN skill s ON s.id = r.skill_id
           WHERE r.job_id = ?1
@@ -1397,7 +1397,10 @@ pub async fn scoring_inputs(
                 .map_err(db_err)?
                 .map(|y| y as f32),
             level: None,
-            education_level: None,
+            education_level: r
+                .try_get::<Option<String>, _>("education_level")
+                .map_err(db_err)?
+                .and_then(|s| s.parse().ok()),
             field_of_study: None,
             is_blocker: r.try_get::<i64, _>("is_blocker").map_err(db_err)? != 0,
             quantity_raw: r.try_get("quantity_raw").map_err(db_err)?,
@@ -2848,6 +2851,20 @@ mod tests {
         let scored = scoring_inputs(&db, &job_id).await.unwrap().unwrap();
         assert_eq!(scored.1[0].skill_id, None);
         assert_eq!(scored.1[0].skill_slug, None);
+
+        sqlx::query(
+            "UPDATE requirement SET education_level = 'bachelor', kind = 'education' WHERE id = ?1",
+        )
+        .bind(req_id.as_str())
+        .execute(db.writer())
+        .await
+        .unwrap();
+        let scored = scoring_inputs(&db, &job_id).await.unwrap().unwrap();
+        assert_eq!(
+            scored.1[0].education_level,
+            Some(jobseeker_core::domain::enums::EducationLevel::Bachelor),
+            "a stored degree has to reach the matcher"
+        );
     }
 
     #[tokio::test]

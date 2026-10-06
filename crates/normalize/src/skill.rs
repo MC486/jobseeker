@@ -12,6 +12,7 @@
 use jobseeker_core::domain::requirement::SkillKind;
 use jobseeker_core::slug::slugify;
 use once_cell::sync::Lazy;
+use regex::Regex;
 use std::collections::HashMap;
 
 /// A taxonomy entry before it gets a database id.
@@ -892,6 +893,16 @@ fn alias_key(input: &str) -> String {
     out.trim().to_string()
 }
 
+/// Drop parenthetical examples so they cannot steal the demand.
+///
+/// `"machine learning methods (e.g., natural language processing)"` is a machine-learning
+/// bar. The examples are illustrations, not a longer alias that replaces the head.
+pub fn without_examples(text: &str) -> String {
+    static PAREN: Lazy<Regex> = Lazy::new(|| Regex::new(r"\s*\([^)]*\)").unwrap());
+    let stripped = PAREN.replace_all(text, " ");
+    stripped.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 /// Resolve a phrase to a taxonomy slug.
 ///
 /// Matches the longest recognized alias appearing in the phrase, so
@@ -1054,6 +1065,17 @@ mod tests {
         assert_eq!(resolve("C++"), Some("cpp"));
         assert_eq!(resolve("c#"), Some("csharp"));
         assert_eq!(resolve(".NET Core"), Some("dotnet"));
+    }
+
+    #[test]
+    fn examples_in_parentheses_do_not_replace_the_head_skill() {
+        let phrase = "2+ years of industry experience applying machine learning methods (e.g., natural language processing, reinforcement learning)";
+        assert_eq!(resolve(&without_examples(phrase)), Some("machine-learning"));
+        assert_eq!(
+            resolve(phrase),
+            Some("nlp"),
+            "the raw sentence's longest alias is an example, which is why the head is stripped first"
+        );
     }
 
     #[test]

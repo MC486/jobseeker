@@ -18,7 +18,7 @@ use jobseeker_core::hash::hash_parts;
 use jobseeker_core::ids::{JobId, MatchScoreId, ProfileId, SkillId};
 use jobseeker_core::time::now;
 use jobseeker_core::Result;
-use jobseeker_normalize::skill::hierarchy_credit;
+use jobseeker_normalize::skill::{extract_all, get, hierarchy_credit, without_examples};
 
 /// What the profile can show for one skill.
 #[derive(Debug, Clone, Default)]
@@ -184,6 +184,17 @@ fn judge_requirement(
             years_needed: None,
             rationale: "A logistics demand needs a yes/no from you; it is not guessed".into(),
         },
+        // "Passion for applied ML" is not met by having machine learning.
+        RequirementKind::SoftSkill => RequirementMatch {
+            requirement_id: req.id.clone(),
+            status: VerdictStatus::Unknown,
+            score: 0.0,
+            weight: req.weight(),
+            evidence: vec![],
+            years_have: None,
+            years_needed: req.min_years,
+            rationale: "A soft-skill line is not cleared by a technology on the profile".into(),
+        },
         _ => skill_verdict(req, profile, cfg),
     }
 }
@@ -193,6 +204,20 @@ fn skill_verdict(
     profile: &ProfileSnapshot,
     cfg: &MatchingConfig,
 ) -> RequirementMatch {
+    if is_publication_demand(&req.text) {
+        return RequirementMatch {
+            requirement_id: req.id.clone(),
+            status: VerdictStatus::Gap,
+            score: 0.0,
+            weight: req.weight(),
+            evidence: vec![],
+            years_have: None,
+            years_needed: req.min_years,
+            rationale: "No publications on the profile".into(),
+        };
+    }
+
+    let head = slug_of(req);
     let mut best: Option<(&SkillEvidence, f32)> = None;
     for ev in &profile.skills {
         let credit = if ev.slug.is_empty() {
@@ -200,7 +225,7 @@ fn skill_verdict(
         } else {
             // A linked taxonomy skill wins. Otherwise the requirement text resolves
             // to a slug, and that slug is what hierarchy credit compares.
-            hierarchy_credit(&ev.slug, &slug_of(req))
+            hierarchy_credit(&ev.slug, &head)
         };
         if credit > 0.0 && best.as_ref().map(|(_, c)| *c).unwrap_or(0.0) < credit {
             best = Some((ev, credit));
@@ -230,7 +255,37 @@ fn skill_verdict(
         best.and_then(|(e, _)| e.last_used_year),
         cfg.recency_decay_after_years,
     );
-    let (status, score) = verdict_from_years(years_have, req.min_years, score_raw * recency);
+    let (mut status, mut score) =
+        verdict_from_years(years_have, req.min_years, score_raw * recency);
+    // A second concrete skill the profile lacks ("Hadoop/Spark" next to machine
+    // learning) keeps the line from counting as fully met. Examples that are
+    // children of the head skill ("NLP" under machine learning) do not.
+    // A manual skill link is the whole demand. Unlinked text can still name a
+    // second concrete tool the profile does not have.
+    if req.skill_slug.is_none() && get(&head).is_some() {
+        let mut extras = 0.0_f32;
+        let mut extra_n = 0.0_f32;
+        for slug in extract_all(&req.text) {
+            if slug == head
+                || hierarchy_credit(slug, &head) > 0.0
+                || hierarchy_credit(&head, slug) > 0.0
+            {
+                continue;
+            }
+            extra_n += 1.0;
+            extras += best_credit(profile, slug);
+        }
+        if extra_n > 0.0 {
+            score = (score + extras) / (1.0 + extra_n);
+            status = if score >= 0.999 {
+                VerdictStatus::Met
+            } else if score <= 0.0 {
+                VerdictStatus::Gap
+            } else {
+                VerdictStatus::Partial
+            };
+        }
+    }
     let rationale = rationale_for(req, status, years_have);
 
     RequirementMatch {
@@ -249,9 +304,29 @@ fn slug_of(req: &Requirement) -> String {
     if let Some(slug) = req.skill_slug.as_deref().filter(|s| !s.is_empty()) {
         return slug.to_string();
     }
-    jobseeker_normalize::skill::resolve(&req.text)
+    let head = without_examples(&req.text);
+    jobseeker_normalize::skill::resolve(&head)
+        .or_else(|| jobseeker_normalize::skill::resolve(&req.text))
         .unwrap_or(req.normalized_text.as_str())
         .to_string()
+}
+
+fn best_credit(profile: &ProfileSnapshot, want: &str) -> f32 {
+    profile
+        .skills
+        .iter()
+        .map(|ev| {
+            if ev.slug.is_empty() {
+                0.0
+            } else {
+                hierarchy_credit(&ev.slug, want)
+            }
+        })
+        .fold(0.0, f32::max)
+}
+
+fn is_publication_demand(text: &str) -> bool {
+    text.to_ascii_lowercase().contains("publication")
 }
 
 fn verdict_from_years(
@@ -705,6 +780,65 @@ mod tests {
             accepts_remote: true,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn the_evidence_bank_meets_a_bachelors_and_partially_meets_two_years_of_ml() {
+        use jobseeker_core::domain::enums::EducationLevel;
+        let mut degree = req(
+            "Bachelor's degree in computer science, machine learning, statistics, a related field or equivalent experience",
+            RequirementKind::Education,
+            Necessity::Required,
+            None,
+        );
+        degree.education_level = Some(EducationLevel::Bachelor);
+        let ml = req(
+            "2+ years of industry experience applying machine learning methods (e.g., natural language processing, reinforcement learning, and graph representation learning)",
+            RequirementKind::Experience,
+            Necessity::Required,
+            Some(2.0),
+        );
+        let spark = req(
+            "End-to-end hands-on experience with building data processing pipelines, large scale machine learning systems, and big data technologies (e.g., Hadoop/Spark)",
+            RequirementKind::Skill,
+            Necessity::Required,
+            None,
+        );
+        let pubs = req(
+            "Publications at top ML conferences",
+            RequirementKind::Skill,
+            Necessity::NiceToHave,
+            None,
+        );
+        let mut person = profile(&[
+            ("machine-learning", 1.67),
+            ("data-science", 1.67),
+            ("lightgbm", 0.67),
+        ]);
+        person.education = Some(EducationLevel::Bachelor);
+        person.years_experience = Some(1.67);
+        let score = score(
+            &job(vec![degree, ml, spark, pubs]),
+            &person,
+            &MatchingConfig::default(),
+        )
+        .unwrap();
+        assert_eq!(score.requirement_matches[0].status, VerdictStatus::Met);
+        assert_eq!(
+            score.requirement_matches[1].status,
+            VerdictStatus::Partial,
+            "{:?}",
+            score.requirement_matches[1]
+        );
+        let have = score.requirement_matches[1].years_have.unwrap();
+        assert!(have > 1.5 && have < 2.0, "got {have}");
+        assert_ne!(
+            score.requirement_matches[2].status,
+            VerdictStatus::Met,
+            "Spark is named and not on the profile: {:?}",
+            score.requirement_matches[2]
+        );
+        assert_eq!(score.requirement_matches[3].status, VerdictStatus::Gap);
     }
 
     #[test]

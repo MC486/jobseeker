@@ -335,10 +335,21 @@ fn synthesize_skills(input: &str, items: &[ParsedItem]) -> Vec<ParsedSkill> {
             }
         }
         if item.kind.counts_as_work() {
+            let title = item.title.as_deref().unwrap_or("").to_ascii_lowercase();
+            // A Data Scientist / decision-science stint is applied ML tenure, not a
+            // one-year mention default. Sequential roles add; they are not collapsed
+            // to the longer one.
+            if title.contains("data scientist")
+                || title.contains("decision science")
+                || title.contains("data science")
+            {
+                mentioned.insert("data-science".into());
+                mentioned.insert("machine-learning".into());
+            }
             for slug in mentioned {
                 years
                     .entry(slug.clone())
-                    .and_modify(|y| *y = (*y).max(tenure))
+                    .and_modify(|y| *y += tenure)
                     .or_insert(tenure);
                 last_year
                     .entry(slug)
@@ -1201,6 +1212,16 @@ mod tests {
         assert!(bank.skills.iter().any(|s| s.slug == "snowflake"));
         assert!(bank.skills.iter().any(|s| s.slug == "dataiku"));
         assert!(bank.skills.iter().any(|s| s.slug == "lightgbm"));
+        let ml = bank
+            .skills
+            .iter()
+            .find(|s| s.slug == "machine-learning")
+            .expect("machine-learning");
+        let ml_years = ml.years.expect("ml years");
+        assert!(
+            ml_years > 1.6 && ml_years < 1.8,
+            "intern plus the current role, not a flat 1.0 and not an invented 2.0: {ml_years}"
+        );
         assert!(
             !bank.skills.iter().any(|s| s.slug == "kubernetes"),
             "imported bank must not inherit the placeholder k8s skill"
