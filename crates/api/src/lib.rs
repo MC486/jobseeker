@@ -168,6 +168,9 @@ pub struct PageDto<T: Serialize> {
         create_requirement,
         delete_requirement,
         list_skills,
+        list_documents,
+        write_resume,
+        write_cover_letter,
         get_job_match,
         merge_job,
         split_job,
@@ -232,6 +235,12 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/jobs/{id}", get(get_job).patch(patch_job))
         .route("/api/v1/jobs/{id}/requirements", post(create_requirement))
         .route("/api/v1/skills", get(list_skills))
+        .route("/api/v1/jobs/{id}/documents", get(list_documents))
+        .route("/api/v1/jobs/{id}/documents/resume", post(write_resume))
+        .route(
+            "/api/v1/jobs/{id}/documents/cover-letter",
+            post(write_cover_letter),
+        )
         .route(
             "/api/v1/requirements/{id}",
             patch(patch_requirement).delete(delete_requirement),
@@ -636,6 +645,64 @@ async fn list_skills(
         .await
         .map_err(ApiError)?;
     Ok(Json(rows))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/jobs/{id}/documents",
+    responses((status = 200), (status = 404))
+)]
+async fn list_documents(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Vec<jobseeker_db::repo::document::DocumentRow>>> {
+    let id: JobId = id.parse().map_err(ApiError)?;
+    job::get(&state.pipeline.db, &id)
+        .await
+        .map_err(ApiError)?
+        .ok_or(ApiError(Error::NotFound("job")))?;
+    let rows = jobseeker_db::repo::document::list_for_job(&state.pipeline.db, &id)
+        .await
+        .map_err(ApiError)?;
+    Ok(Json(rows))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/jobs/{id}/documents/resume",
+    responses((status = 200), (status = 400), (status = 404))
+)]
+async fn write_resume(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<jobseeker_db::repo::document::DocumentRow>> {
+    write_job_document(state, id, "resume").await
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/jobs/{id}/documents/cover-letter",
+    responses((status = 200), (status = 400), (status = 404))
+)]
+async fn write_cover_letter(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<jobseeker_db::repo::document::DocumentRow>> {
+    write_job_document(state, id, "cover_letter").await
+}
+
+async fn write_job_document(
+    state: AppState,
+    id: String,
+    kind: &str,
+) -> ApiResult<Json<jobseeker_db::repo::document::DocumentRow>> {
+    let id: JobId = id.parse().map_err(ApiError)?;
+    let row = state
+        .pipeline
+        .write_document(&id, kind)
+        .await
+        .map_err(ApiError)?;
+    Ok(Json(row))
 }
 
 #[utoipa::path(get, path = "/api/v1/jobs/{id}/match", responses((status = 200), (status = 404)))]
@@ -2635,6 +2702,197 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(missing_skill.status(), StatusCode::NOT_FOUND);
+        std::mem::forget(dir);
+    }
+
+    #[tokio::test]
+    async fn documents_project_the_bank_and_keep_versions() {
+        let dir = tempfile::tempdir().unwrap();
+        let pipe = jobseeker_pipeline::for_test(dir.path().to_path_buf())
+            .await
+            .unwrap();
+        let html = r#"<html><head><script type="application/ld+json">{"@type":"JobPosting","title":"Data Scientist","hiringOrganization":{"name":"Zillow"},"description":"<h2>Requirements</h2><ul><li>Production Python</li><li>SQL databases</li></ul>"}</script></head></html>"#;
+        pipe.ingest_paste(html, Some("https://boards.greenhouse.io/zillow/jobs/docs"))
+            .await
+            .unwrap();
+        pipe.drain().await.unwrap();
+        let page =
+            jobseeker_db::repo::job::list(&pipe.db, &jobseeker_db::repo::job::JobFilter::default())
+                .await
+                .unwrap();
+        let job_id = page.items[0].id.clone();
+        let profile = jobseeker_db::repo::profile::get(&pipe.db, None)
+            .await
+            .unwrap()
+            .unwrap();
+        let app = router(AppState::new(pipe.clone()));
+
+        let empty = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/v1/jobs/{job_id}/documents/resume"))
+                    .header("content-type", "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(empty.status(), StatusCode::BAD_REQUEST);
+
+        jobseeker_db::repo::experience::replace_bank(
+            &pipe.db,
+            &profile.id,
+            &jobseeker_db::repo::experience::BankWrite {
+                full_name: None,
+                headline: Some("Platform engineer".into()),
+                email: None,
+                phone: None,
+                location: None,
+                links_json: "[]".into(),
+                summary_md: None,
+                target_titles_json: "[]".into(),
+                target_comp_min_cents: None,
+                target_locations_json: "[]".into(),
+                accepts_remote: true,
+                willing_to_relocate: false,
+                work_auth: None,
+                citizenship: None,
+                clearance_held: None,
+                can_obtain_clearance: None,
+                items: vec![jobseeker_db::repo::experience::ItemWrite {
+                    kind: jobseeker_core::domain::profile::ExperienceKind::Role,
+                    org: "Northwind".into(),
+                    title: Some("Engineer".into()),
+                    location: None,
+                    start_date: None,
+                    end_date: None,
+                    is_current: true,
+                    description_md: None,
+                    accomplishments: vec![jobseeker_db::repo::experience::AccomplishmentWrite {
+                        text: "Rebuilt the ingestion pipeline in Rust, cutting p95 latency 85%"
+                            .into(),
+                        variants: std::collections::BTreeMap::new(),
+                        strength: 5,
+                        verified: true,
+                        skill_slugs: vec!["rust".into()],
+                    }],
+                }],
+                skills: vec![jobseeker_db::repo::experience::SkillWrite {
+                    slug: "rust".into(),
+                    years: Some(8.0),
+                    last_used_year: None,
+                    is_primary: true,
+                    evidence_count: 1,
+                }],
+            },
+        )
+        .await
+        .unwrap();
+
+        let detail = jobseeker_db::repo::job::get(&pipe.db, &job_id.parse().unwrap())
+            .await
+            .unwrap()
+            .unwrap();
+        let python = detail
+            .requirements
+            .iter()
+            .find(|r| r.text == "Production Python")
+            .unwrap();
+        let rust = jobseeker_db::repo::skill::id_by_slug(&pipe.db, "rust")
+            .await
+            .unwrap()
+            .unwrap();
+        pipe.reclassify_requirement(
+            &python.id.parse().unwrap(),
+            &jobseeker_db::repo::job::RequirementPatch {
+                skill_id: Some(Some(rust.as_str().to_string())),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        let resume = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/v1/jobs/{job_id}/documents/resume"))
+                    .header("content-type", "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resume.status(), StatusCode::OK);
+        let resume: serde_json::Value = body_json(resume).await;
+        assert_eq!(resume["version"], 1);
+        assert!(resume["parent_document_id"].is_null());
+        assert!(resume["source_content"]
+            .as_str()
+            .unwrap()
+            .contains("cutting p95 latency 85%"));
+        assert!(!resume["source_content"]
+            .as_str()
+            .unwrap()
+            .to_lowercase()
+            .contains("passionate"));
+        assert_eq!(resume["coverage_json"]["required_covered"], 1);
+        assert!(resume["coverage_json"]["uncovered"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|u| u["text"] == "SQL databases"));
+
+        let again = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/v1/jobs/{job_id}/documents/resume"))
+                    .header("content-type", "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let again: serde_json::Value = body_json(again).await;
+        assert_eq!(again["version"], 2);
+        assert_eq!(again["parent_document_id"], resume["id"]);
+
+        let letter = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/v1/jobs/{job_id}/documents/cover-letter"))
+                    .header("content-type", "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(letter.status(), StatusCode::OK);
+        let letter: serde_json::Value = body_json(letter).await;
+        let md = letter["source_content"].as_str().unwrap();
+        assert!(md.contains("Cover letter — draft"));
+        assert!(md.contains("Zillow is hiring a Data Scientist."));
+        assert!(md.contains("Open on this posting: SQL databases."));
+
+        let listed = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/jobs/{job_id}/documents"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(listed.status(), StatusCode::OK);
+        let listed: serde_json::Value = body_json(listed).await;
+        assert_eq!(listed.as_array().unwrap().len(), 3);
         std::mem::forget(dir);
     }
 

@@ -25,10 +25,18 @@ pair with a hashed, ingest-scoped device token.
 
 ## Do next (M0 remaining → M1)
 
-1. **A documents section.** Tailored resume and cover letter for one job.
-   The facet rail on `/jobs` is still later.
+1. **A facet rail on `/jobs`.** Filter the loaded table by status, work mode,
+   and match. Saved views are still later.
 
 ## Just shipped
+
+- **Documents for one job.** `/jobs/$jobId/documents` writes a tailored
+  resume and a cover letter from the experience bank
+  (`POST /api/v1/jobs/:id/documents/resume` and `.../cover-letter`).
+  Bullets are copied. No model is called, and a later write is a new
+  version. Coverage names the required skills the draft does not touch.
+  An empty bank is refused. PDF rendering and interview prep are not this
+  slice.
 
 - **Relink a requirement to a skill.** `/jobs/$jobId/requirements` points a
   requirement at a taxonomy skill (`PATCH` `skill_id`, or `null` to clear).
@@ -63,7 +71,7 @@ pair with a hashed, ingest-scoped device token.
 - **Job detail sections.** `/jobs/$jobId` is the overview. Requirements,
   match, description, and sources are their own routes. Your call stays
   above the section nav on every one. Unresolved conflicts and possible
-  duplicates are counted on Sources. There is no documents section.
+  duplicates are counted on Sources. Documents were not this slice.
 
 - **File-based routes + virtualized job table.** Routes live in
   `web/src/routes` and `tsr generate` writes `routeTree.gen.ts`. `/jobs` is a

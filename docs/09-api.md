@@ -186,15 +186,22 @@ GET  /api/v1/compare?job_ids=a,b,c&profile_id=   side-by-side
 
 ### Documents
 
+Wired for one job. Generation is synchronous and does not call a model.
+Each write inserts a new `document` version (`parent_document_id` points
+at the previous one). An empty experience bank is 400.
+
 ```
-POST /api/v1/documents/resume        {job_id, profile_id, template, budget:{pages|bullets}} → 202
-POST /api/v1/documents/cover-letter  {job_id, profile_id, tone?, length?}                   → 202
+GET  /api/v1/jobs/:id/documents
+POST /api/v1/jobs/:id/documents/resume          → markdown projection
+POST /api/v1/jobs/:id/documents/cover-letter    → markdown draft
+```
+
+Still later:
+
+```
 POST /api/v1/documents/interview-prep {job_id, profile_id}                                  → 202
-GET  /api/v1/documents?kind=&job_id=&profile_id=
-GET  /api/v1/documents/:id                       source + selection + coverage
 GET  /api/v1/documents/:id/render.pdf
 GET  /api/v1/documents/:id/diff/:other_id
-POST /api/v1/documents/:id/regenerate            {overrides} → new version
 DELETE /api/v1/documents/:id
 GET  /api/v1/templates                           available resume templates
 ```

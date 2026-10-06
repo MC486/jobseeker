@@ -51,6 +51,31 @@ export type SkillListItem = {
   slug: string;
 };
 
+export type DocumentCoverage = {
+  required_total: number;
+  required_covered: number;
+  uncovered: { id: string; text: string }[];
+};
+
+export type JobDocument = {
+  id: string;
+  job_id: string;
+  kind: string;
+  title: string;
+  format: string;
+  source_content: string;
+  version: number;
+  parent_document_id: string | null;
+  selection_json: {
+    accomplishment_id: string;
+    role: string;
+    text: string;
+    targets: string[];
+  }[];
+  coverage_json: DocumentCoverage;
+  created_at: string;
+};
+
 export type JobDetail = {
   id: string;
   title: string;
@@ -315,6 +340,12 @@ export const api = {
     }),
   deleteRequirement: (id: string) =>
     request<RequirementRow>(`/api/v1/requirements/${id}`, { method: "DELETE" }),
+  documents: (jobId: string) => request<JobDocument[]>(`/api/v1/jobs/${jobId}/documents`),
+  writeDocument: (jobId: string, kind: "resume" | "cover_letter") =>
+    request<JobDocument>(
+      `/api/v1/jobs/${jobId}/documents/${kind === "resume" ? "resume" : "cover-letter"}`,
+      { method: "POST", body: "{}" },
+    ),
   mergeJob: (from: string, into: string) =>
     request<{ from_id: string; into_id: string; listings_moved: number; requirements_added: number }>(
       `/api/v1/jobs/${from}/merge`,

@@ -56,7 +56,7 @@ single poll.
   ├─ match                 subscore breakdown, evidence, gaps
   ├─ description           normalized Markdown, requirement spans highlighted
   ├─ sources               listings, captures, revisions, conflicts
-  └─ documents             resumes/cover letters for this job
+  └─ documents             tailored resume and cover letter for this job
 /jobs/compare?ids=a,b,c    side-by-side
 /pipeline                  Kanban board of applications
 /applications/$id          timeline, contacts, documents, next action
@@ -116,7 +116,10 @@ the page, is marked manual, and is kept if that posting is extracted again.
 The skill select lists the taxonomy (`no skill` clears the link). A linked
 skill is what the match score uses for that requirement. The same page adds
 a requirement (no sentence span) and removes one. A removed demand does not
-come back on the next extract. There is no documents section.
+come back on the next extract. `/documents` writes a tailored resume and
+a cover letter from the experience bank. Each write is a new version.
+The draft copies stored bullets and names required skills it does not
+cover. PDF rendering is not on this page.
 
 **Job list** (`/jobs`) is a dense virtualized table of the first 200 jobs: title,
 company, comp, location/mode, posted age, close date, match overall plus the diagnostic
