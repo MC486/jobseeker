@@ -281,6 +281,7 @@ mod tests {
         for text in [
             "$185,000 - $225,000 per year",
             "$185,000–$225,000/yr",
+            "$185,000—$225,000",
             "$185k - $225k annually",
             "185,000 - 225,000 USD per year",
             "USD 185000 to 225000 a year",

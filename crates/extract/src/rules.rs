@@ -172,7 +172,7 @@ fn find_salary(text: &str) -> Option<String> {
         .map(|c| c[1].trim().to_string())
         .or_else(|| {
             static BARE: Lazy<Regex> = Lazy::new(|| {
-                Regex::new(r"(?i)\$\s*\d[\d,]*(?:\s*[-–]\s*\$?\s*\d[\d,]*)?(?:\s*k)?(?:\s*(?:per|/)\s*(?:year|yr|hour|hr))?")
+                Regex::new(r"(?i)\$\s*\d[\d,]*(?:\s*[-–—]\s*\$?\s*\d[\d,]*)?(?:\s*k)?(?:\s*(?:per|/)\s*(?:year|yr|hour|hr))?")
                     .unwrap()
             });
             BARE.find(text).map(|m| m.as_str().to_string())
@@ -180,10 +180,24 @@ fn find_salary(text: &str) -> Option<String> {
 }
 
 fn find_location(text: &str) -> Option<String> {
-    static RE: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r"(?i)(?:location|based in|office)[:\s]+([^\n]{3,60})").unwrap());
-    RE.captures(text)
-        .map(|c| c[1].trim().trim_end_matches('.').to_string())
+    // A label at the start of a line, or "based in <place>". A bare "Location:"
+    // whose next line is the word "Locations", and the word "location" inside a
+    // sentence, are not places.
+    static RE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(
+            r"(?im)^[^\S\n]*(?:location|office)\b:?[^\S\n]*([^\n]{3,60})|(?i)\bbased in\b:?[^\S\n]*([^\n]{3,60})",
+        )
+        .unwrap()
+    });
+    let caps = RE.captures(text)?;
+    let loc = caps
+        .get(1)
+        .or_else(|| caps.get(2))?
+        .as_str()
+        .trim()
+        .trim_end_matches('.')
+        .to_string();
+    (!loc.eq_ignore_ascii_case("locations")).then_some(loc)
 }
 
 fn find_date(text: &str) -> Option<String> {
@@ -215,6 +229,10 @@ mod tests {
         )
         .is_some());
         assert!(find_salary("Compensation $60/hr").is_some());
+        assert_eq!(
+            find_salary("US based applicants only\n$163,418—$285,982 USD").as_deref(),
+            Some("$163,418—$285,982")
+        );
         assert_eq!(find_salary("Great benefits and a strong team"), None);
     }
 
@@ -223,6 +241,22 @@ mod tests {
         assert_eq!(
             find_location("Location: Remote - United States\nSalary: $1").as_deref(),
             Some("Remote - United States")
+        );
+        assert_eq!(
+            find_location("Location:\n\nLocations\nSan Francisco / Palo Alto"),
+            None
+        );
+        assert_eq!(
+            find_location("Relocation Statement:\nThis position is not eligible."),
+            None
+        );
+        assert_eq!(
+            find_location("Final salary is based on a number of factors including location, travel, relevant prior experience."),
+            None
+        );
+        assert_eq!(
+            find_location("The team is based in Seattle.").as_deref(),
+            Some("Seattle")
         );
     }
 }
