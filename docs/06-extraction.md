@@ -166,6 +166,8 @@ typed `Requirement` rows.
 | "benefits", "perks", "what we offer", "compensation" | not a requirement — routed to `benefits_md` |
 | "about us", "our mission", "EEO", "equal opportunity" | discarded |
 
+A short line that ends in a colon (`What we're looking for:`, `Nice to have:`) is a heading even when it is not Markdown, including a curly apostrophe in "we're" / "you'll". The non-empty lines under it are items whether or not they carry a bullet marker. `What you'll do:` stays a responsibility section. A colon label that matches none of the rows above ends the section, so the paragraph under `Relocation Statement:` is not a demand. Prose before any recognized heading is still not a requirement.
+
 **Per-item classification.** Rules first (they are precise and free):
 
 - Years: `/(\d+)\s*\+?\s*(?:to|-|–)?\s*(\d+)?\s*(?:\+)?\s*years?/i` → `min_years`/`max_years`;
