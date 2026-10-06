@@ -820,6 +820,70 @@ impl Pipeline {
         Ok(row)
     }
 
+    /// Project the experience bank onto this job. Markdown only; no model is called.
+    /// A second write of the same kind is a new version.
+    pub async fn write_document(
+        &self,
+        job_id: &jobseeker_core::ids::JobId,
+        kind: &str,
+    ) -> Result<jobseeker_db::repo::document::DocumentRow> {
+        if kind != "resume" && kind != "cover_letter" {
+            return Err(Error::BadRequest("document kind is not supported".into()));
+        }
+        let detail = jobseeker_db::repo::job::get(&self.db, job_id)
+            .await?
+            .ok_or(Error::NotFound("job"))?;
+        let profile_id = profile::ensure_default(&self.db).await?;
+        let view = experience::get_view(&self.db, &profile_id)
+            .await?
+            .ok_or(Error::NotFound("profile"))?;
+        let bullets = bank_bullets(&view);
+        if bullets.is_empty() {
+            return Err(Error::BadRequest(
+                "the experience bank has no accomplishments to project".into(),
+            ));
+        }
+        let demands = job_demands(&detail);
+        let name = view
+            .full_name
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or(view.name.as_str());
+        let projection = if kind == "resume" {
+            jobseeker_resume::project::project_resume(
+                name,
+                view.headline.as_deref(),
+                &bullets,
+                &demands,
+            )
+        } else {
+            jobseeker_resume::project::project_cover_letter(
+                &detail.company_name,
+                &detail.title,
+                &bullets,
+                &demands,
+            )
+        };
+        let label = if kind == "resume" {
+            "resume"
+        } else {
+            "cover letter"
+        };
+        jobseeker_db::repo::document::insert_version(
+            &self.db,
+            &jobseeker_db::repo::document::NewDocument {
+                profile_id,
+                job_id: job_id.clone(),
+                kind: kind.to_string(),
+                title: format!("{} — {label}", detail.title),
+                source_content: projection.markdown,
+                selection_json: serde_json::to_string(&projection.bullets)?,
+                coverage_json: serde_json::to_string(&projection.coverage)?,
+            },
+        )
+        .await
+    }
+
     async fn refresh_after_requirement_change(
         &self,
         job_id: &jobseeker_core::ids::JobId,
@@ -1216,6 +1280,56 @@ fn bank_write(parsed: &jobseeker_resume::import::ParsedBank) -> Result<experienc
             })
             .collect(),
     })
+}
+
+fn bank_bullets(view: &experience::ProfileView) -> Vec<jobseeker_resume::project::BankBullet> {
+    let mut out = Vec::new();
+    for item in &view.experience {
+        let role = match item
+            .title
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            Some(title) => format!("{title} — {}", item.org),
+            None => item.org.clone(),
+        };
+        for acc in &item.accomplishments {
+            let text = acc.text.trim();
+            if text.is_empty() {
+                continue;
+            }
+            out.push(jobseeker_resume::project::BankBullet {
+                id: acc.id.clone(),
+                role: role.clone(),
+                text: text.to_string(),
+                skill_slugs: acc.skills.clone(),
+                strength: acc.strength,
+            });
+        }
+    }
+    out
+}
+
+fn job_demands(
+    detail: &jobseeker_db::repo::job::JobDetail,
+) -> Vec<jobseeker_resume::project::Demand> {
+    use jobseeker_core::domain::enums::{Necessity, RequirementKind};
+    detail
+        .requirements
+        .iter()
+        .filter_map(|r| {
+            let kind: RequirementKind = r.kind.parse().ok()?;
+            let necessity: Necessity = r.necessity.parse().ok()?;
+            Some(jobseeker_resume::project::Demand {
+                id: r.id.clone(),
+                text: r.text.clone(),
+                skill_slug: r.skill_slug.clone(),
+                required: matches!(necessity, Necessity::Required | Necessity::Implied),
+                scored: kind.is_scored(),
+            })
+        })
+        .collect()
 }
 
 fn scoring_identity(

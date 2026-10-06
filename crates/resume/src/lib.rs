@@ -5,6 +5,7 @@
 //! fact the original did not contain is rejected (`docs/08-resume.md`).
 
 pub mod import;
+pub mod project;
 
 use jobseeker_core::domain::profile::Accomplishment;
 use jobseeker_core::domain::requirement::Requirement;

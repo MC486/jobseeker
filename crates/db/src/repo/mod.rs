@@ -13,6 +13,7 @@ pub mod application;
 pub mod capture;
 pub mod company;
 pub mod conflict;
+pub mod document;
 pub mod event;
 pub mod experience;
 pub mod job;

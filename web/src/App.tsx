@@ -17,9 +17,11 @@ import {
 } from "@tanstack/react-router";
 import {
   api,
+  DocumentCoverage,
   DuplicateCandidate,
   ExtractionConflict,
   JobDetail,
+  JobDocument,
   JobListRow,
   JobPatch,
   MatchSummary,
@@ -1492,6 +1494,13 @@ function JobSectionNav({
       >
         Sources{sourceNotes ? ` · ${sourceNotes}` : ""}
       </Link>
+      <Link
+        to="/jobs/$jobId/documents"
+        params={{ jobId }}
+        className={tab(jobSectionOn(path, jobId, "/documents"))}
+      >
+        Documents
+      </Link>
     </nav>
   );
 }
@@ -1806,6 +1815,87 @@ export function JobRequirements() {
         </button>
       </form>
       {error ? <p className="text-sm text-red-300">{error}</p> : null}
+    </div>
+  );
+}
+
+function coverageOf(doc: JobDocument): DocumentCoverage | null {
+  const c = doc.coverage_json;
+  if (!c || typeof c !== "object" || !("required_total" in c)) return null;
+  return c;
+}
+
+export function JobDocuments() {
+  const qc = useQueryClient();
+  const { jobId } = useJobRecord();
+  const [error, setError] = useState<string | null>(null);
+  const docs = useQuery({
+    queryKey: keys.documents(jobId),
+    queryFn: () => fetchers.documents(jobId),
+  });
+  const write = useMutation({
+    mutationFn: (kind: "resume" | "cover_letter") => api.writeDocument(jobId, kind),
+    onSuccess: async () => {
+      setError(null);
+      await qc.invalidateQueries({ queryKey: keys.documents(jobId) });
+    },
+    onError: (err) => {
+      setError(err instanceof Error ? err.message : String(err));
+    },
+  });
+  return (
+    <div className="space-y-4 text-sm">
+      <p className="text-zinc-400">
+        A resume and a cover letter are a draft projection of the experience bank onto this
+        job. Bullets are copied. Nothing is invented.
+      </p>
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          className="rounded-lg bg-indigo-400 px-3 py-1.5 text-sm font-semibold text-zinc-950 disabled:opacity-50"
+          disabled={write.isPending}
+          onClick={() => write.mutate("resume")}
+        >
+          Write resume
+        </button>
+        <button
+          type="button"
+          className="rounded-lg border border-zinc-600 px-3 py-1.5 text-sm text-zinc-100 disabled:opacity-50"
+          disabled={write.isPending}
+          onClick={() => write.mutate("cover_letter")}
+        >
+          Write cover letter
+        </button>
+      </div>
+      {error ? <p className="text-red-300">{error}</p> : null}
+      {docs.isPending ? <p className="text-zinc-500">Loading…</p> : null}
+      {docs.data && docs.data.length === 0 ? (
+        <p className="text-zinc-500">No documents for this job yet.</p>
+      ) : null}
+      <ul className="space-y-4">
+        {(docs.data ?? []).map((doc) => {
+          const coverage = coverageOf(doc);
+          const label = doc.kind === "cover_letter" ? "Cover letter" : "Resume";
+          return (
+            <li key={doc.id} className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+              <h2 className="font-medium">
+                {label} · version {doc.version}
+              </h2>
+              <pre className="mt-3 whitespace-pre-wrap font-sans text-zinc-200">
+                {doc.source_content}
+              </pre>
+              {coverage ? (
+                <p className="mt-3 text-zinc-400">
+                  Covers {coverage.required_covered} of {coverage.required_total} required
+                  {coverage.uncovered.length > 0
+                    ? `. Open: ${coverage.uncovered.map((u) => u.text).join("; ")}`
+                    : "."}
+                </p>
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }

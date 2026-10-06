@@ -19,6 +19,7 @@ import { Route as JobsCompareRouteImport } from './routes/jobs_.compare';
 import { Route as TasksTaskIdRouteImport } from './routes/tasks.$taskId';
 import { Route as JobsJobIdIndexRouteImport } from './routes/jobs_.$jobId.index';
 import { Route as JobsJobIdDescriptionRouteImport } from './routes/jobs_.$jobId.description';
+import { Route as JobsJobIdDocumentsRouteImport } from './routes/jobs_.$jobId.documents';
 import { Route as JobsJobIdMatchRouteImport } from './routes/jobs_.$jobId.match';
 import { Route as JobsJobIdRequirementsRouteImport } from './routes/jobs_.$jobId.requirements';
 import { Route as JobsJobIdSourcesRouteImport } from './routes/jobs_.$jobId.sources';
@@ -73,6 +74,11 @@ const JobsJobIdDescriptionRoute = JobsJobIdDescriptionRouteImport.update({
   path: '/description',
   getParentRoute: () => JobsJobIdRoute,
 } as any);
+const JobsJobIdDocumentsRoute = JobsJobIdDocumentsRouteImport.update({
+  id: '/documents',
+  path: '/documents',
+  getParentRoute: () => JobsJobIdRoute,
+} as any);
 const JobsJobIdMatchRoute = JobsJobIdMatchRouteImport.update({
   id: '/match',
   path: '/match',
@@ -99,6 +105,7 @@ export interface FileRoutesByFullPath {
   '/jobs/compare': typeof JobsCompareRoute;
   '/tasks/$taskId': typeof TasksTaskIdRoute;
   '/jobs/$jobId/description': typeof JobsJobIdDescriptionRoute;
+  '/jobs/$jobId/documents': typeof JobsJobIdDocumentsRoute;
   '/jobs/$jobId/match': typeof JobsJobIdMatchRoute;
   '/jobs/$jobId/requirements': typeof JobsJobIdRequirementsRoute;
   '/jobs/$jobId/sources': typeof JobsJobIdSourcesRoute;
@@ -113,6 +120,7 @@ export interface FileRoutesByTo {
   '/jobs/compare': typeof JobsCompareRoute;
   '/tasks/$taskId': typeof TasksTaskIdRoute;
   '/jobs/$jobId/description': typeof JobsJobIdDescriptionRoute;
+  '/jobs/$jobId/documents': typeof JobsJobIdDocumentsRoute;
   '/jobs/$jobId/match': typeof JobsJobIdMatchRoute;
   '/jobs/$jobId/requirements': typeof JobsJobIdRequirementsRoute;
   '/jobs/$jobId/sources': typeof JobsJobIdSourcesRoute;
@@ -129,6 +137,7 @@ export interface FileRoutesById {
   '/jobs_/compare': typeof JobsCompareRoute;
   '/tasks/$taskId': typeof TasksTaskIdRoute;
   '/jobs_/$jobId/description': typeof JobsJobIdDescriptionRoute;
+  '/jobs_/$jobId/documents': typeof JobsJobIdDocumentsRoute;
   '/jobs_/$jobId/match': typeof JobsJobIdMatchRoute;
   '/jobs_/$jobId/requirements': typeof JobsJobIdRequirementsRoute;
   '/jobs_/$jobId/sources': typeof JobsJobIdSourcesRoute;
@@ -146,6 +155,7 @@ export interface FileRouteTypes {
     | '/jobs/compare'
     | '/tasks/$taskId'
     | '/jobs/$jobId/description'
+    | '/jobs/$jobId/documents'
     | '/jobs/$jobId/match'
     | '/jobs/$jobId/requirements'
     | '/jobs/$jobId/sources'
@@ -160,6 +170,7 @@ export interface FileRouteTypes {
     | '/jobs/compare'
     | '/tasks/$taskId'
     | '/jobs/$jobId/description'
+    | '/jobs/$jobId/documents'
     | '/jobs/$jobId/match'
     | '/jobs/$jobId/requirements'
     | '/jobs/$jobId/sources'
@@ -175,6 +186,7 @@ export interface FileRouteTypes {
     | '/jobs_/compare'
     | '/tasks/$taskId'
     | '/jobs_/$jobId/description'
+    | '/jobs_/$jobId/documents'
     | '/jobs_/$jobId/match'
     | '/jobs_/$jobId/requirements'
     | '/jobs_/$jobId/sources'
@@ -264,6 +276,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof JobsJobIdDescriptionRouteImport;
       parentRoute: typeof JobsJobIdRoute;
     };
+    '/jobs_/$jobId/documents': {
+      id: '/jobs_/$jobId/documents';
+      path: '/documents';
+      fullPath: '/jobs/$jobId/documents';
+      preLoaderRoute: typeof JobsJobIdDocumentsRouteImport;
+      parentRoute: typeof JobsJobIdRoute;
+    };
     '/jobs_/$jobId/match': {
       id: '/jobs_/$jobId/match';
       path: '/match';
@@ -290,6 +309,7 @@ declare module '@tanstack/react-router' {
 
 interface JobsJobIdRouteChildren {
   JobsJobIdDescriptionRoute: typeof JobsJobIdDescriptionRoute;
+  JobsJobIdDocumentsRoute: typeof JobsJobIdDocumentsRoute;
   JobsJobIdMatchRoute: typeof JobsJobIdMatchRoute;
   JobsJobIdRequirementsRoute: typeof JobsJobIdRequirementsRoute;
   JobsJobIdSourcesRoute: typeof JobsJobIdSourcesRoute;
@@ -298,6 +318,7 @@ interface JobsJobIdRouteChildren {
 
 const JobsJobIdRouteChildren: JobsJobIdRouteChildren = {
   JobsJobIdDescriptionRoute: JobsJobIdDescriptionRoute,
+  JobsJobIdDocumentsRoute: JobsJobIdDocumentsRoute,
   JobsJobIdMatchRoute: JobsJobIdMatchRoute,
   JobsJobIdRequirementsRoute: JobsJobIdRequirementsRoute,
   JobsJobIdSourcesRoute: JobsJobIdSourcesRoute,
