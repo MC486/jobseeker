@@ -278,10 +278,12 @@ pub fn split_compound(bullet: &str) -> Vec<String> {
         .collect();
 
     // Only split when every part is short enough to be a name rather than a clause.
+    // "Passion for applied ML and the Pinterest product" is one sentence: the second
+    // half starts with an article, so it is not its own demand.
     let all_atomic = parts.len() > 1
         && parts.iter().all(|p| {
             let words = p.split_whitespace().count();
-            words >= 1 && words <= 5
+            words >= 1 && words <= 5 && !starts_with_article(p)
         });
     if !all_atomic {
         return vec![cleaned];
@@ -296,6 +298,16 @@ pub fn split_compound(bullet: &str) -> Vec<String> {
 
 /// A quantity or experience clause that governs the whole bullet, e.g.
 /// `"5+ years of experience with"`. Returned so it can be re-attached to each split part.
+fn starts_with_article(part: &str) -> bool {
+    part.split_whitespace()
+        .next()
+        .map(|w| {
+            let w = w.trim_matches(|c: char| !c.is_ascii_alphanumeric());
+            matches!(w.to_ascii_lowercase().as_str(), "a" | "an" | "the")
+        })
+        .unwrap_or(false)
+}
+
 fn shared_prefix(bullet: &str) -> Option<String> {
     static PREFIX: Lazy<Regex> = Lazy::new(|| {
         Regex::new(
@@ -533,6 +545,12 @@ You will own the ingestion platform.
     }
 
     #[test]
+    fn an_article_led_tail_stays_with_the_sentence() {
+        let parts = split_compound("Passion for applied ML and the Pinterest product");
+        assert_eq!(parts.len(), 1, "{parts:?}");
+    }
+
+    #[test]
     fn a_prose_sentence_is_not_shredded_into_fragments() {
         // Splitting this on "and" would produce two meaningless half-sentences.
         let long = "Design and build the event ingestion pipeline that powers our fleet of \
@@ -753,5 +771,16 @@ This position is not eligible for relocation assistance.
         let passion = reqs.iter().find(|r| r.text.contains("Passion")).unwrap();
         assert_eq!(passion.necessity, Necessity::NiceToHave);
         assert_eq!(passion.kind, RequirementKind::SoftSkill);
+        assert!(
+            passion.text.contains("Pinterest product"),
+            "the product clause is part of the same sentence: {}",
+            passion.text
+        );
+        assert!(
+            !reqs
+                .iter()
+                .any(|r| r.text.trim().eq_ignore_ascii_case("the Pinterest product")),
+            "an article-led tail is not its own demand: {reqs:#?}"
+        );
     }
 }
