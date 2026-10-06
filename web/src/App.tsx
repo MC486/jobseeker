@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   keepPreviousData,
   useMutation,
@@ -29,9 +29,15 @@ import {
   ApplicationPatch,
 } from "./api";
 import { MAX_COMPARE, parseCompareIds } from "./compare";
+import {
+  facetRail,
+  matchesFacets,
+  type JobSort,
+  type JobsSearch,
+} from "./facets";
 import { fetchers, keys, subscribeQueryEvents } from "./query";
 
-export type JobSort = "overall" | "skills" | "years";
+export type { JobSort };
 
 export function RootLayout() {
   const me = useQuery({ queryKey: keys.me, queryFn: fetchers.me, staleTime: 60_000 });
@@ -325,10 +331,19 @@ export function JobList() {
     placeholderData: keepPreviousData,
   });
 
+  const facets = {
+    status: search.status,
+    workMode: search.work_mode,
+    min: search.min,
+  };
+  const facetsOn = Boolean(facets.status || facets.workMode || facets.min != null);
+  const loaded = jobs.data?.items ?? [];
+  const rail = useMemo(() => facetRail(loaded, facets), [jobs.data, search.status, search.work_mode, search.min]);
   const rows = useMemo(() => {
-    const items = jobs.data?.items ?? [];
-    return [...items].sort((a, b) => scoreOf(b, sort) - scoreOf(a, sort));
-  }, [jobs.data, sort]);
+    return loaded
+      .filter((row) => matchesFacets(row, facets))
+      .sort((a, b) => scoreOf(b, sort) - scoreOf(a, sort));
+  }, [jobs.data, sort, search.status, search.work_mode, search.min]);
   const [picked, setPicked] = useState<string[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({
@@ -337,6 +352,9 @@ export function JobList() {
     estimateSize: () => 52,
     overscan: 6,
   });
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: 0 });
+  }, [search.status, search.work_mode, search.min]);
   const today = utcToday();
   const overdueCount = rows.filter(
     (row) => row.next_action_due && row.next_action_due < today,
@@ -383,6 +401,74 @@ export function JobList() {
           client-side on this page · does not change overall
         </span>
       </div>
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
+        <aside className="space-y-4 text-sm lg:w-52 lg:shrink-0">
+          <div className="flex items-baseline justify-between gap-2">
+            <h2 className="text-xs font-medium uppercase tracking-wide text-zinc-500">Facets</h2>
+            {facetsOn ? (
+              <Link
+                to="/jobs"
+                search={(prev) => ({ q: prev.q, sort: prev.sort })}
+                replace
+                className="text-xs text-indigo-300 hover:text-indigo-200"
+              >
+                Clear
+              </Link>
+            ) : null}
+          </div>
+          <FacetGroup label="Status">
+            {rail.status.map((option) => (
+              <FacetChip
+                key={option.value}
+                active={search.status === option.value}
+                label={option.value}
+                count={option.count}
+                search={(prev) => ({
+                  ...prev,
+                  status: prev.status === option.value ? undefined : option.value,
+                })}
+              />
+            ))}
+          </FacetGroup>
+          <FacetGroup label="Work mode">
+            {rail.workMode.map((option) => (
+              <FacetChip
+                key={option.value}
+                active={search.work_mode === option.value}
+                label={option.value}
+                count={option.count}
+                search={(prev) => ({
+                  ...prev,
+                  work_mode:
+                    prev.work_mode === option.value
+                      ? undefined
+                      : option.value === "remote" ||
+                          option.value === "hybrid" ||
+                          option.value === "onsite" ||
+                          option.value === "unknown"
+                        ? option.value
+                        : undefined,
+                })}
+              />
+            ))}
+          </FacetGroup>
+          <FacetGroup label="Match">
+            {rail.match.map((option) => (
+              <FacetChip
+                key={option.value}
+                active={search.min === option.value}
+                label={`${option.value}%+`}
+                count={option.count}
+                search={(prev) => ({
+                  ...prev,
+                  min: prev.min === option.value ? undefined : option.value,
+                })}
+              />
+            ))}
+          </FacetGroup>
+          <p className="text-xs text-zinc-600">Filters this page. Saved views are later.</p>
+        </aside>
+        <div className="min-w-0 flex-1 space-y-4">
       {overdueCount > 0 ? (
         <p className="text-sm text-red-300">
           {overdueCount} overdue next action{overdueCount === 1 ? "" : "s"}
@@ -419,7 +505,9 @@ export function JobList() {
           <span>Status</span>
         </div>
         {rows.length === 0 && !jobs.isError && !jobs.isPending ? (
-          <p className="px-3 py-6 text-zinc-500">No jobs yet.</p>
+          <p className="px-3 py-6 text-zinc-500">
+            {loaded.length === 0 ? "No jobs yet." : "No jobs on this page match these facets."}
+          </p>
         ) : (
           <div
             ref={scrollRef}
@@ -506,10 +594,51 @@ export function JobList() {
       {jobs.data?.next_cursor ? (
         <p className="text-xs text-zinc-500">A later page of jobs exists, so some rows are not in this table.</p>
       ) : null}
-      {rows.length > 0 ? (
-        <p className="text-xs text-zinc-600">{rows.length} on this page</p>
+      {loaded.length > 0 ? (
+        <p className="text-xs text-zinc-600">
+          {facetsOn ? `${rows.length} of ${loaded.length} on this page` : `${rows.length} on this page`}
+        </p>
       ) : null}
+        </div>
+      </div>
     </div>
+  );
+}
+
+function FacetGroup({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="space-y-1">
+      <h3 className="text-xs text-zinc-500">{label}</h3>
+      <div className="flex flex-wrap gap-1">{children}</div>
+    </div>
+  );
+}
+
+function FacetChip({
+  active,
+  label,
+  count,
+  search,
+}: {
+  active: boolean;
+  label: string;
+  count: number;
+  search: (prev: JobsSearch) => JobsSearch;
+}) {
+  return (
+    <Link
+      to="/jobs"
+      search={search}
+      replace
+      aria-pressed={active}
+      className={
+        active
+          ? "rounded-md bg-zinc-700 px-2 py-0.5 text-zinc-50 ring-1 ring-zinc-400"
+          : "rounded-md px-2 py-0.5 text-zinc-400 hover:text-zinc-200"
+      }
+    >
+      {label} <span className="text-zinc-500">{count}</span>
+    </Link>
   );
 }
 

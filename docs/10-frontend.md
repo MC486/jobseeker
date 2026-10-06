@@ -22,7 +22,8 @@ Exactly three kinds of state, in priority order:
 1. **URL** — filters, sort, selection, open panel, active tab. Views are shareable, the back
    button works, and a reload lands you where you were.
 2. **TanStack Query** — everything from the server. No duplication into a store. Query keys
-   mirror the URL shape: `['jobs', {q, status, work_mode, cursor}]`.
+   mirror the server request: `['jobs', {q}]`. Facets and sort stay in the URL and
+   filter the loaded page; they do not refetch.
 3. **`useState` / `useReducer`** — ephemeral UI only (dropdown open, draft text).
 
 No Redux, no Zustand, no context-as-store. The SSE stream drives precise invalidation:
@@ -125,9 +126,12 @@ cover. PDF rendering is not on this page.
 company, comp, location/mode, posted age, close date, match overall plus the diagnostic
 Skills / Years split, and status. Only the rows in the scroll window are mounted.
 Search (`?q=`) and sort (`?sort=overall|skills|years`) live in the URL; sort reorders
-the loaded page only. Checkboxes select 2–4 rows for `/jobs/compare?ids=`. A facet
-rail, saved views, and bulk tag/archive/rescore are not this table. Skills and Years
-do not change overall.
+the loaded page only. A facet rail filters that same page by the status shown in
+the table (`?status=`), work mode (`?work_mode=`), and an overall floor
+(`?min=50|70|90`). A pipeline status wins over the posting status. A row with no
+score is hidden once a floor is set. Facet counts ignore their own selection.
+Saved views and bulk tag/archive/rescore are not this table. Checkboxes select
+2–4 rows for `/jobs/compare?ids=`. Skills and Years do not change overall.
 
 **Experience bank editor** is a two-pane outline: roles on the left, accomplishments on the
 right with inline metric fields, skill chips with autocomplete, strength stars, and a

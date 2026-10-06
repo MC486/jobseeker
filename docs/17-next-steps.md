@@ -25,10 +25,18 @@ pair with a hashed, ingest-scoped device token.
 
 ## Do next (M0 remaining → M1)
 
-1. **A facet rail on `/jobs`.** Filter the loaded table by status, work mode,
-   and match. Saved views are still later.
+1. **Public ATS JSON.** For a Greenhouse, Lever, Ashby, SmartRecruiters, or
+   Workable board URL, ingest the public JSON instead of the HTML shell.
+   Workday CXS already does this for Workday.
 
 ## Just shipped
+
+- **Facet rail on `/jobs`.** Status, work mode, and match filter the loaded
+  table. Status is the label in the Status column (pipeline when the job is
+  tracked, otherwise the posting). Match is an overall floor of 50%, 70%,
+  or 90%; a row with no score drops out. The choice stays in the URL.
+  Counts on a facet ignore that facet and respect the others. Saved views
+  are not this slice.
 
 - **Documents for one job.** `/jobs/$jobId/documents` writes a tailored
   resume and a cover letter from the experience bank
