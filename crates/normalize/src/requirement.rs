@@ -65,6 +65,10 @@ impl Section {
 
 /// Classify a Markdown heading into a section.
 pub fn classify_heading(heading: &str) -> Section {
+    // Career sites use `'` (U+2019) in "we're" and "you'll". The patterns below
+    // are written with a straight apostrophe.
+    let folded = fold_apostrophes(heading);
+    let heading = folded.as_str();
     static NICE: Lazy<Regex> = Lazy::new(|| {
         Regex::new(r"(?i)\b(nice[- ]to[- ]have|bonus|plus(?:es)?|icing|extra credit|would be (?:a )?plus)\b").unwrap()
     });
@@ -108,6 +112,12 @@ pub fn classify_heading(heading: &str) -> Section {
 ///
 /// Deduplicates on [`comparison_key`], because postings repeat the same demand under
 /// "Requirements" and again in a summary paragraph.
+///
+/// Bullets are the common case. Some boards (Happydance among them) put the demands on
+/// plain lines under a short label that ends in a colon — `What we're looking for:` —
+/// with no `-` marker. Those lines are demands too. A colon label this classifier does
+/// not recognize ends the section, so the paragraph under `Relocation Statement:` is not
+/// recorded as a nice-to-have.
 pub fn atomize(description_md: &str) -> Vec<AtomizedRequirement> {
     static HEADING: Lazy<Regex> = Lazy::new(|| Regex::new(r"^\s{0,3}#{1,6}\s+(.*)$").unwrap());
     static BULLET: Lazy<Regex> =
@@ -139,24 +149,39 @@ pub fn atomize(description_md: &str) -> Vec<AtomizedRequirement> {
             continue;
         }
 
-        let Some(b) = BULLET.captures(line) else {
+        // A bullet that happens to end in ":" is still a bullet. A bare `Nice to have:`
+        // is a heading, and it must not itself become a demand.
+        let bullet_capture = BULLET.captures(line);
+        if bullet_capture.is_none() {
+            if let Some(label) = colon_label(trimmed) {
+                // Unknown is intentional: `Relocation Statement:` must close the
+                // nice-to-have block, or the paragraph under it becomes a demand.
+                section = classify_heading(label);
+                continue;
+            }
+        }
+
+        let (body, body_start) = if let Some(b) = bullet_capture {
+            let group = b
+                .get(1)
+                .expect("the bullet pattern always captures its body");
+            (group.as_str().trim(), line_start + group.start())
+        } else if is_qualification(section) {
+            let leading = line.len() - line.trim_start().len();
+            (trimmed, line_start + leading)
+        } else {
             continue;
         };
         let Some(necessity) = section.necessity() else {
             continue;
         };
-        let group = b
-            .get(1)
-            .expect("the bullet pattern always captures its body");
-        let bullet = group.as_str().trim();
-        if bullet.len() < 8 || is_equivalent_only_bullet(bullet) {
+        if body.len() < 8 || is_equivalent_only_bullet(body) {
             continue;
         }
 
-        // Offset of the bullet *text*, past the list marker, so a highlight in the UI covers
-        // the requirement rather than the punctuation in front of it.
-        let bullet_offset = line_start + group.start();
-        for atom in split_compound(bullet) {
+        // Offset of the demand text, past a list marker when there is one, so a highlight
+        // in the UI covers the requirement rather than the punctuation in front of it.
+        for atom in split_compound(body) {
             let key = comparison_key(&atom);
             if key.is_empty() || !seen.insert(key.clone()) {
                 continue;
@@ -184,12 +209,39 @@ pub fn atomize(description_md: &str) -> Vec<AtomizedRequirement> {
                 quantity_raw: years
                     .map(|_| atom.clone())
                     .and_then(|_| quantity_phrase(&atom)),
-                source_span: Some((bullet_offset, bullet_offset + bullet.len())),
+                source_span: Some((body_start, body_start + body.len())),
                 text: atom,
             });
         }
     }
     out
+}
+
+fn is_qualification(section: Section) -> bool {
+    matches!(
+        section,
+        Section::Required | Section::Preferred | Section::NiceToHave
+    )
+}
+
+/// `What we're looking for:` — a section label, not a sentence that happens to end in a colon.
+fn colon_label(line: &str) -> Option<&str> {
+    let label = line.trim().strip_suffix(':')?.trim();
+    if label.is_empty() || label.len() > 80 {
+        return None;
+    }
+    let words = label.split_whitespace().count();
+    if words == 0 || words > 12 {
+        return None;
+    }
+    if label.contains(['.', '?', '!', ';']) {
+        return None;
+    }
+    Some(label)
+}
+
+fn fold_apostrophes(s: &str) -> String {
+    s.replace(['\u{2018}', '\u{2019}', '\u{2032}'], "'")
 }
 
 /// Split a compound bullet into its constituent demands.
@@ -226,10 +278,12 @@ pub fn split_compound(bullet: &str) -> Vec<String> {
         .collect();
 
     // Only split when every part is short enough to be a name rather than a clause.
+    // "Passion for applied ML and the Pinterest product" is one sentence: the second
+    // half starts with an article, so it is not its own demand.
     let all_atomic = parts.len() > 1
         && parts.iter().all(|p| {
             let words = p.split_whitespace().count();
-            words >= 1 && words <= 5
+            words >= 1 && words <= 5 && !starts_with_article(p)
         });
     if !all_atomic {
         return vec![cleaned];
@@ -244,6 +298,16 @@ pub fn split_compound(bullet: &str) -> Vec<String> {
 
 /// A quantity or experience clause that governs the whole bullet, e.g.
 /// `"5+ years of experience with"`. Returned so it can be re-attached to each split part.
+fn starts_with_article(part: &str) -> bool {
+    part.split_whitespace()
+        .next()
+        .map(|w| {
+            let w = w.trim_matches(|c: char| !c.is_ascii_alphanumeric());
+            matches!(w.to_ascii_lowercase().as_str(), "a" | "an" | "the")
+        })
+        .unwrap_or(false)
+}
+
 fn shared_prefix(bullet: &str) -> Option<String> {
     static PREFIX: Lazy<Regex> = Lazy::new(|| {
         Regex::new(
@@ -481,6 +545,12 @@ You will own the ingestion platform.
     }
 
     #[test]
+    fn an_article_led_tail_stays_with_the_sentence() {
+        let parts = split_compound("Passion for applied ML and the Pinterest product");
+        assert_eq!(parts.len(), 1, "{parts:?}");
+    }
+
+    #[test]
     fn a_prose_sentence_is_not_shredded_into_fragments() {
         // Splitting this on "and" would produce two meaningless half-sentences.
         let long = "Design and build the event ingestion pipeline that powers our fleet of \
@@ -612,5 +682,105 @@ You will own the ingestion platform.
         let loose = atomize("- Some familiarity with Rust\n");
         assert_eq!(loose.len(), 1);
         assert_eq!(loose[0].necessity, Necessity::Preferred);
+        // Prose with no heading is not a demand. Plain lines only count once a
+        // qualifications label has opened a section.
+        assert!(atomize("We build distributed systems in Rust and Go.\n").is_empty());
+    }
+
+    #[test]
+    fn an_unmarked_line_under_a_requirements_heading_is_a_demand() {
+        let md = "## Requirements\n\n4+ years of Go\n";
+        let reqs = atomize(md);
+        assert_eq!(reqs.len(), 1);
+        assert_eq!(reqs[0].necessity, Necessity::Required);
+        assert_eq!(reqs[0].min_years, Some(4.0));
+        let (start, end) = reqs[0].source_span.unwrap();
+        assert_eq!(&md[start..end], "4+ years of Go");
+    }
+
+    #[test]
+    fn colon_labels_and_the_plain_lines_under_them_are_the_bars() {
+        // Happydance-style postings have no Markdown and no bullets. A curly apostrophe
+        // in the label is the same heading as a straight one. The long methods sentence
+        // stays one demand. Responsibilities and the relocation paragraph do not.
+        let md = "\
+What you\u{2019}ll do:
+
+Build cutting edge technology using the latest advances in deep learning
+
+What we\u{2019}re looking for:
+
+2+ years of industry experience applying machine learning methods (e.g., user modeling, personalization, recommender systems, search, ranking, natural language processing, reinforcement learning, and graph representation learning)
+Bachelor\u{2019}s degree in computer science, machine learning, statistics, a related field or equivalent experience
+End-to-end hands-on experience with building data processing pipelines, large scale machine learning systems, and big data technologies (e.g., Hadoop/Spark)
+Practical knowledge of large scale recommender systems, or modern ads ranking, retrieval, targeting, marketplace systems
+Nice to have:
+Publications at top ML conferences
+Experience using Cursor, Copilot, Codex, or similar AI coding assistants
+Passion for applied ML and the Pinterest product
+Relocation Statement:
+
+This position is not eligible for relocation assistance.
+";
+        let reqs = atomize(md);
+        assert!(
+            !reqs.iter().any(|r| r.text.contains("cutting edge")),
+            "what-you'll-do lines are the job, not the bar: {reqs:#?}"
+        );
+        assert!(
+            !reqs
+                .iter()
+                .any(|r| r.text.to_ascii_lowercase().contains("relocation")),
+            "the statement after the list is not a demand: {reqs:#?}"
+        );
+        assert!(
+            !reqs
+                .iter()
+                .any(|r| r.text.to_ascii_lowercase().contains("looking for")),
+            "the label is a heading, not a demand: {reqs:#?}"
+        );
+        let ml = reqs
+            .iter()
+            .find(|r| r.text.contains("graph representation"))
+            .expect("the methods line");
+        assert_eq!(ml.necessity, Necessity::Required);
+        assert_eq!(ml.min_years, Some(2.0));
+        assert!(
+            ml.text.contains("2+ years"),
+            "the methods sentence stays one demand: {}",
+            ml.text
+        );
+        let degree = reqs.iter().find(|r| r.text.contains("degree")).unwrap();
+        assert_eq!(degree.necessity, Necessity::Required);
+        assert_eq!(degree.kind, RequirementKind::Education);
+        assert_eq!(
+            degree.education_level,
+            Some(jobseeker_core::domain::enums::EducationLevel::Bachelor)
+        );
+        assert!(reqs
+            .iter()
+            .any(|r| { r.text.contains("Hadoop") && r.necessity == Necessity::Required }));
+        assert!(reqs.iter().any(|r| {
+            r.text.contains("recommender systems") && r.necessity == Necessity::Required
+        }));
+        let pubs = reqs
+            .iter()
+            .find(|r| r.text.contains("Publications"))
+            .unwrap();
+        assert_eq!(pubs.necessity, Necessity::NiceToHave);
+        let passion = reqs.iter().find(|r| r.text.contains("Passion")).unwrap();
+        assert_eq!(passion.necessity, Necessity::NiceToHave);
+        assert_eq!(passion.kind, RequirementKind::SoftSkill);
+        assert!(
+            passion.text.contains("Pinterest product"),
+            "the product clause is part of the same sentence: {}",
+            passion.text
+        );
+        assert!(
+            !reqs
+                .iter()
+                .any(|r| r.text.trim().eq_ignore_ascii_case("the Pinterest product")),
+            "an article-led tail is not its own demand: {reqs:#?}"
+        );
     }
 }
